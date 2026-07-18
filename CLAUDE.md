@@ -93,12 +93,22 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   data injected as inline JSON via `.replace()` placeholders; all
   rendering is client-side JS from `const DATA`. Feature set: stat cards
   with GOOD/FAIR/HIGH rating badges (JS `THRESHOLDS` defaults,
-  overridable via config.json `thresholds`); SVG house map (floors from
-  config.json); outages log with SVG 7-day incident timeline + filters;
-  Chart.js charts (vendored) with threshold reference lines and a synced
-  24h/7d toggle; devices table with friendly names from devices.json,
-  `hide_ip_prefixes` drops matching devices. Chart colors are baked at
-  build time → charts fully re-render on theme change.
+  overridable via config.json `thresholds`); an architectural SVG house
+  map — section-drawing style (flat roof slab, street-level datum line
+  with elevation marker, hatched earth below), an "Internet" status node
+  buried as a fiber line that rises into the main router (live latency +
+  last speed test, red OFFLINE when down), compact router pills with
+  hover/tap detail cards, Wi-Fi coverage bubbles (pulsing red hole when
+  an AP is down), windows lit per-floor while that floor's APs are up,
+  animated packet links; outages log with SVG 7-day incident timeline +
+  filters; Chart.js charts (vendored) with threshold reference lines, a
+  synced 24h/7d toggle, and the speed chart pinned to 0..plan+100 so the
+  plan lines stay visible; devices table with friendly names from
+  devices.json, `hide_ip_prefixes` drops matching devices. Chart colors
+  are baked at build time → charts fully re-render on theme change. Page
+  scrollbars are hidden globally but scrolling still works — beware
+  `overflow-x: clip` (it coerces overflow-y to clip and kills page
+  scrolling; use `hidden`).
 - `serve.py` — stdlib LAN web server. LAN sees ONLY dashboard.html + the
   two vendor JS files (whitelist ROUTES dict; DB/logs/config
   unreachable). Localhost additionally gets `/setup` (first-run wizard),

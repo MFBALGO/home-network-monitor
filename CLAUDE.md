@@ -68,10 +68,23 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
 
 ## Architecture / code map
 
-- `monitor.py` — always-on collector, 8 daemon threads: ping (gateway +
-  1.1.1.1/8.8.8.8/9.9.9.9 every 15s), wifi (5m), device scan (5m),
-  speedtest (30m, Ookla CLI), public IP (10m), router checks (15s per
-  router), DNS health (60s), retention (daily, prunes >90d).
+- `monitor.py` — always-on collector, 11 daemon threads: ping (gateway +
+  1.1.1.1/8.8.8.8/9.9.9.9 every 15s), wifi (5m; BSSID/band + roam
+  events + hourly neighbor scan into `wifi_scan`), device scan (5m),
+  speedtest (30m, Ookla CLI; also captures ping.jitter,
+  download/upload.latency.iqm = bufferbloat, packetLoss), public IP
+  (10m), router checks (15s per router), DNS health (60s; failing
+  domains named in the event note), retention (daily, prunes >90d),
+  command poller (2s; executes web-UI commands from
+  `data/commands.json`, writes `data/test_status.json` — two one-way
+  files, ONE writer each, that's the whole web→monitor IPC), alert
+  notifier (10s poll of the events table; toast immediately,
+  webhook/email queue-and-retry so internet-down alerts flush on
+  recovery; config.json `alerts` block, hot-reloaded), topology (daily
+  traceroute double-NAT check into `topology_checks` — verdict from hop
+  2's address class, NOT hop counting: ISPs run 10.x internally, only a
+  192.168.x second hop is confidently a second home router; 100.64/10 =
+  CGNAT, not user-fixable).
   - Cross-platform via IS_MACOS / IS_WINDOWS branches: Windows uses
     `ping -n` (+ "TTL=" guard because Windows ping exits 0 even for
     "unreachable"; locale-tolerant ms regex), `arp -a` (dash-MAC table),
@@ -91,8 +104,16 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   Control" theme (light theme kept; theme + 60s auto-refresh persist via
   localStorage). One giant triple-quoted HTML template in `build_html()`,
   data injected as inline JSON via `.replace()` placeholders; all
-  rendering is client-side JS from `const DATA`. Section order: stat
-  cards → house map → latency/speed charts → outages → devices. Feature
+  rendering is client-side JS from `const DATA`. Section order:
+  diagnosis banner → stat cards → house map → latency/speed charts →
+  outages → devices. The banner is a JS-side 8-rule table (stale page /
+  monitor paused / gateway down / ISP down / DNS / AP down / degraded /
+  all-clear, first match wins, mirroring monitor.py's causal
+  precedence). Also generates `report.html` (ISP evidence report:
+  outages, monthly measured uptime, below-plan speed tests, print CSS;
+  throttled to every 10 min, gitignored like dashboard.html). A "Test
+  now" topbar button drives on-demand ping/DNS/speed tests via
+  `/api/test/run` + status polling. Feature
   set: stat cards with GOOD/FAIR/HIGH rating badges (JS `THRESHOLDS`
   defaults, overridable via config.json `thresholds`; the good/fair
   legend lives in the badge's hover tooltip, not on the card face;
@@ -121,12 +142,14 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   scrollbars are hidden globally but scrolling still works — beware
   `overflow-x: clip` (it coerces overflow-y to clip and kills page
   scrolling; use `hidden`).
-- `serve.py` — stdlib LAN web server. LAN sees ONLY dashboard.html + the
-  two vendor JS files (whitelist ROUTES dict; DB/logs/config
-  unreachable). Localhost additionally gets `/setup` (first-run wizard),
-  `/settings`, and the `/api/*` config endpoints — POSTs are guarded
-  against CSRF/DNS-rebinding (Host/Origin/Content-Type checks, 256KB
-  body cap). `/` 302s to the wizard on a fresh install and serves a
+- `serve.py` — stdlib LAN web server. LAN sees ONLY dashboard.html,
+  report.html + the two vendor JS files (whitelist ROUTES dict;
+  DB/logs/config unreachable), PLUS exactly the `LAN_API` carve-out
+  (`/api/test/status` GET, `/api/test/run` POST — Host header must be a
+  private-IP literal). Localhost additionally gets `/setup` (first-run
+  wizard), `/settings`, and the `/api/*` config endpoints — POSTs are
+  guarded against CSRF/DNS-rebinding (Host/Origin/Content-Type checks,
+  256KB body cap). `/` 302s to the wizard on a fresh install and serves a
   "warming up" page until dashboard.html first exists. Port 8080
   (`NETMON_WEB_PORT` to override), no-store on HTML, 503 + Retry-After
   if the file is mid-rewrite.
@@ -136,8 +159,10 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   discovery job (threading.Lock-guarded status dict, decorates results
   with is_gateway/suggested/known_router_name).
 - `settings_page.py` — `WIZARD_HTML` (auto-scan → floors → routers →
-  review, 409-guarded overwrite) and `SETTINGS_HTML` (General/Routers/
-  Devices tabs) as Python strings served from memory, styled to match
+  review, 409-guarded overwrite, double-NAT heads-up from the
+  piggybacked topology check) and `SETTINGS_HTML` (General/Routers/
+  Devices/Alerts tabs; Alerts has a Send-test-alert button riding the
+  command rail) as Python strings served from memory, styled to match
   the dashboard.
 - `scan_routers.py` — standalone LAN scanner to find router IPs (TCP
   80/443 sweep + ping sweep + ARP + HTTP title fingerprint). Core logic
@@ -150,7 +175,10 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
 - `diagnose.py` — builds `netmon-diagnostics-*.zip` (report + logs tail
   + configs) for remote troubleshooting; `build_bundle()` is importable.
 - SQLite tables: `pings`, `router_pings`, `devices`, `dns_checks`,
-  `events`, `public_ip`, `speedtests`, `wifi`.
+  `events` (kinds: outage/degraded/ip_change/new_device/wifi_roam),
+  `public_ip`, `speedtests`, `wifi`, `wifi_scan`, `topology_checks`.
+  Schema changes go in BOTH guarded-ALTER migration lists (monitor.py
+  init_db AND dashboard.py's defensive mirror).
 - Config files (all optional, user-editable JSON in this folder; the
   committed `.example.json` files show the format; normally written by
   the wizard/settings UI, hot-reloaded — routers ≤15s, devices ≤5min,
@@ -158,8 +186,10 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   - `routers.json` — [{name, ip, floor}], order = file order.
   - `devices.json` — {mac: friendly name}.
   - `config.json` — {title, floors[], underground_floors[],
-    main_router_floor} + optional `hide_ip_prefixes`, `thresholds`,
-    `plan_down_mbps`/`plan_up_mbps`.
+    main_router_floor} + optional `hide_ip_prefixes`, `thresholds`
+    (incl. `bufferbloat`), `plan_down_mbps`/`plan_up_mbps`, `alerts`
+    (see config.example.json; email password is plaintext — app
+    passwords only).
 - `setup.sh` / `setup.ps1` install services, vendor Chart.js (committed
   in `vendor/`, re-downloaded via CDN fallback chain if missing), Ookla
   speedtest CLI (NOT homebrew/pip speedtest-cli), optional nmap.

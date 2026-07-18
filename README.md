@@ -62,6 +62,37 @@ a guess.
   running), nothing was measured. Those periods now show up explicitly as
   "Monitoring paused" in the event log and as visible breaks in the
   charts, instead of silently looking like healthy uptime.
+- **A plain-language diagnosis banner** at the top of the dashboard that
+  says what's wrong *right now* and what to do about it — "Internet is
+  down but your router is fine → it's your ISP, check the modem lights"
+  instead of making you read charts.
+- **Bufferbloat / latency under load** — the speed test also records how
+  much your latency climbs while the line is saturated (the reason
+  "speed tests look fine but calls stutter during downloads"). Rated
+  GOOD/FAIR/POOR with a hint about enabling SQM/QoS. Needs the official
+  Ookla CLI.
+- **A "Test now" button** — run a live ping + DNS check (optionally a
+  speed test) on demand from any device on your Wi-Fi, results in
+  seconds. Rate-limited, and only reachable from your own LAN.
+- **Alerts (optional)** — desktop notifications on the monitor PC,
+  webhook push (ntfy.sh / Slack / Discord-style), or email when an
+  outage outlasts a minimum duration, plus a recovery message with the
+  total downtime ("Internet was down 02:14–02:31, 17m"). Configured in
+  Settings → Alerts; alerts that can't leave the house during an
+  internet outage are queued and sent on recovery. Quiet hours
+  supported.
+- **A printable ISP evidence report** (`report.html`, linked from the
+  outage log) — every outage with timestamps and durations, monthly
+  measured uptime, and the speed tests that came in under 80% of the
+  plan you pay for. Made for attaching to an ISP complaint.
+- **Wi-Fi channel advice** — an hourly scan of neighboring networks; if
+  your 2.4 GHz channel is crowded, the dashboard suggests the quietest
+  of channels 1/6/11. (On Windows 11 this needs Location permission for
+  desktop apps, else Windows hides the neighbor list.)
+- **Double-NAT detection** — a daily traceroute check that spots the
+  classic "ISP box and your own router are both doing NAT" setup that
+  breaks consoles, VoIP and port forwarding, with a fix hint (bridge
+  mode / DMZ). Also shown during the setup wizard.
 - Writes everything to a local SQLite database (`data/network_monitor.db`)
   and regenerates a **self-contained dashboard** (`dashboard.html`) every
   minute, showing uptime %, an outage/degradation log, latency & loss

@@ -1,0 +1,6 @@
+{
+  "title": "Home Network Monitor",
+  "floors": ["First Floor", "Ground Floor"],
+  "underground_floors": [],
+  "main_router_floor": "Ground Floor"
+}

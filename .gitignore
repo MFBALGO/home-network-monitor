@@ -1,0 +1,22 @@
+# Personal/site config — commit the .example.json versions instead
+routers.json
+devices.json
+config.json
+CLAUDE.local.md
+START-HERE-WINDOWS.txt
+
+# Generated at runtime by the live install
+data/
+logs/
+dashboard.html
+__pycache__/
+scan_results.json
+*.db
+*.db-shm
+*.db-wal
+
+# Build/diagnostic artifacts
+netmon-share.zip
+netmon-diagnostics-*.zip
+fullscan.*
+buffalo-scan.*

@@ -1,0 +1,4 @@
+[
+  { "name": "Living Room AP", "ip": "192.168.1.5", "floor": "Ground Floor" },
+  { "name": "Bedroom Mesh Node", "ip": "192.168.1.6", "floor": "First Floor" }
+]

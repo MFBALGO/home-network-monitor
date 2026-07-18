@@ -1765,14 +1765,16 @@ safely('house map', function() {
   // underground floor, it's the bottom of the house
   let groundY = houseBottom;
   for (const f of FLOORS) { if (UG.has(f.key)) { groundY = f.y0; break; } }
-  const totalH = houseBottom + 35;
-  // house sits right of center: the sky on the left hosts the internet
-  // cloud, so the map shows the whole chain internet -> router -> APs
+  // house sits right of center: the earth on the left hosts the buried
+  // fiber uplink, so the map shows the whole chain internet -> router ->
+  // APs. Guarantee enough underground depth for the fiber node even in
+  // homes with no basement.
   const HX0 = 180, HX1 = 910;             // house walls (yard on both sides)
   const CARD_W = 176, CARD_H = 88;        // hover-card size (was the always-on card)
   const mainFloor = FLOORS.find(f => f.key === H.main_floor) || FLOORS[Math.floor(FLOORS.length / 2)];
   const MAIN = { x: 545, y: (mainFloor.y0 + mainFloor.y1) / 2 };
-  const NET = { x: 92, y: 64 };           // internet cloud center
+  const NET = { x: 88, y: groundY + 52 }; // buried fiber node center
+  const totalH = Math.max(houseBottom + 35, NET.y + 44);
   const netUp = DATA.current_status !== 'down';
 
   const wifiIcon = (cx, cy, scale) => `
@@ -1912,12 +1914,21 @@ safely('house map', function() {
   // ---- the internet itself: a cloud outside the house, wired to the
   // main router. House green + cloud red = it's the ISP, not your Wi-Fi.
   if (gw) {
-    const wanD = `M ${NET.x + 62} ${NET.y} Q ${(NET.x + MAIN.x) / 2 - 60} ${(NET.y + MAIN.y) / 2} ${MAIN.x - pillW('Main Router', true) / 2 - 6} ${MAIN.y}`;
+    // Fiber: a buried run at cable depth from the street node, then a
+    // riser straight up through the house to the main router.
+    const nodeRight = NET.x + 62;
+    let wanD;
+    if (MAIN.y + 30 < NET.y - 34) {
+      wanD = `M ${nodeRight} ${NET.y} L ${MAIN.x - 34} ${NET.y} Q ${MAIN.x} ${NET.y} ${MAIN.x} ${NET.y - 34} L ${MAIN.x} ${MAIN.y + 17}`;
+    } else {
+      // main router unusually low (e.g. in the basement) — connect directly
+      wanD = `M ${nodeRight} ${NET.y} Q ${(nodeRight + MAIN.x) / 2} ${NET.y} ${MAIN.x} ${MAIN.y + 17}`;
+    }
     svg += `<g class="linkgrp ${netUp ? 'up' : 'down'}">`;
     svg += `<path class="link-glow" d="${wanD}"/><path class="link-core" d="${wanD}"/>`;
     if (netUp && !REDUCE_MOTION) {
-      svg += `<circle class="packet" r="3" opacity="0.9"><animateMotion dur="2.2s" repeatCount="indefinite" path="${wanD}"/></circle>`;
-      svg += `<circle class="packet" r="2.4" opacity="0.7"><animateMotion dur="2.2s" begin="-1.1s" repeatCount="indefinite" path="${wanD}"/></circle>`;
+      svg += `<circle class="packet" r="3" opacity="0.9"><animateMotion dur="2.6s" repeatCount="indefinite" path="${wanD}"/></circle>`;
+      svg += `<circle class="packet" r="2.4" opacity="0.7"><animateMotion dur="2.6s" begin="-1.3s" repeatCount="indefinite" path="${wanD}"/></circle>`;
     }
     svg += `</g>`;
   }
@@ -2307,7 +2318,13 @@ function renderSpeedChart() {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
-      scales: { x: timeScale(), y: yScale('Mbps') },
+      // Anchor the axis at 0 and keep headroom above the plan lines, so
+      // the "what am I paying for" reference is always on screen even
+      // when measured speeds sit well below it. suggestedMax (not max)
+      // still lets the axis grow if a test ever exceeds plan + 100.
+      scales: { x: timeScale(), y: Object.assign(yScale('Mbps'), { min: 0 },
+        (plan.down_mbps != null || plan.up_mbps != null)
+          ? { suggestedMax: Math.max(plan.down_mbps || 0, plan.up_mbps || 0) + 100 } : {}) },
       plugins: { legend: legendOpts(true), tooltip: tooltipBase() },
     },
   });

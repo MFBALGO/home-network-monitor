@@ -790,6 +790,14 @@ def build_html(data):
   body { margin:0; background: var(--page); color: var(--text-primary);
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
     transition: background .2s ease, color .2s ease; min-height: 100vh; }
+  /* No visible scrollbars (scrolling still works with wheel/touch/keys),
+     and nothing may push the page wider than the window. */
+  html { scrollbar-width: none; -ms-overflow-style: none; }
+  html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; }
+  body { overflow-x: hidden; }
+  .chart-box > canvas { max-width: 100%; }
+  #devicesTableWrap, #outagesTableWrap { overflow-x: auto; scrollbar-width: none; }
+  #devicesTableWrap::-webkit-scrollbar, #outagesTableWrap::-webkit-scrollbar { display: none; }
   body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
     background-image: linear-gradient(var(--gridline-bg) 1px, transparent 1px),
                       linear-gradient(90deg, var(--gridline-bg) 1px, transparent 1px);
@@ -1015,28 +1023,10 @@ def build_html(data):
   .house-svg .floor-label { fill: var(--muted); font-size: 9.5px; font-weight: 700; letter-spacing: .12em;
     text-transform: uppercase; font-family: var(--font-mono); }
   .house-svg .floor-chip { fill: var(--surface-1); stroke: var(--border-soft); }
-  .house-svg .scene-grass { fill: var(--scene-grass); }
   .house-svg .street-label { fill: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .16em;
     text-transform: uppercase; font-family: var(--font-mono); opacity: 0.75; }
-  .house-svg .scene-trunk { fill: var(--scene-trunk); }
-  .house-svg .scene-leaf { fill: var(--scene-leaf); }
-  .house-svg .scene-smoke { fill: var(--scene-smoke); animation: smokeRise 4s ease-out infinite; }
-  @keyframes smokeRise { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 1; } 100% { transform: translateY(-30px); opacity: 0; } }
-  .house-svg .scene-cloud { fill: var(--surface-1); opacity: .9; animation: cloudDrift 26s ease-in-out infinite alternate; }
-  @keyframes cloudDrift { from { transform: translateX(0); } to { transform: translateX(26px); } }
-  .house-svg .scene-star { fill: var(--scene-moon); animation: twinkle 2.6s ease-in-out infinite alternate; }
-  @keyframes twinkle { from { opacity: .2; } to { opacity: 1; } }
-  .house-svg .scene-moon, .house-svg .scene-star { display: none; }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .house-svg .scene-sun,
-    :root:not([data-theme="light"]) .house-svg .scene-cloud { display: none; }
-    :root:not([data-theme="light"]) .house-svg .scene-moon,
-    :root:not([data-theme="light"]) .house-svg .scene-star { display: inline; }
-  }
-  :root[data-theme="dark"] .house-svg .scene-sun,
-  :root[data-theme="dark"] .house-svg .scene-cloud { display: none; }
-  :root[data-theme="dark"] .house-svg .scene-moon,
-  :root[data-theme="dark"] .house-svg .scene-star { display: inline; }
+  .house-svg .datum-line { stroke: var(--baseline); stroke-width: 1.3; }
+  .house-svg .datum-mark { fill: var(--muted); opacity: .8; }
   .house-svg .node-up { color: var(--status-good); }
   .house-svg .node-down { color: var(--status-critical); }
   .house-svg .node-main { color: var(--accent); }
@@ -1076,31 +1066,24 @@ def build_html(data):
   .house-svg .cover.main { color: var(--accent); }
   .house-svg .cover.down { color: var(--status-critical); opacity: .12; animation: coverPulse 2.2s ease-in-out infinite; }
   @keyframes coverPulse { 50% { opacity: .26; } }
-  /* windows: lit while that floor's access points are all up */
-  .house-svg .win { stroke: var(--baseline); stroke-width: 1.2; }
-  .house-svg .win.lit { fill: var(--scene-sun); opacity: .78; }
-  .house-svg .win.off { fill: var(--grid); opacity: .85; }
-  .house-svg .win-bar { stroke: var(--baseline); stroke-width: 1; opacity: .6; }
-  /* the internet, drawn as an actual cloud outside the house */
-  .house-svg .net-cloud.up { color: var(--status-good); }
-  .house-svg .net-cloud.down { color: var(--status-critical); }
-  .house-svg .cloud-body { fill: var(--surface-1); stroke: currentColor; stroke-width: 1.5; }
+  /* windows: slim panes, lit while that floor's access points are all up */
+  .house-svg .win { stroke: var(--baseline); stroke-opacity: .45; stroke-width: 1; }
+  .house-svg .win.lit { fill: var(--scene-sun); opacity: .5; }
+  .house-svg .win.off { fill: var(--grid); opacity: .9; }
+  /* the internet uplink node outside the house */
+  .house-svg .net-node.up { color: var(--status-good); }
+  .house-svg .net-node.down { color: var(--status-critical); }
+  .house-svg g.net-node.up { filter: drop-shadow(0 0 7px var(--glow-good)); }
+  .house-svg g.net-node.down { filter: drop-shadow(0 0 9px var(--glow-bad)); }
+  .house-svg .net-box { fill: var(--surface-1); stroke: currentColor; stroke-width: 1.5; }
   .house-svg .net-label { fill: var(--text-primary); font-size: 10px; font-weight: 800; letter-spacing: .12em;
     text-transform: uppercase; font-family: var(--font-mono); }
   .house-svg .net-stat { fill: var(--text-secondary); font-size: 9.5px; font-family: var(--font-mono); }
-  .house-svg .net-cloud.down .net-label, .house-svg .net-cloud.down .net-stat { fill: currentColor; }
-  /* internet down = storm: rain from the cloud, no sun/moon */
-  .house-svg .rain { stroke: var(--status-critical); stroke-width: 1.6; stroke-linecap: round;
-    opacity: 0; animation: rainFall 1.1s linear infinite; }
-  @keyframes rainFall { 0% { transform: translateY(0); opacity: 0; } 25% { opacity: .7; } 100% { transform: translateY(26px); opacity: 0; } }
-  .house-svg.net-down .scene-sun, .house-svg.net-down .scene-moon,
-  .house-svg.net-down .scene-star, .house-svg.net-down .scene-smoke { display: none !important; }
+  .house-svg .net-node.down .net-stat { fill: currentColor; font-weight: 700; }
   @media (prefers-reduced-motion: reduce) {
-    .house-svg .scene-smoke, .house-svg .scene-cloud, .house-svg .scene-star,
     .house-svg .linkgrp.up .link-core, .house-svg .node-down .status-dot-svg,
-    .house-svg .cover.down, .house-svg .rain,
+    .house-svg .cover.down,
     .brand-mark .sweep, .live-dot, .ongoing-tag { animation: none; }
-    .house-svg .rain { opacity: .55; }
   }
 </style>
 </head>
@@ -1774,7 +1757,7 @@ safely('house map', function() {
     : [...new Set(routers.map(r => r.floor).filter(Boolean))];
   if (floorNames.length === 0) floorNames.push('Home');   // gateway-only fallback
   const UG = new Set(H.underground || []);
-  const TOP = 122, BH = 172;              // wall top, per-floor band height
+  const TOP = 96, BH = 172;               // wall top, per-floor band height
   const FLOORS = floorNames.map((k, i) => ({ key: k, y0: TOP + i * BH, y1: TOP + (i + 1) * BH }));
   const houseBottom = TOP + floorNames.length * BH;
   // ground level sits above the first underground floor; if there is no
@@ -1880,51 +1863,23 @@ safely('house map', function() {
     return `<g class="hovercard" id="${hcId}">${card(cx, cy, opts)}</g>`;
   }
 
-  let svg = `<svg class="house-svg${netUp ? '' : ' net-down'}" viewBox="0 0 1000 ${totalH}" role="img" aria-label="Map of the internet connection and routers by floor">`;
+  let svg = `<svg class="house-svg" viewBox="0 0 1000 ${totalH}" role="img" aria-label="Map of the internet connection and routers by floor">`;
 
-  // ---- gradients ----
+  // ---- architectural backdrop: hatched earth below the street datum ----
   svg += `<defs>
-    <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="var(--scene-sky-top)"/><stop offset="1" stop-color="var(--scene-sky-bottom)"/>
-    </linearGradient>
-    <linearGradient id="earthGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="var(--scene-earth-top)"/><stop offset="1" stop-color="var(--scene-earth-bottom)"/>
-    </linearGradient>
+    <pattern id="earthHatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="9" stroke="var(--baseline)" stroke-width="1" opacity="0.30"/>
+    </pattern>
   </defs>`;
+  svg += `<rect fill="url(#earthHatch)" x="8" y="${groundY}" width="984" height="${totalH - groundY - 6}"/>`;
 
-  // ---- backdrop: sky above ground level, earth below ----
-  svg += `<rect fill="url(#skyGrad)" x="0" y="0" width="1000" height="${totalH}" rx="12"/>`;
-  svg += `<rect fill="url(#earthGrad)" x="0" y="${groundY - 2}" width="1000" height="${totalH - groundY + 2}"/>`;
+  // street-level datum line with an elevation marker, like a section drawing
+  svg += `<line class="datum-line" x1="16" y1="${groundY}" x2="984" y2="${groundY}"/>`;
+  svg += `<path class="datum-mark" d="M 34 ${groundY - 12} h 12 l -6 12 z"/>`;
+  svg += `<text class="street-label" x="54" y="${groundY - 6}">street level</text>`;
 
-  // sun (light theme) / moon + stars (dark theme) — swapped via CSS
-  svg += `<g class="scene-sun"><circle cx="706" cy="58" r="32" fill="var(--scene-sun)" opacity="0.16"/><circle cx="706" cy="58" r="24" fill="var(--scene-sun)" opacity="0.32"/><circle cx="706" cy="58" r="16" fill="var(--scene-sun)"/></g>`;
-  svg += `<g class="scene-moon"><circle cx="858" cy="64" r="30" fill="var(--scene-moon)" opacity="0.12"/><circle cx="858" cy="64" r="19" fill="var(--scene-moon)"/><circle cx="866" cy="58" r="16" fill="var(--scene-sky-top)"/></g>`;
-  [[60,42,1.4],[120,90,1.0],[190,36,1.7],[250,72,0.9],[330,28,1.2],[400,58,0.8],[470,34,1.5],[560,80,1.0],[620,30,1.2],[700,54,0.9],[760,86,1.3],[930,34,1.6],[950,96,1.0],[975,60,1.2],[290,102,0.8],[860,110,0.9]].forEach((s, i) => {
-    svg += `<circle class="scene-star" cx="${s[0]}" cy="${s[1]}" r="${s[2]}" style="animation-delay:${-(i * 0.45).toFixed(2)}s"/>`;
-  });
-  svg += `<g class="scene-cloud"><ellipse cx="270" cy="52" rx="26" ry="11"/><ellipse cx="250" cy="57" rx="16" ry="8"/><ellipse cx="291" cy="57" rx="17" ry="8"/></g>`;
-  svg += `<g class="scene-cloud" style="animation-delay:-13s"><ellipse cx="600" cy="32" rx="20" ry="8"/><ellipse cx="585" cy="36" rx="12" ry="6"/><ellipse cx="616" cy="36" rx="13" ry="6"/></g>`;
-
-  // yard: tree on the left, bush on the right, grass strip at ground level
-  svg += `<rect class="scene-trunk" x="44" y="${groundY - 58}" width="9" height="54" rx="2"/>`;
-  svg += `<circle class="scene-leaf" cx="48" cy="${groundY - 70}" r="24"/><circle class="scene-leaf" cx="33" cy="${groundY - 56}" r="16"/><circle class="scene-leaf" cx="64" cy="${groundY - 58}" r="15"/>`;
-  svg += `<circle class="scene-leaf" cx="952" cy="${groundY - 18}" r="15"/><circle class="scene-leaf" cx="968" cy="${groundY - 13}" r="11"/>`;
-  svg += `<rect class="scene-grass" x="0" y="${groundY - 8}" width="1000" height="10" rx="5"/>`;
-  // label the ground line when part of the house is below it, using the
-  // same words as the settings editor's divider
-  if (groundY < houseBottom) {
-    svg += `<text class="street-label" x="930" y="${groundY - 16}" text-anchor="end">street level</text>`;
-  }
-
-  // chimney (behind the roof) with drifting smoke
-  svg += `<rect class="roof" x="760" y="40" width="34" height="52"/>`;
-  svg += `<rect class="roof" x="754" y="33" width="46" height="9" rx="2"/>`;
-  [[770, 5], [780, 6], [775, 4]].forEach((p, i) => {
-    svg += `<circle class="scene-smoke" cx="${p[0]}" cy="24" r="${p[1]}" style="animation-delay:${-(i * 1.4).toFixed(1)}s"/>`;
-  });
-
-  // house: roof, walls, floors
-  svg += `<polygon class="roof" points="${(HX0 + HX1) / 2},20 ${HX0 - 24},${TOP} ${HX1 + 24},${TOP}"/>`;
+  // house: flat roof slab, walls, floors
+  svg += `<rect class="roof" x="${HX0 - 14}" y="${TOP - 9}" width="${HX1 - HX0 + 28}" height="9" rx="2"/>`;
   svg += `<rect class="wall" x="${HX0}" y="${TOP}" width="${HX1 - HX0}" height="${houseBottom - TOP}"/>`;
   FLOORS.forEach(f => {
     if (UG.has(f.key)) {
@@ -1947,18 +1902,16 @@ safely('house map', function() {
     const statuses = routers.filter(r => r.floor === f.key).map(r => r.status);
     if (f.key === mainFloor.key && gw) statuses.push(gw.status);
     const lit = statuses.length ? statuses.every(s => s === 'up') : netUp;
-    const wy = (f.y0 + f.y1) / 2 - 11;
-    [HX1 - 104, HX1 - 58].forEach(wx => {
-      svg += `<rect class="win ${lit ? 'lit' : 'off'}" x="${wx}" y="${wy}" width="30" height="38" rx="3"/>`;
-      svg += `<line class="win-bar" x1="${wx + 15}" y1="${wy}" x2="${wx + 15}" y2="${wy + 38}"/>`;
-      svg += `<line class="win-bar" x1="${wx}" y1="${wy + 19}" x2="${wx + 30}" y2="${wy + 19}"/>`;
+    const wy = (f.y0 + f.y1) / 2 - 13;
+    [HX1 - 104, HX1 - 78, HX1 - 52].forEach(wx => {
+      svg += `<rect class="win ${lit ? 'lit' : 'off'}" x="${wx}" y="${wy}" width="14" height="42" rx="2"/>`;
     });
   });
 
   // ---- the internet itself: a cloud outside the house, wired to the
   // main router. House green + cloud red = it's the ISP, not your Wi-Fi.
   if (gw) {
-    const wanD = `M ${NET.x + 40} ${NET.y + 22} Q ${(NET.x + MAIN.x) / 2 - 60} ${(NET.y + MAIN.y) / 2} ${MAIN.x - pillW('Main Router', true) / 2 - 6} ${MAIN.y}`;
+    const wanD = `M ${NET.x + 62} ${NET.y} Q ${(NET.x + MAIN.x) / 2 - 60} ${(NET.y + MAIN.y) / 2} ${MAIN.x - pillW('Main Router', true) / 2 - 6} ${MAIN.y}`;
     svg += `<g class="linkgrp ${netUp ? 'up' : 'down'}">`;
     svg += `<path class="link-glow" d="${wanD}"/><path class="link-core" d="${wanD}"/>`;
     if (netUp && !REDUCE_MOTION) {
@@ -1967,22 +1920,17 @@ safely('house map', function() {
     }
     svg += `</g>`;
   }
-  svg += `<g class="net-cloud ${netUp ? 'up' : 'down'}">`;
-  svg += `<ellipse class="cloud-body" cx="${NET.x - 32}" cy="${NET.y + 8}" rx="24" ry="13"/>`;
-  svg += `<ellipse class="cloud-body" cx="${NET.x + 32}" cy="${NET.y + 8}" rx="26" ry="13"/>`;
-  svg += `<ellipse class="cloud-body" cx="${NET.x}" cy="${NET.y - 2}" rx="46" ry="21"/>`;
-  svg += `<text class="net-label" x="${NET.x}" y="${NET.y - 4}" text-anchor="middle">Internet</text>`;
-  svg += `<text class="net-stat" x="${NET.x}" y="${NET.y + 10}" text-anchor="middle">${
-    netUp ? (DATA.current_latency != null ? Math.round(DATA.current_latency) + ' ms' : 'online') : 'offline'}</text>`;
   const lastSpeed = (DATA.speed_series || []).slice(-1)[0];
+  svg += `<g class="net-node ${netUp ? 'up' : 'down'}">`;
+  svg += `<rect class="net-box" x="${NET.x - 62}" y="${NET.y - 30}" width="124" height="60" rx="10"/>`;
+  svg += `<circle class="status-dot-svg" cx="${NET.x - 46}" cy="${NET.y - 13}" r="4"/>`;
+  svg += `<text class="net-label" x="${NET.x - 36}" y="${NET.y - 9}">Internet</text>`;
+  svg += `<text class="net-stat" x="${NET.x - 46}" y="${NET.y + 8}">${
+    netUp ? (DATA.current_latency != null ? Math.round(DATA.current_latency) + ' ms' : 'online') : 'OFFLINE'}</text>`;
   if (netUp && lastSpeed && lastSpeed.down != null) {
-    svg += `<text class="net-stat" x="${NET.x}" y="${NET.y + 40}" text-anchor="middle" opacity="0.8">&#8595;${Math.round(lastSpeed.down)} &#8593;${Math.round(lastSpeed.up)} Mbps</text>`;
-  }
-  if (!netUp) {
-    // storm: rain streaks under the cloud (the sun/moon are hidden via CSS)
-    [[-34, 0], [-18, 0.4], [-2, 0.15], [14, 0.55], [30, 0.3], [44, 0.7]].forEach(r => {
-      svg += `<line class="rain" x1="${NET.x + r[0]}" y1="${NET.y + 24}" x2="${NET.x + r[0] - 4}" y2="${NET.y + 36}" style="animation-delay:${-r[1]}s"/>`;
-    });
+    svg += `<text class="net-stat" x="${NET.x - 46}" y="${NET.y + 22}" opacity="0.8">&#8595;${Math.round(lastSpeed.down)} &#8593;${Math.round(lastSpeed.up)} Mbps</text>`;
+  } else if (!netUp) {
+    svg += `<text class="net-stat" x="${NET.x - 46}" y="${NET.y + 22}">check the ISP</text>`;
   }
   svg += `</g>`;
 

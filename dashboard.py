@@ -1064,10 +1064,43 @@ def build_html(data):
   @keyframes dashflow { to { stroke-dashoffset: -26; } }
   .house-svg .packet { fill: currentColor; }
   .house-svg .ripple { fill: none; stroke: var(--accent); }
+  /* compact router pills — details live in the hover card */
+  .house-svg .pillgrp { cursor: pointer; }
+  .house-svg .pill-box { fill: var(--surface-1); stroke: currentColor; stroke-width: 1.5; }
+  .house-svg .pill-name { fill: var(--text-primary); font-size: 11px; font-weight: 700; }
+  .house-svg .hovercard { opacity: 0; pointer-events: none; transition: opacity .15s ease; }
+  .house-svg .hovercard.show { opacity: 1; }
+  /* wi-fi coverage bubbles behind each AP */
+  .house-svg .cover { fill: currentColor; stroke: currentColor; stroke-opacity: .15; opacity: .06; }
+  .house-svg .cover.up { color: var(--status-good); }
+  .house-svg .cover.main { color: var(--accent); }
+  .house-svg .cover.down { color: var(--status-critical); opacity: .12; animation: coverPulse 2.2s ease-in-out infinite; }
+  @keyframes coverPulse { 50% { opacity: .26; } }
+  /* windows: lit while that floor's access points are all up */
+  .house-svg .win { stroke: var(--baseline); stroke-width: 1.2; }
+  .house-svg .win.lit { fill: var(--scene-sun); opacity: .78; }
+  .house-svg .win.off { fill: var(--grid); opacity: .85; }
+  .house-svg .win-bar { stroke: var(--baseline); stroke-width: 1; opacity: .6; }
+  /* the internet, drawn as an actual cloud outside the house */
+  .house-svg .net-cloud.up { color: var(--status-good); }
+  .house-svg .net-cloud.down { color: var(--status-critical); }
+  .house-svg .cloud-body { fill: var(--surface-1); stroke: currentColor; stroke-width: 1.5; }
+  .house-svg .net-label { fill: var(--text-primary); font-size: 10px; font-weight: 800; letter-spacing: .12em;
+    text-transform: uppercase; font-family: var(--font-mono); }
+  .house-svg .net-stat { fill: var(--text-secondary); font-size: 9.5px; font-family: var(--font-mono); }
+  .house-svg .net-cloud.down .net-label, .house-svg .net-cloud.down .net-stat { fill: currentColor; }
+  /* internet down = storm: rain from the cloud, no sun/moon */
+  .house-svg .rain { stroke: var(--status-critical); stroke-width: 1.6; stroke-linecap: round;
+    opacity: 0; animation: rainFall 1.1s linear infinite; }
+  @keyframes rainFall { 0% { transform: translateY(0); opacity: 0; } 25% { opacity: .7; } 100% { transform: translateY(26px); opacity: 0; } }
+  .house-svg.net-down .scene-sun, .house-svg.net-down .scene-moon,
+  .house-svg.net-down .scene-star, .house-svg.net-down .scene-smoke { display: none !important; }
   @media (prefers-reduced-motion: reduce) {
     .house-svg .scene-smoke, .house-svg .scene-cloud, .house-svg .scene-star,
     .house-svg .linkgrp.up .link-core, .house-svg .node-down .status-dot-svg,
+    .house-svg .cover.down, .house-svg .rain,
     .brand-mark .sweep, .live-dot, .ongoing-tag { animation: none; }
+    .house-svg .rain { opacity: .55; }
   }
 </style>
 </head>
@@ -1749,10 +1782,14 @@ safely('house map', function() {
   let groundY = houseBottom;
   for (const f of FLOORS) { if (UG.has(f.key)) { groundY = f.y0; break; } }
   const totalH = houseBottom + 35;
-  const HX0 = 100, HX1 = 900;             // house walls (yard on both sides)
-  const CARD_W = 176, CARD_H = 88;        // router info card size
+  // house sits right of center: the sky on the left hosts the internet
+  // cloud, so the map shows the whole chain internet -> router -> APs
+  const HX0 = 180, HX1 = 910;             // house walls (yard on both sides)
+  const CARD_W = 176, CARD_H = 88;        // hover-card size (was the always-on card)
   const mainFloor = FLOORS.find(f => f.key === H.main_floor) || FLOORS[Math.floor(FLOORS.length / 2)];
-  const MAIN = { x: 500, y: (mainFloor.y0 + mainFloor.y1) / 2 };
+  const MAIN = { x: 545, y: (mainFloor.y0 + mainFloor.y1) / 2 };
+  const NET = { x: 92, y: 64 };           // internet cloud center
+  const netUp = DATA.current_status !== 'down';
 
   const wifiIcon = (cx, cy, scale) => `
     <g transform="translate(${cx},${cy}) scale(${scale}) translate(-12,-13)" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round">
@@ -1764,20 +1801,20 @@ safely('house map', function() {
   const spread = (n, a, b) => Array.from({length: n}, (_, i) => a + (i + 1) * (b - a) / (n + 1));
   const linspace = (n, a, b) => n === 1 ? [(a + b) / 2] : Array.from({length: n}, (_, i) => a + i * (b - a) / (n - 1));
 
-  // place each router on its floor; the main router's floor splits cards
-  // left/right of it so nothing overlaps
+  // place each router on its floor; the main router's floor splits pills
+  // left/right of it so nothing overlaps. The right edge reserves room
+  // for the windows.
   const placed = [], unplaced = [];
-  const EDGE = HX0 + 14 + CARD_W / 2, EDGE2 = HX1 - 14 - CARD_W / 2;
+  const EDGE = HX0 + 95, EDGE2 = HX1 - 185;
   FLOORS.forEach(f => {
     let rs = routers.filter(r => r.floor === f.key);
     let xs;
     if (f.key === mainFloor.key) {
       // this floor hosts the main router — split its routers left/right
-      const mainHalf = (CARD_W + 16) / 2;  // main card is a bit wider
       const leftRs = [], rightRs = [];
       rs.forEach((r, i) => (i % 2 === 0 ? leftRs : rightRs).push(r));
-      const leftXs = spread(leftRs.length, HX0 + 14, MAIN.x - mainHalf - 12 - CARD_W / 2);
-      const rightXs = spread(rightRs.length, MAIN.x + mainHalf + 12 + CARD_W / 2, HX1 - 14);
+      const leftXs = spread(leftRs.length, HX0 + 24, MAIN.x - 140);
+      const rightXs = spread(rightRs.length, MAIN.x + 140, EDGE2 + 70);
       rs = [...leftRs, ...rightRs];
       xs = [...leftXs, ...rightXs];
     } else {
@@ -1820,7 +1857,30 @@ safely('house map', function() {
     </g>`;
   }
 
-  let svg = `<svg class="house-svg" viewBox="0 0 1000 ${totalH}" role="img" aria-label="Map of routers by floor">`;
+  // Compact pill: status dot + name. Everything else (IP, latency, uptime)
+  // lives in the hover card so the house doesn't read as a wall of boxes.
+  const pillLabel = name => name.length > 20 ? name.slice(0, 19) + '…' : name;
+  const pillW = (name, main) => 34 + pillLabel(name).length * (main ? 7.2 : 6.6);
+  function pill(x, y, opts, hcId) {
+    const label = pillLabel(opts.name);
+    const w = pillW(opts.name, opts.main), h = opts.main ? 30 : 26;
+    const x0 = x - w / 2, y0 = y - h / 2;
+    const cls = opts.main ? 'node-main' : (opts.status === 'up' ? 'node-up' : 'node-down');
+    return `<g class="pillgrp ${cls}" data-hc="${hcId}">
+      <rect class="pill-box" x="${x0}" y="${y0}" width="${w}" height="${h}" rx="${h / 2}"/>
+      <circle class="status-dot-svg" cx="${x0 + 14}" cy="${y}" r="4"/>
+      <text class="pill-name" x="${x0 + 24}" y="${y + 4}"${opts.main ? ' style="font-size:12px"' : ''}>${escapeHtml(label)}</text>
+    </g>`;
+  }
+  // Hover card position: above the pill when there's room, else below.
+  function hovercard(p, opts, hcId) {
+    const above = p.y - 14 - CARD_H > TOP - 30;
+    const cy = above ? p.y - 27 - CARD_H / 2 : p.y + 27 + CARD_H / 2;
+    const cx = Math.min(Math.max(p.x, CARD_W / 2 + 8), 1000 - CARD_W / 2 - 8);
+    return `<g class="hovercard" id="${hcId}">${card(cx, cy, opts)}</g>`;
+  }
+
+  let svg = `<svg class="house-svg${netUp ? '' : ' net-down'}" viewBox="0 0 1000 ${totalH}" role="img" aria-label="Map of the internet connection and routers by floor">`;
 
   // ---- gradients ----
   svg += `<defs>
@@ -1837,13 +1897,13 @@ safely('house map', function() {
   svg += `<rect fill="url(#earthGrad)" x="0" y="${groundY - 2}" width="1000" height="${totalH - groundY + 2}"/>`;
 
   // sun (light theme) / moon + stars (dark theme) — swapped via CSS
-  svg += `<g class="scene-sun"><circle cx="150" cy="70" r="32" fill="var(--scene-sun)" opacity="0.16"/><circle cx="150" cy="70" r="24" fill="var(--scene-sun)" opacity="0.32"/><circle cx="150" cy="70" r="16" fill="var(--scene-sun)"/></g>`;
+  svg += `<g class="scene-sun"><circle cx="706" cy="58" r="32" fill="var(--scene-sun)" opacity="0.16"/><circle cx="706" cy="58" r="24" fill="var(--scene-sun)" opacity="0.32"/><circle cx="706" cy="58" r="16" fill="var(--scene-sun)"/></g>`;
   svg += `<g class="scene-moon"><circle cx="858" cy="64" r="30" fill="var(--scene-moon)" opacity="0.12"/><circle cx="858" cy="64" r="19" fill="var(--scene-moon)"/><circle cx="866" cy="58" r="16" fill="var(--scene-sky-top)"/></g>`;
   [[60,42,1.4],[120,90,1.0],[190,36,1.7],[250,72,0.9],[330,28,1.2],[400,58,0.8],[470,34,1.5],[560,80,1.0],[620,30,1.2],[700,54,0.9],[760,86,1.3],[930,34,1.6],[950,96,1.0],[975,60,1.2],[290,102,0.8],[860,110,0.9]].forEach((s, i) => {
     svg += `<circle class="scene-star" cx="${s[0]}" cy="${s[1]}" r="${s[2]}" style="animation-delay:${-(i * 0.45).toFixed(2)}s"/>`;
   });
   svg += `<g class="scene-cloud"><ellipse cx="270" cy="52" rx="26" ry="11"/><ellipse cx="250" cy="57" rx="16" ry="8"/><ellipse cx="291" cy="57" rx="17" ry="8"/></g>`;
-  svg += `<g class="scene-cloud" style="animation-delay:-13s"><ellipse cx="676" cy="34" rx="20" ry="8"/><ellipse cx="661" cy="38" rx="12" ry="6"/><ellipse cx="692" cy="38" rx="13" ry="6"/></g>`;
+  svg += `<g class="scene-cloud" style="animation-delay:-13s"><ellipse cx="600" cy="32" rx="20" ry="8"/><ellipse cx="585" cy="36" rx="12" ry="6"/><ellipse cx="616" cy="36" rx="13" ry="6"/></g>`;
 
   // yard: tree on the left, bush on the right, grass strip at ground level
   svg += `<rect class="scene-trunk" x="44" y="${groundY - 58}" width="9" height="54" rx="2"/>`;
@@ -1864,7 +1924,7 @@ safely('house map', function() {
   });
 
   // house: roof, walls, floors
-  svg += `<polygon class="roof" points="500,20 ${HX0 - 24},${TOP} ${HX1 + 24},${TOP}"/>`;
+  svg += `<polygon class="roof" points="${(HX0 + HX1) / 2},20 ${HX0 - 24},${TOP} ${HX1 + 24},${TOP}"/>`;
   svg += `<rect class="wall" x="${HX0}" y="${TOP}" width="${HX1 - HX0}" height="${houseBottom - TOP}"/>`;
   FLOORS.forEach(f => {
     if (UG.has(f.key)) {
@@ -1879,6 +1939,61 @@ safely('house map', function() {
     svg += `<rect class="floor-chip" x="${HX0 + 12}" y="${f.y0 + 9}" width="${chipW}" height="20" rx="7"/>`;
     svg += `<text class="floor-label" x="${HX0 + 21}" y="${f.y0 + 23}">${escapeHtml(f.key)}</text>`;
   });
+
+  // windows on the right of each above-ground floor, lit while that
+  // floor's access points are all up — a dark floor means trouble there
+  FLOORS.forEach(f => {
+    if (f.y0 >= groundY) return;  // basements don't get windows
+    const statuses = routers.filter(r => r.floor === f.key).map(r => r.status);
+    if (f.key === mainFloor.key && gw) statuses.push(gw.status);
+    const lit = statuses.length ? statuses.every(s => s === 'up') : netUp;
+    const wy = (f.y0 + f.y1) / 2 - 11;
+    [HX1 - 104, HX1 - 58].forEach(wx => {
+      svg += `<rect class="win ${lit ? 'lit' : 'off'}" x="${wx}" y="${wy}" width="30" height="38" rx="3"/>`;
+      svg += `<line class="win-bar" x1="${wx + 15}" y1="${wy}" x2="${wx + 15}" y2="${wy + 38}"/>`;
+      svg += `<line class="win-bar" x1="${wx}" y1="${wy + 19}" x2="${wx + 30}" y2="${wy + 19}"/>`;
+    });
+  });
+
+  // ---- the internet itself: a cloud outside the house, wired to the
+  // main router. House green + cloud red = it's the ISP, not your Wi-Fi.
+  if (gw) {
+    const wanD = `M ${NET.x + 40} ${NET.y + 22} Q ${(NET.x + MAIN.x) / 2 - 60} ${(NET.y + MAIN.y) / 2} ${MAIN.x - pillW('Main Router', true) / 2 - 6} ${MAIN.y}`;
+    svg += `<g class="linkgrp ${netUp ? 'up' : 'down'}">`;
+    svg += `<path class="link-glow" d="${wanD}"/><path class="link-core" d="${wanD}"/>`;
+    if (netUp && !REDUCE_MOTION) {
+      svg += `<circle class="packet" r="3" opacity="0.9"><animateMotion dur="2.2s" repeatCount="indefinite" path="${wanD}"/></circle>`;
+      svg += `<circle class="packet" r="2.4" opacity="0.7"><animateMotion dur="2.2s" begin="-1.1s" repeatCount="indefinite" path="${wanD}"/></circle>`;
+    }
+    svg += `</g>`;
+  }
+  svg += `<g class="net-cloud ${netUp ? 'up' : 'down'}">`;
+  svg += `<ellipse class="cloud-body" cx="${NET.x - 32}" cy="${NET.y + 8}" rx="24" ry="13"/>`;
+  svg += `<ellipse class="cloud-body" cx="${NET.x + 32}" cy="${NET.y + 8}" rx="26" ry="13"/>`;
+  svg += `<ellipse class="cloud-body" cx="${NET.x}" cy="${NET.y - 2}" rx="46" ry="21"/>`;
+  svg += `<text class="net-label" x="${NET.x}" y="${NET.y - 4}" text-anchor="middle">Internet</text>`;
+  svg += `<text class="net-stat" x="${NET.x}" y="${NET.y + 10}" text-anchor="middle">${
+    netUp ? (DATA.current_latency != null ? Math.round(DATA.current_latency) + ' ms' : 'online') : 'offline'}</text>`;
+  const lastSpeed = (DATA.speed_series || []).slice(-1)[0];
+  if (netUp && lastSpeed && lastSpeed.down != null) {
+    svg += `<text class="net-stat" x="${NET.x}" y="${NET.y + 40}" text-anchor="middle" opacity="0.8">&#8595;${Math.round(lastSpeed.down)} &#8593;${Math.round(lastSpeed.up)} Mbps</text>`;
+  }
+  if (!netUp) {
+    // storm: rain streaks under the cloud (the sun/moon are hidden via CSS)
+    [[-34, 0], [-18, 0.4], [-2, 0.15], [14, 0.55], [30, 0.3], [44, 0.7]].forEach(r => {
+      svg += `<line class="rain" x1="${NET.x + r[0]}" y1="${NET.y + 24}" x2="${NET.x + r[0] - 4}" y2="${NET.y + 36}" style="animation-delay:${-r[1]}s"/>`;
+    });
+  }
+  svg += `</g>`;
+
+  // wi-fi coverage bubbles behind every node — an offline AP reads as a
+  // pulsing hole in the coverage, not just one bad pill
+  placed.forEach(p => {
+    svg += `<circle class="cover ${p.status === 'up' ? 'up' : 'down'}" cx="${p.x}" cy="${p.y}" r="62"/>`;
+  });
+  if (gw) {
+    svg += `<circle class="cover ${gw.status === 'up' ? 'main' : 'down'}" cx="${MAIN.x}" cy="${MAIN.y}" r="76"/>`;
+  }
 
   // links (under the cards): a soft glow stroke + an animated dashed core,
   // plus a data packet travelling the path when the router is up
@@ -1908,19 +2023,32 @@ safely('house map', function() {
     </circle>`;
   }
 
-  // router cards
-  placed.forEach(p => { svg += card(p.x, p.y, p); });
-
-  // main router card, drawn last so it sits on top of the link fan
+  // router pills; the detailed cards render last (on top of everything)
+  // and appear on hover/tap
+  const hcs = [];
+  placed.forEach((p, i) => {
+    svg += pill(p.x, p.y, p, 'hc-' + i);
+    hcs.push(hovercard(p, p, 'hc-' + i));
+  });
   if (gw) {
-    svg += card(MAIN.x, MAIN.y, {
-      main: true, name: 'Main Router', ip: gw.ip,
-      status: gw.status, uptime_pct: gw.uptime_pct, avg_latency: gw.avg_latency,
-    });
+    const opts = { main: true, name: 'Main Router', ip: gw.ip,
+                   status: gw.status, uptime_pct: gw.uptime_pct, avg_latency: gw.avg_latency };
+    svg += pill(MAIN.x, MAIN.y, opts, 'hc-main');
+    hcs.push(hovercard(MAIN, opts, 'hc-main'));
   }
+  svg += hcs.join('');
 
   svg += `</svg>`;
   wrap.innerHTML = svg;
+
+  // hover on desktop, tap to toggle on touch
+  wrap.querySelectorAll('.pillgrp').forEach(g => {
+    const hc = document.getElementById(g.dataset.hc);
+    if (!hc) return;
+    g.addEventListener('mouseenter', () => hc.classList.add('show'));
+    g.addEventListener('mouseleave', () => hc.classList.remove('show'));
+    g.addEventListener('click', () => hc.classList.toggle('show'));
+  });
 
   if (unplaced.length) {
     const n = document.getElementById('houseMapNote');

@@ -172,73 +172,130 @@ def fetch_identity(ip, port):
         return "", ""
 
 
-def main():
-    ip, prefix = get_own_ip_and_prefix()
+class DiscoverError(Exception):
+    """Discovery couldn't even start (no usable network interface)."""
+
+
+def discover(progress=None, ip=None, prefix=None):
+    """Full LAN discovery, importable — the setup wizard runs this in a
+    background thread and the CLI below prints from its return value.
+
+    progress: optional callable(phase, done, total) where phase is one of
+    "port-scan" / "ping-sweep" / "identify"; exceptions in it are ignored.
+    Returns {"own_ip", "network", "results": [{ip, ports, mac, hostname,
+    title, server, ping_only}]} sorted web-admin hits first, then
+    ping-only hosts, both in IP order. Raises DiscoverError when this
+    machine's own IP can't be determined.
+    """
+    def report(phase, done, total):
+        if progress:
+            try:
+                progress(phase, done, total)
+            except Exception:
+                pass
+
     if not ip:
-        print("Couldn't determine this Mac's IP address. Are you connected to Wi-Fi/Ethernet?")
-        sys.exit(1)
+        ip, prefix = get_own_ip_and_prefix()
+    if not ip:
+        raise DiscoverError("couldn't determine this machine's IP address")
 
     network = ipaddress.ip_network(f"{ip}/{prefix}", strict=False)
     hosts = list(network.hosts())
-    print(f"Scanning {network} ({len(hosts)} addresses)...")
-    print("This takes maybe 30-60 seconds depending on your network.\n")
-
     arp_table = get_arp_table()
 
-    print(f"Pass 1/2: checking for open web admin ports {PORTS_TO_CHECK}...")
     hits = []
+    done = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         for host_ip, open_ports in pool.map(check_ports, hosts):
+            done += 1
+            report("port-scan", done, len(hosts))
             if open_ports:
                 hits.append((host_ip, open_ports))
     hits.sort(key=lambda h: tuple(int(p) for p in h[0].split(".")))
 
-    print("Pass 2/2: pinging every address to find devices with no web admin at all "
-          "(common for mesh satellite nodes controlled purely through a phone app)...")
     alive_ips = set()
+    done = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         for host_ip, is_alive in pool.map(ping_alive, hosts):
+            done += 1
+            report("ping-sweep", done, len(hosts))
             if is_alive:
                 alive_ips.add(host_ip)
+
+    results = []
+    for i, (host_ip, open_ports) in enumerate(hits):
+        report("identify", i + 1, len(hits))
+        mac, hostname = arp_table.get(host_ip, (None, None))
+        title, server = "", ""
+        for port in open_ports:
+            title, server = fetch_identity(host_ip, port)
+            if title or server:
+                break
+        results.append({
+            "ip": host_ip, "ports": open_ports, "mac": mac, "hostname": hostname,
+            "title": title, "server": server, "ping_only": False,
+        })
+
+    hit_ips = {h[0] for h in hits}
+    other_alive = sorted(alive_ips - hit_ips, key=lambda a: tuple(int(p) for p in a.split(".")))
+    for host_ip in other_alive:
+        mac, hostname = arp_table.get(host_ip, (None, None))
+        results.append({"ip": host_ip, "ports": [], "mac": mac, "hostname": hostname,
+                        "title": None, "server": None, "ping_only": True})
+
+    return {"own_ip": ip, "network": str(network), "results": results}
+
+
+def main():
+    ip, prefix = get_own_ip_and_prefix()
+    if not ip:
+        print("Couldn't determine this machine's IP address. Are you connected to Wi-Fi/Ethernet?")
+        sys.exit(1)
+
+    network = ipaddress.ip_network(f"{ip}/{prefix}", strict=False)
+    print(f"Scanning {network} ({len(list(network.hosts()))} addresses)...")
+    print("This takes maybe 30-60 seconds depending on your network.\n")
+
+    # Announce each pass once, when discover() first reports it.
+    announced = set()
+    def console_progress(phase, done, total):
+        if phase in announced:
+            return
+        announced.add(phase)
+        if phase == "port-scan":
+            print(f"Pass 1/2: checking for open web admin ports {PORTS_TO_CHECK}...")
+        elif phase == "ping-sweep":
+            print("Pass 2/2: pinging every address to find devices with no web admin at all "
+                  "(common for mesh satellite nodes controlled purely through a phone app)...")
+
+    scan = discover(progress=console_progress, ip=ip, prefix=prefix)
+    results = scan["results"]
+    web_hits = [r for r in results if not r["ping_only"]]
+    ping_only = [r for r in results if r["ping_only"]]
     print()
 
-    if not hits and not alive_ips:
+    if not results:
         print("No devices responded at all. Double check you're connected to your home "
               "network (not a VPN or a guest network on a different subnet).")
         return
 
-    results = []
-    if hits:
+    if web_hits:
         print(f"{'IP':<16} {'Ports':<10} {'MAC':<19} {'Hostname':<22} Title / Server")
         print("-" * 100)
-        for host_ip, open_ports in hits:
-            mac, hostname = arp_table.get(host_ip, (None, None))
-            title, server = "", ""
-            for port in open_ports:
-                title, server = fetch_identity(host_ip, port)
-                if title or server:
-                    break
-            identity = title or server or ""
-            print(f"{host_ip:<16} {','.join(map(str, open_ports)):<10} {mac or '':<19} {(hostname or '')[:22]:<22} {identity}")
-            results.append({
-                "ip": host_ip, "ports": open_ports, "mac": mac, "hostname": hostname,
-                "title": title, "server": server,
-            })
+        for r in web_hits:
+            identity = r["title"] or r["server"] or ""
+            print(f"{r['ip']:<16} {','.join(map(str, r['ports'])):<10} {r['mac'] or '':<19} {(r['hostname'] or '')[:22]:<22} {identity}")
     else:
         print("No devices found with a web admin port open.")
 
     # Live hosts the port scan missed entirely — likely candidates for
     # mesh nodes / devices with no local web UI.
-    hit_ips = {h[0] for h in hits}
-    other_alive = sorted(alive_ips - hit_ips, key=lambda ip: tuple(int(p) for p in ip.split(".")))
-    if other_alive:
-        print(f"\nOther devices that responded to a ping but have no web admin port open ({len(other_alive)}):")
+    if ping_only:
+        print(f"\nOther devices that responded to a ping but have no web admin port open ({len(ping_only)}):")
         print(f"{'IP':<16} {'MAC':<19} Hostname")
         print("-" * 60)
-        for host_ip in other_alive:
-            mac, hostname = arp_table.get(host_ip, (None, None))
-            print(f"{host_ip:<16} {mac or '':<19} {hostname or ''}")
-            results.append({"ip": host_ip, "ports": [], "mac": mac, "hostname": hostname, "title": None, "server": None, "ping_only": True})
+        for r in ping_only:
+            print(f"{r['ip']:<16} {r['mac'] or '':<19} {r['hostname'] or ''}")
         print(
             "\nIf a mesh node is missing from the table above, it's probably in this "
             "list — many mesh satellite nodes have no local web UI at all (Eero, Nest "
@@ -253,10 +310,10 @@ def main():
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nFull results saved to {out_path}")
-    if hits:
+    if web_hits:
         print(
             "\nTo add one of these to routers.json, copy its IP and give it a name, e.g.:\n"
-            '  { "name": "Living Room AP", "ip": "' + hits[0][0] + '" }'
+            '  { "name": "Living Room AP", "ip": "' + web_hits[0]["ip"] + '" }'
         )
     print(
         "\nNote: the port-scan table finds ANY device with a web admin port open, not "

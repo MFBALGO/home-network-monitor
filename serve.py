@@ -5,13 +5,18 @@ Lets everyone on your home network open the dashboard from any device:
 
     http://<this-machine's-ip>:8080/
 
-It serves ONLY dashboard.html and the two vendored chart libraries.
-Nothing else in this folder (database, logs, config files) is reachable.
+The LAN sees ONLY dashboard.html and the two vendored chart libraries -
+the database, logs, and config files are not reachable from the network.
+The setup wizard (/setup) and settings pages (/settings), plus the
+/api/* endpoints that read and write the config files, answer ONLY to
+this machine itself (127.0.0.1); other devices get a polite 403.
+
 Stdlib only; runs on Windows, macOS, and Linux. On Windows, setup.ps1
 registers it as the "NetMon Web" scheduled task and opens TCP 8080 on
 the Private firewall profile. Change the port with the NETMON_WEB_PORT
 environment variable if 8080 is taken.
 """
+import json
 import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,7 +39,17 @@ if sys.stdout is None or sys.stderr is None:
     if sys.stderr is None:
         sys.stderr = open(os.path.join(_log_dir, "web.err.log"), "a", buffering=1, encoding="utf-8")
 
-# Whitelist: URL path -> (file on disk, content type). Anything else is 404.
+# The settings/wizard layer is optional: a partially-copied install without
+# these modules still serves the dashboard fine.
+try:
+    import settings_api
+    import settings_page
+except ImportError:
+    settings_api = settings_page = None
+
+# LAN whitelist: URL path -> (file on disk, content type). Anything else is
+# a 404 for LAN clients - this list is the entire attack surface exposed to
+# the network.
 ROUTES = {
     "/": (os.path.join(BASE_DIR, "dashboard.html"), "text/html; charset=utf-8"),
     "/dashboard.html": (os.path.join(BASE_DIR, "dashboard.html"), "text/html; charset=utf-8"),
@@ -46,17 +61,101 @@ ROUTES = {
         "application/javascript; charset=utf-8"),
 }
 
+MAX_POST_BYTES = 256 * 1024
+
+WARMING_UP_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>Home Network Monitor</title></head>
+<body style="font-family:sans-serif;background:#05080f;color:#e8eef8;
+display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+<div style="max-width:420px;text-align:center"><h2>Warming up&hellip;</h2>
+<p style="color:#a2b3cb">The dashboard is generated every minute and the first one
+isn't ready yet. This page retries automatically.</p></div></body></html>"""
+
+LOCAL_ONLY_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>Settings unavailable</title></head>
+<body style="font-family:sans-serif;background:#05080f;color:#e8eef8;
+display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+<div style="max-width:420px;text-align:center"><h2>Settings live on the monitor PC</h2>
+<p style="color:#a2b3cb">For safety, configuration can only be changed on the computer
+running the monitor. On that machine, open<br>
+<code style="color:#3fc6ff">http://localhost:%d%s</code></p>
+<p><a href="/" style="color:#3fc6ff">Back to the dashboard</a></p></div></body></html>"""
+
 
 class DashboardHandler(BaseHTTPRequestHandler):
     server_version = "NetMonWeb/" + __version__
 
+    # ---- helpers ---------------------------------------------------------
+
+    def _is_local(self):
+        return self.client_address[0] in ("127.0.0.1", "::1")
+
+    def _host_is_local(self):
+        """Anti-DNS-rebinding: a browser was told to talk to 'localhost',
+        so a request whose Host header names some other site was made by a
+        page from that other site."""
+        host = (self.headers.get("Host") or "").split(":", 1)[0].strip("[]").lower()
+        return host in ("localhost", "127.0.0.1", "::1")
+
+    def _send(self, status, body, ctype="text/html; charset=utf-8", extra=None):
+        data = body.encode("utf-8") if isinstance(body, str) else body
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
+    def _send_json(self, status, payload):
+        self._send(status, json.dumps(payload), "application/json; charset=utf-8")
+
+    # ---- LAN whitelist (unchanged behavior) ------------------------------
+
     def _serve(self, send_body):
         path = self.path.split("?", 1)[0].split("#", 1)[0]
+
+        # Localhost-only surface: wizard, settings, and their API.
+        if settings_api and path in ("/settings", "/setup") :
+            if not self._is_local():
+                self._send(403, LOCAL_ONLY_HTML % (PORT, path))
+                return
+            self._send(200, settings_page.SETTINGS_HTML if path == "/settings"
+                       else settings_page.WIZARD_HTML)
+            return
+        if settings_api and path.startswith("/api/"):
+            if not self._is_local():
+                self._send_json(403, {"ok": False, "error": "settings are only available on the monitor PC"})
+                return
+            try:
+                status, payload = settings_api.handle_get(path)
+            except Exception as e:
+                status, payload = 500, {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            self._send_json(status, payload)
+            return
+        # Fresh install, browsed from the machine itself: walk them into
+        # the wizard instead of showing an empty dashboard.
+        if settings_api and path == "/" and self._is_local() and settings_api.wizard_needed():
+            self._send(302, "", extra={"Location": "/setup"})
+            return
+
         route = ROUTES.get(path)
-        if route is None or not os.path.exists(route[0]):
+        if route is None:
             self.send_response(404)
             self.send_header("Content-Length", "0")
             self.end_headers()
+            return
+        if not os.path.exists(route[0]):
+            if path in ("/", "/dashboard.html"):
+                # Fresh install: dashboard.py hasn't produced its first file
+                # yet (runs every minute) - hold the door open instead of 404ing.
+                self._send(200, WARMING_UP_HTML, extra={"Refresh": "10"})
+            else:
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
             return
         file_path, ctype = route
         try:
@@ -86,6 +185,47 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         self._serve(False)
+
+    # ---- localhost-only writes -------------------------------------------
+
+    def do_POST(self):
+        path = self.path.split("?", 1)[0].split("#", 1)[0]
+        if settings_api is None or not path.startswith("/api/"):
+            self._send_json(404, {"ok": False, "error": "unknown endpoint"})
+            return
+        # There is deliberately no password on the settings API, so these
+        # guards do the work instead: only the machine itself may connect,
+        # and a browser page from some random website must not be able to
+        # ride along on that (CSRF / DNS rebinding).
+        if not self._is_local() or not self._host_is_local():
+            self._send_json(403, {"ok": False, "error": "settings are only available on the monitor PC"})
+            return
+        origin = self.headers.get("Origin")
+        if origin and origin.split("//", 1)[-1].split(":", 1)[0].lower() not in ("localhost", "127.0.0.1"):
+            self._send_json(403, {"ok": False, "error": "cross-origin requests are not allowed"})
+            return
+        ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        if ctype != "application/json":
+            self._send_json(415, {"ok": False, "error": "Content-Type must be application/json"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if length < 0 or length > MAX_POST_BYTES:
+            self._send_json(413, {"ok": False, "error": "request body too large"})
+            return
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+        except (ValueError, UnicodeDecodeError):
+            self._send_json(400, {"ok": False, "error": "body is not valid JSON"})
+            return
+        try:
+            status, payload = settings_api.handle_post(path, body)
+        except Exception as e:
+            # a handler bug must not kill the whole pythonw service
+            status, payload = 500, {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        self._send_json(status, payload)
 
     def log_message(self, fmt, *args):
         pass  # quiet - no per-request log spam

@@ -139,7 +139,8 @@ PLACEHOLDER_HTML = """<!DOCTYPE html>
   h1 { font-size:18px; margin:0 0 8px 0; }
   p { color:#52514e; font-size:14px; margin:0; }
 </style></head>
-<body><div class="card"><h1>No data yet</h1><p>Start monitor.py first — this page refreshes automatically once data arrives.</p></div></body></html>
+<body><div class="card"><h1>No data yet</h1><p>Start monitor.py first — this page refreshes automatically once data arrives.<br>
+First time here? On the monitor machine, open <a href="http://localhost:8080/setup">the setup wizard</a>.</p></div></body></html>
 """
 
 
@@ -829,6 +830,11 @@ def build_html(data):
   .theme-toggle button.active { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-glow); }
   #refreshCtl button { display:inline-flex; align-items:center; gap:5px; }
   #refreshCtl button.active { background: var(--status-good-bg); color: var(--status-good); box-shadow: inset 0 0 0 1px var(--glow-good); }
+  #settingsLink { background: var(--surface-1); border:1px solid var(--border); border-radius:10px;
+    box-shadow: var(--shadow); color: var(--muted); font-size:10.5px; font-weight:700;
+    letter-spacing:.07em; text-transform:uppercase; padding: 10px 14px; cursor:pointer;
+    font-family: var(--font-mono); text-decoration:none; transition: color .12s ease; }
+  #settingsLink:hover { color: var(--accent); }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 14px; margin-bottom: 32px; }
   .card { position:relative; background: linear-gradient(180deg, var(--surface-2), var(--surface-1) 58%);
@@ -1099,6 +1105,7 @@ def build_html(data):
         <button data-theme="dark">Dark</button>
         <button data-theme="auto">Auto</button>
       </div>
+      <a id="settingsLink" style="display:none" title="Configure routers, floors, and device names (only available on the monitor PC)">Settings</a>
     </div>
   </div>
 
@@ -1314,6 +1321,20 @@ if (DATA.update && DATA.update.latest) {
   if (DATA.update.url) up.href = DATA.update.url;
   up.style.display = '';
 }
+
+// Settings only work from the machine running the monitor (serve.py rejects
+// everyone else), so only surface the link where it will actually work:
+// viewed via http://localhost:8080 or opened as a local file on that machine.
+(() => {
+  const link = document.getElementById('settingsLink');
+  if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
+    link.href = '/settings';
+    link.style.display = '';
+  } else if (location.protocol === 'file:') {
+    link.href = 'http://localhost:8080/settings';
+    link.style.display = '';
+  }
+})();
 if (DATA.version) {
   document.getElementById('footerNote').textContent =
     'netmon v' + DATA.version + ' — everything on this page stays local, regenerated every minute by dashboard.py. Reload to see the latest.';
@@ -1706,7 +1727,7 @@ safely('house map', function() {
   const routers = (DATA.router_summary || []);
   const gw = DATA.gateway;
   if (!gw && routers.length === 0) {
-    wrap.innerHTML = `<div class="empty">No routers configured yet. Add each router's name, IP, and floor to <span class="mono">routers.json</span> in this folder, then restart the monitor. See the README for the exact format.</div>`;
+    wrap.innerHTML = `<div class="empty">No routers configured yet. On the monitor PC, open <a href="http://localhost:8080/setup">the setup wizard</a> (or Settings &rarr; Routers) — or hand-edit <span class="mono">routers.json</span>; changes are picked up within 15 seconds. See the README for the format.</div>`;
     return;
   }
 

@@ -1169,17 +1169,58 @@ def public_ip_loop(conn):
         time.sleep(PUBLIC_IP_CHECK_INTERVAL_SEC)
 
 
+def _routers_file_stamp():
+    """(mtime, size) of routers.json, or None if it doesn't exist — cheap
+    change detection for hot reloading. The settings UI writes the file
+    atomically (tmp + rename), so a changed stamp always means a complete
+    new file."""
+    try:
+        st = os.stat(ROUTERS_CONFIG_PATH)
+        return (st.st_mtime, st.st_size)
+    except OSError:
+        return None
+
+
 def router_loop(conn, routers):
     """Ping each configured router/access point independently, and track
     outages per-router the same way the main gateway is tracked — so a dead
     node in one room shows up as "Kitchen AP down" rather than just a vague
-    slowdown."""
-    if not routers:
-        return
+    slowdown.
 
+    routers.json is hot-reloaded (same idea as devices.json in device_loop):
+    when the file changes — e.g. saved from the settings UI — the new list
+    takes effect within one 15s cycle, no restart needed."""
     state = {r["name"]: {"consecutive_fail": 0, "open_event_id": None} for r in routers}
+    stamp = _routers_file_stamp()
 
     while True:
+        new_stamp = _routers_file_stamp()
+        if new_stamp != stamp:
+            stamp = new_stamp
+            new_routers = load_routers()
+            new_names = {r["name"] for r in new_routers}
+            # A router that was removed while it had an open outage event
+            # would otherwise show as "Ongoing" on the dashboard forever —
+            # close it out, noting why.
+            for name, st in state.items():
+                if name not in new_names and st["open_event_id"] is not None:
+                    db_execute(
+                        conn,
+                        "UPDATE events SET end_ts=?, note = note || ' [router removed from routers.json]' WHERE id=?",
+                        (now_iso(), st["open_event_id"]),
+                    )
+            # Keep warm state (fail counts, open events) for surviving names
+            # so an in-progress outage isn't reset by an unrelated edit.
+            state = {name: state.get(name, {"consecutive_fail": 0, "open_event_id": None})
+                     for name in new_names}
+            routers = new_routers
+            desc = ", ".join(f"{r['name']}={r['ip']}" for r in routers) if routers else "none"
+            log(f"routers.json changed — now monitoring: [{desc}]")
+
+        if not routers:
+            time.sleep(ROUTER_PING_INTERVAL_SEC)
+            continue
+
         ts = now_iso()
         for r in routers:
             name, ip = r["name"], r["ip"]

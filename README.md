@@ -84,20 +84,26 @@ files.
    ```
    bash setup.sh
    ```
-   This registers two background services with macOS (`launchd`) so they
+   This registers three background services with macOS (`launchd`) so they
    run continuously — including after you restart your Mac — without
    needing Terminal or this chat open:
    - `com.<your username>.netmon.monitor` — the always-on pinger/logger
    - `com.<your username>.netmon.dashboard` — regenerates `dashboard.html`
      every minute
+   - `com.<your username>.netmon.web` — serves the dashboard to your whole
+     network on port 8080 (see below)
 
    (The service names are derived from whoever runs `setup.sh`, so this
    folder works on anyone's Mac without editing anything.)
 
-That's it. Give it a few minutes to collect data, then open `dashboard.html`
-in your browser (double-click it, or `open dashboard.html` in Terminal).
-Refresh the page whenever you want the latest data — it rewrites itself
-automatically every minute, you just need to reload the tab.
+3. Open `http://localhost:8080/` in a browser on the same machine. The
+   first time, a **setup wizard** appears: it scans your network, finds
+   your routers/access points, and writes the config files for you.
+
+That's it. Give it a few minutes to collect data, then refresh the page
+whenever you want the latest — it rewrites itself automatically every
+minute, you just need to reload the tab. (You can also open
+`dashboard.html` directly as a file, without the web server.)
 
 ### Setting it up on Windows (10/11)
 
@@ -107,15 +113,17 @@ of every command it uses (`ping -n`, `arp -a`, `netsh wlan`, `route print`).
 1. Install **Python 3** if you don't have it: from
    [python.org/downloads](https://www.python.org/downloads/) (tick *"Add
    python.exe to PATH"*), or in PowerShell: `winget install Python.Python.3.12`
-2. Rename/edit the three `.example.json` files, same as on Mac.
-3. **Double-click `setup-windows.bat`** (it runs `setup.ps1`).
+2. **Double-click `setup-windows.bat`** (it runs `setup.ps1`).
+3. Open `http://localhost:8080/` in a browser — the first-run **setup
+   wizard** scans your network and writes the config for you.
 
-That registers two Task Scheduler jobs for your user account — *NetMon
-Monitor* (runs continuously from logon, auto-restarts if it crashes) and
-*NetMon Dashboard* (regenerates `dashboard.html` every minute) — downloads
-the chart library, and offers to install the optional speed test CLI and
-nmap via winget. Then open `dashboard.html` in your browser, exactly like
-on a Mac. To stop everything: double-click `uninstall-windows.bat`.
+That registers three Task Scheduler jobs for your user account — *NetMon
+Monitor* (runs continuously from logon, auto-restarts if it crashes),
+*NetMon Dashboard* (regenerates `dashboard.html` every minute), and
+*NetMon Web* (serves the dashboard to your network on port 8080) —
+downloads the chart library, and offers to install the optional speed test
+CLI and nmap via winget. To stop everything: double-click
+`uninstall-windows.bat`.
 
 Windows notes:
 
@@ -125,8 +133,52 @@ Windows notes:
 - On a non-English Windows, some Wi-Fi fields (channel/rate) may come back
   empty — everything else is parsed language-independently and works.
 - Logs go to the same `logs\` folder (`monitor.out.log`, `monitor.err.log`).
-- To check on it: open **Task Scheduler** and look for the two *NetMon*
+- To check on it: open **Task Scheduler** and look for the three *NetMon*
   entries, or in PowerShell: `Get-ScheduledTask -TaskName 'NetMon*'`
+- When run as administrator, `setup.ps1` also opens TCP 8080 in the
+  Windows firewall (Private networks only) so other devices in the house
+  can reach the dashboard; without admin rights it prints the one command
+  to run yourself.
+
+## Viewing the dashboard from any device (port 8080)
+
+`serve.py` runs as the third background service and serves the dashboard
+to your whole network:
+
+    http://<the-monitor-machine's-ip>:8080/
+
+(The setup script prints the exact address.) It's deliberately minimal:
+the network can fetch **only** `dashboard.html` and the two chart-library
+files — your database, logs, and config files are not reachable. The
+setup wizard, settings pages, and the config API answer only to the
+machine itself; from any other device they return a "settings live on the
+monitor PC" page.
+
+If port 8080 is taken, set the `NETMON_WEB_PORT` environment variable for
+the service (or just run `python serve.py` manually to test).
+
+## Setup wizard & Settings
+
+Open these **on the machine running the monitor**:
+
+- `http://localhost:8080/setup` — the first-run wizard. Scans your
+  network (about a minute), shows everything it found with the likely
+  routers pre-ticked, lets you name your floors, and writes all three
+  config files. Rerunning it later asks before overwriting an existing
+  setup.
+- `http://localhost:8080/settings` — edit everything afterwards: title,
+  floors, thresholds, plan speeds, the router list (with a rescan
+  button), and device names.
+
+Changes apply on their own: router-list edits reach the monitor within
+~15 seconds, device names within ~5 minutes, and everything else on the
+dashboard's next one-minute regeneration. No restarts, no Task
+Scheduler/launchctl commands.
+
+Prefer plain text files? All three configs (`routers.json`,
+`devices.json`, `config.json`) remain ordinary JSON you can edit by hand
+— the same hot-reloading applies. The sections below document their
+formats.
 
 ### Optional: speed test history
 
@@ -192,15 +244,13 @@ ways to find them:
   other web-admin devices, not just routers — use the title/Server column
   to tell them apart (a router's login page usually names the brand).
 
-After editing `routers.json`, restart the monitor so it picks up the
-change:
-```
-launchctl kickstart -k gui/$(id -u)/com.$(id -un).netmon.monitor
-```
-The dashboard will start showing a **Routers & access points** table (with
-each one's live status, 24h uptime, and average latency) on its next
-regeneration. No entry is required — leave the file as `[]` if you only
-want to monitor your main connection.
+The monitor picks up edits to `routers.json` by itself within ~15 seconds
+— no restart needed. The dashboard will start showing a **Routers &
+access points** table (with each one's live status, 24h uptime, and
+average latency) on its next regeneration. No entry is required — leave
+the file as `[]` if you only want to monitor your main connection. (The
+Settings page's *Routers* tab edits this same file, with a built-in
+network scan.)
 
 ### Optional: naming your devices
 
@@ -210,7 +260,7 @@ friendly names, edit `devices.json` in this folder — a plain
 
 ```json
 {
-  "22:ec:06:59:dc:20": "Friend's Mac",
+  "11:22:33:44:55:66": "Dad's iPhone",
   "aa:bb:cc:dd:ee:ff": "Living room TV"
 }
 ```
@@ -294,22 +344,60 @@ glance whether you're getting what you pay for. All optional.
 ## Sharing this setup with someone else
 
 Run `bash share.sh` — it builds `netmon-share.zip` containing the code,
-setup scripts (macOS *and* Windows), README, and *example* config files,
-but none of your personal data (no database, logs, router IPs, device
-names, or dashboard). Send the zip to a friend; they unzip it, rename/edit
-the three `.example.json` files for their home, and run the setup for
-their OS — `bash setup.sh` on a Mac, or a double-click of
-`setup-windows.bat` on Windows. (The monitoring code itself also runs on
-Linux; see the Raspberry Pi section below for service setup there.)
-Nothing in the code is tied to any one person or house.
+setup scripts (macOS *and* Windows), README, chart library, and *example*
+config files, but none of your personal data (no database, logs, router
+IPs, device names, or dashboard). Send the zip to a friend; they unzip
+it, run the setup for their OS — `bash setup.sh` on a Mac, or a
+double-click of `setup-windows.bat` on Windows — and the first-run wizard
+at `http://localhost:8080/` configures everything for their home. (The
+monitoring code itself also runs on Linux; see the Raspberry Pi section
+below for service setup there.) Nothing in the code is tied to any one
+person or house.
+
+The project also lives at
+[github.com/MFBALGO/home-network-monitor](https://github.com/MFBALGO/home-network-monitor)
+— releases there are what the update check (below) looks at.
+
+## Updates
+
+The dashboard shows a small **"Update available"** pill (top of the page,
+next to the timestamp) when a newer release exists on GitHub. The
+generating machine checks at most **once a day**, remembers the answer in
+`data/update_check.json`, and never lets a failed check affect the
+dashboard — offline, it just tries again tomorrow. This is the only
+network call the toolkit makes apart from its actual monitoring targets;
+turn it off by adding `"update_check": false` to `config.json` (or
+unticking it in Settings).
+
+To update: download the new release zip and copy the `.py` files over
+your old ones (your `data/`, configs, and logs are never part of the
+zip), then restart the services (`bash setup.sh` / `setup-windows.bat`
+re-registers them safely).
+
+## Troubleshooting
+
+If an install misbehaves, run:
+
+```
+python diagnose.py
+```
+
+It writes `netmon-diagnostics-<timestamp>.zip` containing a status report
+(versions, service state, database health, recent events), the logs, and
+your config files — one file to send to whoever is helping you.
+**Review it first**: it contains your device names, router IPs/MACs, and
+file paths.
 
 ## Checking it's running
 
 ```
 launchctl list | grep netmon
 ```
-You should see both the `...netmon.monitor` and `...netmon.dashboard`
-services listed. Logs are in the `logs/` folder if something looks wrong.
+You should see the `...netmon.monitor`, `...netmon.dashboard`, and
+`...netmon.web` services listed (on Windows:
+`Get-ScheduledTask -TaskName 'NetMon*'`). Logs are in the `logs/` folder
+if something looks wrong — and `python diagnose.py` bundles everything
+relevant (see Troubleshooting).
 
 ## Stopping it
 
@@ -326,14 +414,20 @@ dashboard.
 | `monitor.py` | The always-on background monitor (ping/wifi/devices/speedtest → SQLite) |
 | `dashboard.py` | Reads the database, writes `dashboard.html` |
 | `dashboard.html` | The dashboard itself — open this in a browser |
+| `serve.py` | Serves the dashboard to your network on port 8080, plus the localhost-only wizard/settings |
+| `settings_api.py` / `settings_page.py` | The wizard and settings pages behind `serve.py` |
 | `data/network_monitor.db` | SQLite database of everything collected |
-| `routers.json` | Optional list of extra routers/access points to monitor by name (with optional floor) — edit this directly |
-| `devices.json` | Optional MAC → friendly-name mapping for the device table and new-device alerts — edit this directly |
+| `routers.json` | Optional list of extra routers/access points to monitor by name (with optional floor) |
+| `devices.json` | Optional MAC → friendly-name mapping for the device table and new-device alerts |
+| `config.json` | Optional house/dashboard settings: title, floors, thresholds, plan speeds |
 | `scan_routers.py` | One-off diagnostic: scans your LAN for devices with a web admin port open, to help you find router IPs |
+| `diagnose.py` | Builds a diagnostics zip for remote troubleshooting |
+| `version.py` | The toolkit's version number (what the update check compares against) |
 | `setup.sh` / `uninstall.sh` | Install/remove the background services (macOS/Linux) |
 | `setup.ps1` / `uninstall.ps1` | The same for Windows (Task Scheduler); run via the `.bat` files |
 | `setup-windows.bat` / `uninstall-windows.bat` | Double-clickable launchers for the PowerShell scripts |
 | `*.plist` | macOS launchd service definitions (templates; `setup.sh` fills in the real path) |
+| `vendor/` | Pinned local copy of the chart library, so charts render while your internet is down |
 | `logs/` | stdout/stderr logs from the background services, for troubleshooting |
 
 ## Moving this to a Raspberry Pi or home server later

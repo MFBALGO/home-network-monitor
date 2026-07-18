@@ -100,7 +100,7 @@ def get_arp_table():
         out = subprocess.run(["arp", "-a"], capture_output=True, text=True, timeout=10, **SUBPROCESS_EXTRA).stdout
         for line in out.splitlines():
             if IS_WINDOWS:
-                # "  192.168.1.1     68-7f-f0-2e-a2-00     dynamic"
+                # "  192.168.1.1     aa-bb-cc-dd-ee-ff     dynamic"
                 m = re.match(r"\s*(\d+\.\d+\.\d+\.\d+)\s+(([0-9a-fA-F]{2}-){5}[0-9a-fA-F]{2})\s", line)
                 if m:
                     table[m.group(1)] = (m.group(2).replace("-", ":").lower(), None)

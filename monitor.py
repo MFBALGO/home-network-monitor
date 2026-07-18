@@ -770,7 +770,7 @@ def scan_devices():
             log_error(f"{' '.join(arp_cmd)} exited {result.returncode}: {result.stderr.strip()[:200]}")
         for line in result.stdout.splitlines():
             if IS_WINDOWS:
-                # format: "  192.168.1.1     68-7f-f0-2e-a2-00     dynamic"
+                # format: "  192.168.1.1     aa-bb-cc-dd-ee-ff     dynamic"
                 m = re.match(r"\s*(\d+\.\d+\.\d+\.\d+)\s+(([0-9a-fA-F]{2}-){5}[0-9a-fA-F]{2})\s", line)
                 if m:
                     ip, mac = m.group(1), m.group(2).replace("-", ":")

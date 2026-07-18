@@ -47,7 +47,7 @@ python scan_routers.py  # standalone LAN scanner to find router IPs
 ```
 
 macOS: `bash setup.sh` registers launchd jobs `com.<user>.netmon.monitor`
-/ `.dashboard`; restart the monitor with
+/ `.dashboard` / `.web`; restart the monitor with
 `launchctl kickstart -k gui/$(id -u)/com.$(id -un).netmon.monitor`.
 
 Scheduled tasks on Windows (registered by `setup.ps1`):
@@ -99,16 +99,40 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   24h/7d toggle; devices table with friendly names from devices.json,
   `hide_ip_prefixes` drops matching devices. Chart colors are baked at
   build time → charts fully re-render on theme change.
-- `serve.py` — stdlib LAN web server. Serves ONLY dashboard.html + the
-  two vendor JS files to the LAN (whitelist ROUTES dict; DB/logs/config
-  unreachable). Port 8080 (`NETMON_WEB_PORT` to override), no-store on
-  HTML, 503 + Retry-After if the file is mid-rewrite.
+- `serve.py` — stdlib LAN web server. LAN sees ONLY dashboard.html + the
+  two vendor JS files (whitelist ROUTES dict; DB/logs/config
+  unreachable). Localhost additionally gets `/setup` (first-run wizard),
+  `/settings`, and the `/api/*` config endpoints — POSTs are guarded
+  against CSRF/DNS-rebinding (Host/Origin/Content-Type checks, 256KB
+  body cap). `/` 302s to the wizard on a fresh install and serves a
+  "warming up" page until dashboard.html first exists. Port 8080
+  (`NETMON_WEB_PORT` to override), no-store on HTML, 503 + Retry-After
+  if the file is mid-rewrite.
+- `settings_api.py` — HTTP-agnostic backend for the wizard/settings:
+  tolerant loads, atomic saves (tmp+fsync+os.replace with retry),
+  per-file validators returning (errors, warnings), and the background
+  discovery job (threading.Lock-guarded status dict, decorates results
+  with is_gateway/suggested/known_router_name).
+- `settings_page.py` — `WIZARD_HTML` (auto-scan → floors → routers →
+  review, 409-guarded overwrite) and `SETTINGS_HTML` (General/Routers/
+  Devices tabs) as Python strings served from memory, styled to match
+  the dashboard.
 - `scan_routers.py` — standalone LAN scanner to find router IPs (TCP
-  80/443 sweep + ping sweep + ARP + HTTP title fingerprint).
+  80/443 sweep + ping sweep + ARP + HTTP title fingerprint). Core logic
+  is the importable `discover(progress=None)`; the CLI prints from its
+  return value.
+- `version.py` — single source of truth for the version; every script
+  imports it with a fallback and supports `--version`. dashboard.py runs
+  a daily fail-silent GitHub releases check (cached in
+  `data/update_check.json`, opt-out `"update_check": false`).
+- `diagnose.py` — builds `netmon-diagnostics-*.zip` (report + logs tail
+  + configs) for remote troubleshooting; `build_bundle()` is importable.
 - SQLite tables: `pings`, `router_pings`, `devices`, `dns_checks`,
   `events`, `public_ip`, `speedtests`, `wifi`.
 - Config files (all optional, user-editable JSON in this folder; the
-  committed `.example.json` files show the format):
+  committed `.example.json` files show the format; normally written by
+  the wizard/settings UI, hot-reloaded — routers ≤15s, devices ≤5min,
+  config on next dashboard regen, no restarts):
   - `routers.json` — [{name, ip, floor}], order = file order.
   - `devices.json` — {mac: friendly name}.
   - `config.json` — {title, floors[], underground_floors[],

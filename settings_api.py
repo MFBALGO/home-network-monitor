@@ -87,7 +87,7 @@ def save_json_atomic(path, obj):
 
 
 def normalize_mac(mac):
-    """'68-7F-F0-2E-A2-00' -> '68:7f:f0:2e:a2:00'; None if hopeless."""
+    """'AA-BB-CC-DD-EE-FF' -> 'aa:bb:cc:dd:ee:ff'; None if hopeless."""
     m = str(mac).strip().lower().replace("-", ":")
     return m if MAC_RE.fullmatch(m) else None
 

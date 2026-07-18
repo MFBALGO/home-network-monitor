@@ -7,7 +7,7 @@
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 
 FOUND=false
-for plist in "$LAUNCH_AGENTS_DIR"/*.netmon.monitor.plist "$LAUNCH_AGENTS_DIR"/*.netmon.dashboard.plist; do
+for plist in "$LAUNCH_AGENTS_DIR"/*.netmon.monitor.plist "$LAUNCH_AGENTS_DIR"/*.netmon.dashboard.plist "$LAUNCH_AGENTS_DIR"/*.netmon.web.plist; do
   [ -f "$plist" ] || continue
   FOUND=true
   launchctl unload "$plist" 2>/dev/null || true

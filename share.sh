@@ -14,9 +14,12 @@ NETMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAGE="$(mktemp -d)/network-monitor"
 mkdir -p "$STAGE"
 
-for f in monitor.py dashboard.py scan_routers.py setup.sh uninstall.sh share.sh \
+for f in monitor.py dashboard.py serve.py scan_routers.py version.py diagnose.py \
+         settings_api.py settings_page.py \
+         setup.sh uninstall.sh share.sh \
          setup.ps1 uninstall.ps1 setup-windows.bat uninstall-windows.bat \
-         netmon.monitor.plist netmon.dashboard.plist README.md; do
+         netmon.monitor.plist netmon.dashboard.plist netmon.web.plist README.md \
+         routers.example.json devices.example.json config.example.json; do
   if [ -f "$NETMON_DIR/$f" ]; then
     cp "$NETMON_DIR/$f" "$STAGE/"
   else
@@ -24,42 +27,17 @@ for f in monitor.py dashboard.py scan_routers.py setup.sh uninstall.sh share.sh 
   fi
 done
 
-cat > "$STAGE/routers.example.json" << 'EOF'
-[
-  { "name": "Living Room AP", "ip": "192.168.1.5", "floor": "Ground Floor" },
-  { "name": "Bedroom Mesh Node", "ip": "192.168.1.6", "floor": "First Floor" }
-]
-EOF
-
-cat > "$STAGE/devices.example.json" << 'EOF'
-{
-  "aa:bb:cc:dd:ee:ff": "My iPhone"
-}
-EOF
-
-cat > "$STAGE/config.example.json" << 'EOF'
-{
-  "title": "Home Network Monitor",
-  "floors": ["First Floor", "Ground Floor"],
-  "underground_floors": [],
-  "main_router_floor": "Ground Floor"
-}
-EOF
+# Ship the vendored chart library when present, so the dashboard renders
+# charts immediately (and offline) without the setup script needing a CDN.
+if [ -d "$NETMON_DIR/vendor" ]; then
+  mkdir -p "$STAGE/vendor"
+  cp "$NETMON_DIR"/vendor/*.js "$STAGE/vendor/" 2>/dev/null || true
+fi
 
 cat > "$STAGE/START-HERE.txt" << 'EOF'
 Quick start
 ===========
-1. Rename the three example files (remove ".example"):
-     routers.example.json -> routers.json   (your routers/APs, IPs, floors)
-     devices.example.json -> devices.json   (friendly names, fill in over time)
-     config.example.json  -> config.json    (your house: title, floors
-                                             top-to-bottom, which floors are
-                                             underground, where the main
-                                             router is drawn)
-   Edit them for your home. All three are optional — the monitor runs
-   without them, you just get fewer labels on the dashboard.
-
-2. Run the setup for your operating system:
+1. Run the setup for your operating system:
 
    Mac:      open Terminal, cd into this folder, run:  bash setup.sh
 
@@ -71,14 +49,35 @@ Quick start
              (launchd) — see the README's Raspberry Pi/Linux section
              for a systemd/cron setup.
 
-3. Wait a few minutes, then open dashboard.html in your browser.
+2. On the same computer, open  http://localhost:8080/  in a browser.
+   A setup wizard appears the first time: it scans your network, finds
+   your routers/access points, and writes the config for you.
+
+   (Prefer editing files by hand? Rename the three .example.json files
+   — remove ".example" — and edit them; the format is in README.md.
+   All three are optional.)
+
+3. Wait a few minutes for data to accumulate. Every device on your
+   Wi-Fi can open the dashboard at  http://<that-computer's-ip>:8080/
+   — the setup prints the exact address.
 
 Full documentation is in README.md (including a Windows section).
 EOF
 
 OUT="$NETMON_DIR/netmon-share.zip"
 rm -f "$OUT"
-(cd "$(dirname "$STAGE")" && zip -rq "$OUT" "$(basename "$STAGE")")
+if command -v zip >/dev/null 2>&1; then
+  (cd "$(dirname "$STAGE")" && zip -rq "$OUT" "$(basename "$STAGE")")
+else
+  # Git Bash on Windows usually has no zip binary — use Python's instead.
+  PY="$(command -v python3 || command -v python)"
+  if [ -z "$PY" ]; then
+    echo "ERROR: neither 'zip' nor python found — can't build the archive."
+    exit 1
+  fi
+  "$PY" -c "import shutil, sys; shutil.make_archive(sys.argv[1][:-4], 'zip', sys.argv[2], sys.argv[3])" \
+    "$OUT" "$(dirname "$STAGE")" "$(basename "$STAGE")"
+fi
 rm -rf "$(dirname "$STAGE")"
 echo "Created $OUT"
 echo "Send this file to your friend — it contains no personal data."

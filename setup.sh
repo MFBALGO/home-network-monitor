@@ -108,10 +108,10 @@ LABEL_PREFIX="com.$(id -un).netmon"
 # Clean up services installed by any previous version/prefix of this setup
 # (e.g. an older hardcoded label, or a copy of the folder set up under a
 # different username) so two monitors never run at once.
-for old in "$LAUNCH_AGENTS_DIR"/*.netmon.monitor.plist "$LAUNCH_AGENTS_DIR"/*.netmon.dashboard.plist; do
+for old in "$LAUNCH_AGENTS_DIR"/*.netmon.monitor.plist "$LAUNCH_AGENTS_DIR"/*.netmon.dashboard.plist "$LAUNCH_AGENTS_DIR"/*.netmon.web.plist; do
   [ -f "$old" ] || continue
   case "$(basename "$old")" in
-    "${LABEL_PREFIX}.monitor.plist"|"${LABEL_PREFIX}.dashboard.plist") ;; # current — reloaded below
+    "${LABEL_PREFIX}.monitor.plist"|"${LABEL_PREFIX}.dashboard.plist"|"${LABEL_PREFIX}.web.plist") ;; # current — reloaded below
     *)
       echo "Removing old service $(basename "$old")"
       launchctl unload "$old" 2>/dev/null || true
@@ -120,13 +120,23 @@ for old in "$LAUNCH_AGENTS_DIR"/*.netmon.monitor.plist "$LAUNCH_AGENTS_DIR"/*.ne
   esac
 done
 
-for kind in monitor dashboard; do
+INSTALLED_KINDS=""
+for kind in monitor dashboard web; do
   src="$NETMON_DIR/netmon.${kind}.plist"
   # fall back to a legacy template name if the generic one isn't present
   [ -f "$src" ] || src="$(ls "$NETMON_DIR"/*.netmon.${kind}.plist 2>/dev/null | head -1)"
   if [ -z "$src" ] || [ ! -f "$src" ]; then
+    if [ "$kind" = web ]; then
+      # the LAN web server is optional (mirrors setup.ps1's Test-Path guard)
+      echo "netmon.web.plist / serve.py not found — skipping the LAN web server service."
+      continue
+    fi
     echo "ERROR: no plist template found for '${kind}' — expected netmon.${kind}.plist in this folder."
     exit 1
+  fi
+  if [ "$kind" = web ] && [ ! -f "$NETMON_DIR/serve.py" ]; then
+    echo "serve.py not found — skipping the LAN web server service."
+    continue
   fi
   dst="$LAUNCH_AGENTS_DIR/${LABEL_PREFIX}.${kind}.plist"
   sed -e "s|__NETMON_DIR__|$NETMON_DIR|g" \
@@ -134,13 +144,14 @@ for kind in monitor dashboard; do
       -e "s|<string>com\.[A-Za-z0-9_-]*\.netmon\.${kind}</string>|<string>${LABEL_PREFIX}.${kind}</string>|g" \
       "$src" > "$dst"
   echo "Installed $dst"
+  INSTALLED_KINDS="$INSTALLED_KINDS $kind"
 done
 
 echo "Loading launchd services..."
-launchctl unload "$LAUNCH_AGENTS_DIR/${LABEL_PREFIX}.monitor.plist" 2>/dev/null || true
-launchctl unload "$LAUNCH_AGENTS_DIR/${LABEL_PREFIX}.dashboard.plist" 2>/dev/null || true
-launchctl load "$LAUNCH_AGENTS_DIR/${LABEL_PREFIX}.monitor.plist"
-launchctl load "$LAUNCH_AGENTS_DIR/${LABEL_PREFIX}.dashboard.plist"
+for kind in $INSTALLED_KINDS; do
+  launchctl unload "$LAUNCH_AGENTS_DIR/${LABEL_PREFIX}.${kind}.plist" 2>/dev/null || true
+  launchctl load "$LAUNCH_AGENTS_DIR/${LABEL_PREFIX}.${kind}.plist"
+done
 
 echo ""
 echo "Done. The monitor is now running continuously in the background and will"
@@ -149,6 +160,15 @@ echo ""
 echo "Dashboard file: $NETMON_DIR/dashboard.html (regenerates every minute)"
 echo "Open it once now (it'll be mostly empty until data accumulates):"
 echo "  open \"$NETMON_DIR/dashboard.html\""
+case " $INSTALLED_KINDS " in *" web "*)
+  LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || true)"
+  [ -n "$LAN_IP" ] || LAN_IP="<this-machines-ip>"
+  echo ""
+  echo "House-wide dashboard: any device on your network can open"
+  echo "  http://${LAN_IP}:8080/"
+  echo "First time? Configure everything at http://localhost:8080/setup (this machine only)."
+  ;;
+esac
 echo ""
 echo "To check the monitor is alive:  launchctl list | grep netmon"
 echo "To stop everything:             bash uninstall.sh"

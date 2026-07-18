@@ -226,6 +226,14 @@ def init_db():
     for migration in (
         "ALTER TABLE events ADD COLUMN router_name TEXT",
         "ALTER TABLE router_pings ADD COLUMN method TEXT",  # 'icmp' or 'tcp'
+        # Bufferbloat columns: the Ookla CLI reports latency measured
+        # *while* the line is saturated — the number that explains "speed
+        # tests look fine but calls stutter". NULL = old row / old CLI /
+        # python-fallback tester (none of which measure it).
+        "ALTER TABLE speedtests ADD COLUMN jitter_ms REAL",
+        "ALTER TABLE speedtests ADD COLUMN loaded_latency_down_ms REAL",
+        "ALTER TABLE speedtests ADD COLUMN loaded_latency_up_ms REAL",
+        "ALTER TABLE speedtests ADD COLUMN packet_loss_pct REAL",
     ):
         try:
             conn.execute(migration)
@@ -582,6 +590,7 @@ def dns_loop(conn):
     every minute and log an event when it's down."""
     consecutive_fail = 0
     open_event_id = None
+    failed_domains = []   # domains tried during the current failure streak
     i = 0
     while True:
         domain = DNS_TEST_DOMAINS[i % len(DNS_TEST_DOMAINS)]
@@ -595,17 +604,24 @@ def dns_loop(conn):
         )
         if ok:
             consecutive_fail = 0
+            failed_domains = []
             if open_event_id is not None:
                 db_execute(conn, "UPDATE events SET end_ts=? WHERE id=?", (ts, open_event_id))
                 open_event_id = None
         else:
             consecutive_fail += 1
+            if domain not in failed_domains:
+                failed_domains.append(domain)
             if consecutive_fail >= OUTAGE_FAILURE_THRESHOLD and open_event_id is None:
+                # Name the domains that failed: "it wasn't just one weird
+                # site" is the difference between a DNS outage and a CDN blip
+                # when reading the log later.
+                tried = ", ".join(failed_domains[:4])
                 cur = db_execute(
                     conn,
                     "INSERT INTO events (start_ts, kind, scope, note) VALUES (?,?,?,?)",
                     (ts, "outage", "dns",
-                     "DNS lookups failing — websites won't load by name even if pings still work"),
+                     f"DNS lookups failing (tried: {tried}) — websites won't load by name even if pings still work"),
                 )
                 open_event_id = cur.lastrowid
         time.sleep(DNS_CHECK_INTERVAL_SEC)
@@ -874,11 +890,22 @@ def run_speedtest():
                 capture_output=True, text=True, timeout=90, env=env, **SUBPROCESS_EXTRA,
             )
             data = json.loads(result.stdout)
+            # Bufferbloat data: download/upload.latency.iqm is the latency
+            # measured WHILE the pipe is saturated. A big jump over the idle
+            # ping is why "speed tests look fine but calls stutter". Older
+            # CLI builds omit these (and packetLoss needs a loss-capable
+            # server), hence the guarded .get() chains → None when absent.
+            def _r(v, nd=1):
+                return round(v, nd) if isinstance(v, (int, float)) else None
             return {
                 "download_mbps": round(data["download"]["bandwidth"] * 8 / 1_000_000, 2),
                 "upload_mbps": round(data["upload"]["bandwidth"] * 8 / 1_000_000, 2),
                 "ping_ms": round(data["ping"]["latency"], 1),
                 "server": data.get("server", {}).get("name"),
+                "jitter_ms": _r((data.get("ping") or {}).get("jitter")),
+                "loaded_latency_down_ms": _r(((data.get("download") or {}).get("latency") or {}).get("iqm")),
+                "loaded_latency_up_ms": _r(((data.get("upload") or {}).get("latency") or {}).get("iqm")),
+                "packet_loss_pct": _r(data.get("packetLoss"), 2),
             }
         except Exception as e:
             detail = f"speedtest CLI failed: {e}"
@@ -1134,8 +1161,12 @@ def speedtest_loop(conn):
         else:
             db_execute(
                 conn,
-                "INSERT INTO speedtests (ts, download_mbps, upload_mbps, ping_ms, server) VALUES (?,?,?,?,?)",
-                (ts, result.get("download_mbps"), result.get("upload_mbps"), result.get("ping_ms"), result.get("server")),
+                "INSERT INTO speedtests (ts, download_mbps, upload_mbps, ping_ms, server,"
+                " jitter_ms, loaded_latency_down_ms, loaded_latency_up_ms, packet_loss_pct)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
+                (ts, result.get("download_mbps"), result.get("upload_mbps"), result.get("ping_ms"), result.get("server"),
+                 result.get("jitter_ms"), result.get("loaded_latency_down_ms"),
+                 result.get("loaded_latency_up_ms"), result.get("packet_loss_pct")),
             )
         time.sleep(SPEEDTEST_INTERVAL_SEC)
 

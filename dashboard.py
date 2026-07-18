@@ -184,6 +184,11 @@ def main():
     for migration in (
         "ALTER TABLE events ADD COLUMN router_name TEXT",
         "ALTER TABLE router_pings ADD COLUMN method TEXT",
+        # bufferbloat columns (mirror of monitor.py's list — keep in sync)
+        "ALTER TABLE speedtests ADD COLUMN jitter_ms REAL",
+        "ALTER TABLE speedtests ADD COLUMN loaded_latency_down_ms REAL",
+        "ALTER TABLE speedtests ADD COLUMN loaded_latency_up_ms REAL",
+        "ALTER TABLE speedtests ADD COLUMN packet_loss_pct REAL",
     ):
         try:
             conn.execute(migration)
@@ -206,7 +211,9 @@ def main():
 
     pings = q(conn, "SELECT ts, target, target_type, success, latency_ms FROM pings WHERE ts >= ? ORDER BY ts", (since,))
     events = q(conn, "SELECT start_ts, end_ts, kind, scope, note, router_name FROM events WHERE start_ts >= ? ORDER BY start_ts DESC", (since,))
-    speedtests = q(conn, "SELECT ts, download_mbps, upload_mbps, ping_ms, error FROM speedtests WHERE ts >= ? ORDER BY ts", (since,))
+    speedtests = q(conn, "SELECT ts, download_mbps, upload_mbps, ping_ms, error,"
+                   " jitter_ms, loaded_latency_down_ms, loaded_latency_up_ms, packet_loss_pct"
+                   " FROM speedtests WHERE ts >= ? ORDER BY ts", (since,))
     wifi = q(conn, "SELECT ts, ssid, rssi_dbm, noise_dbm, channel, tx_rate_mbps FROM wifi WHERE ts >= ? ORDER BY ts", (since,))
     router_pings = q(conn, "SELECT ts, name, ip, success, latency_ms, method FROM router_pings WHERE ts >= ? ORDER BY ts", (since,))
     dns_checks = q(conn, "SELECT ts, domain, success, latency_ms FROM dns_checks WHERE ts >= ? ORDER BY ts", (since,))
@@ -277,6 +284,15 @@ def main():
         d["name"] = device_names.get(norm_mac(d["mac"]))
 
     public_ip_rows = q(conn, "SELECT ts, ip FROM public_ip WHERE ts >= ? AND ip IS NOT NULL ORDER BY ts", (since,))
+    # Health of the public-IP checks themselves over the last 24h: repeated
+    # fetch failures usually mean brief ISP drops between ping samples —
+    # worth a hint even though no outage event fired.
+    ip_health = q(
+        conn,
+        "SELECT COUNT(*) AS checks, SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) AS failures"
+        " FROM public_ip WHERE ts >= ?",
+        (iso(datetime.now(timezone.utc) - timedelta(hours=24)),),
+    )[0]
 
     conn.close()
 
@@ -561,6 +577,15 @@ def main():
 
     speed_series = [s for s in speedtests if s.get("download_mbps") is not None]
     wifi_series = [w for w in wifi if w.get("rssi_dbm") not in (None, "")]
+    # Failed speed-test runs, EXCLUDING the standing "no tool installed"
+    # message — that's an empty-state, not an incident, and would paint a
+    # mark every 30 minutes forever.
+    speed_failures = [
+        {"t": s["ts"], "error": (s["error"] or "")[:160]}
+        for s in speedtests
+        if s.get("download_mbps") is None and s.get("error")
+        and "no speed test tool installed" not in s["error"]
+    ]
 
     data = {
         "generated_at": now.isoformat(),
@@ -618,7 +643,12 @@ def main():
         "dns_24h": dns_24h,
         "device_count_series": device_count_series,
         "routers_chart": routers_chart,
-        "speed_series": [{"t": s["ts"], "down": s["download_mbps"], "up": s["upload_mbps"], "ping": s["ping_ms"]} for s in speed_series],
+        "speed_series": [{"t": s["ts"], "down": s["download_mbps"], "up": s["upload_mbps"], "ping": s["ping_ms"],
+                          "jitter": s.get("jitter_ms"), "lat_down": s.get("loaded_latency_down_ms"),
+                          "lat_up": s.get("loaded_latency_up_ms"), "ploss": s.get("packet_loss_pct")}
+                         for s in speed_series],
+        "speed_failures": speed_failures,
+        "public_ip_health": {"checks": ip_health.get("checks") or 0, "failures": ip_health.get("failures") or 0},
         "wifi_series": [{"t": w["ts"], "rssi": w["rssi_dbm"], "channel": w["channel"]} for w in wifi_series],
         "devices": devices,
         "last_device_scan_ts": last_scan_ts,
@@ -1040,6 +1070,25 @@ def build_html(data):
     font-size: 13px; color: var(--text-primary); }
   .warning-banner b { display:block; margin-bottom: 2px; }
 
+  /* "What's wrong right now" verdict — one plain-language line + a
+     recommended action, colored by severity. The single most important
+     element on the page when something is broken. */
+  .diag-banner { border: 1px solid var(--border); border-left: 4px solid var(--muted);
+    border-radius: 10px; padding: 13px 16px; margin-bottom: 18px;
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .diag-banner .diag-head { font-size: 15px; font-weight: 700; }
+  .diag-banner .diag-action { font-size: 13px; color: var(--text-secondary); }
+  .diag-banner .diag-chip { font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+    margin-left: auto; white-space: nowrap; }
+  .diag-banner .diag-also { flex-basis: 100%; font-size: 12px; color: var(--muted); }
+  .diag-ok      { border-left-color: var(--status-good);     background: var(--status-good-bg); }
+  .diag-warn    { border-left-color: var(--status-warning);  background: var(--status-warning-bg); }
+  .diag-serious { border-left-color: var(--status-serious);  background: var(--status-warning-bg); }
+  .diag-crit    { border-left-color: var(--status-critical); background: var(--status-critical-bg); }
+  .diag-ok .diag-head { color: var(--status-good); }
+  .diag-serious .diag-head { color: var(--status-serious); }
+  .diag-crit .diag-head { color: var(--status-critical); }
+
   /* ---------- house map ---------- */
   .house-svg { display:block; width:100%; max-width: 860px; margin: 0 auto; height:auto; }
   .house-svg .wall { fill: var(--scene-wall); stroke: var(--baseline); stroke-width: 1.5; }
@@ -1161,6 +1210,8 @@ def build_html(data):
     </div>
   </div>
 
+  <div id="diagBanner" class="diag-banner" style="display:none"></div>
+
   <div class="grid">
     <div class="card card-hero">
       <h3>Current status</h3>
@@ -1264,6 +1315,13 @@ def build_html(data):
         <div class="chart-label">Wi-Fi signal (dBm, higher is better)</div>
         <div class="chart-box sm"><canvas id="wifiChart"></canvas></div>
         <div id="wifiEmpty" class="empty" style="display:none">No Wi-Fi signal data yet.</div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-label" style="display:flex; align-items:center; gap:8px;">Latency under load (ms)
+          <span class="rating" id="rateBufferbloat"></span></div>
+        <div class="chart-box sm"><canvas id="loadedLatencyChart"></canvas></div>
+        <div id="loadedLatencyEmpty" class="empty" style="display:none">No latency-under-load data yet — it needs the official Ookla speedtest CLI (see README) and appears after the next test.</div>
+        <div id="bufferbloatHint" class="stat-sub" style="display:none"></div>
       </div>
     </div>
   </section>
@@ -1428,6 +1486,19 @@ if (DATA.current_public_ip && DATA.ip_stable_since) {
 } else {
   document.getElementById('publicIpStable').textContent = '';
 }
+safely('public ip health', function() {
+  // Repeated public-IP fetch failures usually mean the connection blipped
+  // between ping samples — an ISP-flakiness signal that used to be
+  // collected and then silently dropped. Only warn on a real pattern
+  // (≥3 failures AND >25% of checks), never on a single transient.
+  const h = DATA.public_ip_health || {};
+  if ((h.failures || 0) >= 3 && h.failures / Math.max(1, h.checks) > 0.25) {
+    const el = document.getElementById('publicIpStable');
+    el.innerHTML = escapeHtml(el.textContent)
+      + '<br><span style="color:var(--status-warning); font-weight:600;">⚠ '
+      + h.failures + ' of ' + h.checks + ' IP checks failed in 24h — brief ISP drops can cause this</span>';
+  }
+});
 
 function renderDelta(elId, value, opts) {
   const el = document.getElementById(elId);
@@ -1455,6 +1526,10 @@ const THRESHOLDS = {
   loss:    { good: 1,    fair: 2.5,  dir: 'low',  unit: '%',  labels: ['GOOD', 'FAIR', 'HIGH'] },
   uptime:  { good: 99.9, fair: 99,   dir: 'high', unit: '%',  labels: ['GOOD', 'FAIR', 'LOW']  },
   wifi:    { good: -60,  fair: -70,  dir: 'high', unit: 'dBm', labels: ['STRONG', 'OK', 'WEAK'] },
+  // Bufferbloat = how much latency CLIMBS while the line is saturated
+  // (loaded minus idle). Boundaries follow Waveform's widely-used grading:
+  // ≤30ms added is an A, 100ms+ is where calls/games visibly suffer.
+  bufferbloat: { good: 30, fair: 100, dir: 'low', unit: 'ms', labels: ['GOOD', 'FAIR', 'POOR'] },
 };
 // merge per-metric overrides from config.json (only good/fair are honoured)
 Object.keys(DATA.thresholds || {}).forEach(k => {
@@ -1495,6 +1570,127 @@ safely('metric ratings', function() {
   applyRating('rateLatency',  DATA.stats_24h.avg_latency, 'latency');
   applyRating('rateDns',      DATA.dns_24h ? DATA.dns_24h.avg : null, 'dns');
   applyRating('rateJitter',   DATA.jitter_24h, 'jitter');
+  // Bufferbloat: rated from the newest speed test that has loaded-latency
+  // data (Ookla CLI only). delta = worst loaded latency minus idle ping.
+  const loaded = (DATA.speed_series || []).filter(s => s.lat_down != null || s.lat_up != null);
+  if (loaded.length) {
+    const s = loaded[loaded.length - 1];
+    const delta = Math.round(Math.max(s.lat_down || 0, s.lat_up || 0) - (s.ping || 0));
+    applyRating('rateBufferbloat', delta, 'bufferbloat');
+    const hintEl = document.getElementById('bufferbloatHint');
+    if (hintEl && rateLevel(delta, 'bufferbloat') >= 1) {
+      hintEl.style.display = '';
+      hintEl.textContent = 'Latency climbs +' + delta + 'ms when the line is busy (bufferbloat) — '
+        + 'enabling SQM / Smart Queue Management (QoS) on the router usually fixes this.';
+    }
+  }
+});
+
+// ---------- diagnosis banner: "what's wrong right now, in plain words" ----------
+// Rule table, first match wins. Order mirrors the monitor's own causal
+// precedence (a dead gateway suppresses the internet-down diagnosis: if
+// your router is down, of course the internet behind it looks down too).
+safely('diagnosis banner', function() {
+  const banner = document.getElementById('diagBanner');
+  const ongoing = kind => (DATA[kind] || []).filter(e => e.ongoing);
+  const durTxt = e => e && e.start ? timeSince(e.start) : null;
+
+  const openOutages = ongoing('outage_events');
+  const byScope = s => openOutages.filter(e => e.scope === s);
+  const matched = [];   // {cls, head, action, chip}
+
+  // 1. This page itself is stale — trust nothing else on it.
+  const ageMin = (Date.now() - Date.parse(DATA.generated_at)) / 60000;
+  if (ageMin > 3) {
+    matched.push({ cls: 'diag-warn',
+      head: 'This page’s data is ' + Math.round(ageMin) + ' minutes old.',
+      action: 'The dashboard generator may have stopped — check the NetMon Dashboard task on the monitor PC, then reload.' });
+  }
+  // 2. Monitoring paused: nothing is being measured right now.
+  const gaps = DATA.monitoring_gaps || [];
+  if (gaps.length && gaps[gaps.length - 1].ongoing) {
+    matched.push({ cls: 'diag-warn',
+      head: 'Monitoring is paused — nothing is being measured.',
+      action: 'Wake the monitor PC or check the NetMon Monitor task; the network itself may be fine.' });
+  }
+  // 3. Gateway (main router) down → local problem, not the ISP.
+  const gwOut = byScope('gateway')[0];
+  if (gwOut || (DATA.gateway && DATA.gateway.status === 'down')) {
+    matched.push({ cls: 'diag-crit',
+      head: 'Your main router isn’t responding — this is a problem in the house, not with your ISP.',
+      action: 'Power-cycle the main router (unplug 10 seconds, plug back in). Wi-Fi and internet will drop for ~2 minutes while it restarts.',
+      chip: gwOut ? 'down for ' + durTxt(gwOut) : null });
+  }
+  // 4. Internet down while the gateway is fine → ISP.
+  const netOut = byScope('internet')[0];
+  if (netOut) {
+    matched.push({ cls: 'diag-crit',
+      head: 'The internet is down, but your own router is fine — this is your ISP’s problem.',
+      action: 'Check the modem/ISP box lights, then report it. The outage log below is your evidence.',
+      chip: 'down for ' + durTxt(netOut) });
+  } else if (DATA.current_status === 'down') {
+    // failing right now but not yet debounced into an event (3 checks)
+    matched.push({ cls: 'diag-serious',
+      head: 'Connection checks are failing right now…',
+      action: 'Confirming it’s a real outage (takes under a minute). Refresh shortly.' });
+  }
+  // 5. DNS: pings fine, names dead — the "internet feels broken" classic.
+  const dnsOut = byScope('dns')[0];
+  if (dnsOut) {
+    matched.push({ cls: 'diag-serious',
+      head: 'Websites won’t load by name, even though the connection itself is up (DNS failure).',
+      action: 'Set the router’s DNS servers to 1.1.1.1 and 8.8.8.8 — or reboot the main router.',
+      chip: 'for ' + durTxt(dnsOut) });
+  }
+  // 6. One or more access points down (debounced events first, live
+  //    router_summary as a softer fallback — that's a single ping sample).
+  const apOuts = byScope('router');
+  if (apOuts.length) {
+    const names = apOuts.map(e => e.router_name || 'a router').join(', ');
+    matched.push({ cls: 'diag-serious',
+      head: (apOuts.length === 1 ? 'Access point "' + names + '" is down.' : 'Access points down: ' + names + '.'),
+      action: 'Power-cycle ' + (apOuts.length === 1 ? 'it' : 'them') + '. Wi-Fi near ' + (apOuts.length === 1 ? 'that spot' : 'those spots') + ' will be weak or dead until then.',
+      chip: 'down for ' + durTxt(apOuts[0]) });
+  } else {
+    const softDown = (DATA.router_summary || []).filter(r => r.status === 'down');
+    if (softDown.length) {
+      matched.push({ cls: 'diag-warn',
+        head: softDown.map(r => r.name).join(', ') + ' ' + (softDown.length === 1 ? 'is' : 'are') + ' not responding right now.',
+        action: 'Might be a blip — if this banner is still here in a few minutes, power-cycle ' + (softDown.length === 1 ? 'it' : 'them') + '.' });
+    }
+  }
+  // 7. Degraded: up, but measurably worse than the thresholds.
+  const degr = ongoing('degraded_events')[0];
+  if (degr) {
+    const parts = [];
+    const s = DATA.stats_24h || {};
+    if (s.loss_pct != null && rateLevel(s.loss_pct, 'loss') >= 1) parts.push('packet loss ' + s.loss_pct + '%');
+    if (s.avg_latency != null && rateLevel(s.avg_latency, 'latency') >= 1) parts.push('latency ' + s.avg_latency + 'ms');
+    if (DATA.jitter_24h != null && rateLevel(DATA.jitter_24h, 'jitter') >= 1) parts.push('jitter ' + DATA.jitter_24h + 'ms');
+    matched.push({ cls: 'diag-warn',
+      head: 'The connection is up but struggling' + (parts.length ? ' — ' + parts.join(', ') + ' (24h)' : '') + '.',
+      action: 'If this keeps happening, the report below is evidence for your ISP.',
+      chip: 'for ' + durTxt(degr) });
+  }
+  // 8. All clear.
+  if (!matched.length) {
+    if ((DATA.stats_24h || {}).uptime_pct == null) return;  // brand-new install, nothing to say yet
+    matched.push({ cls: 'diag-ok',
+      head: 'All systems healthy.',
+      action: '24h uptime ' + DATA.stats_24h.uptime_pct + '%' +
+        (DATA.current_latency != null ? ' · ' + Math.round(DATA.current_latency) + ' ms right now' : '') });
+  }
+
+  const top = matched[0];
+  let html = '<span class="diag-head">' + escapeHtml(top.head) + '</span>'
+           + '<span class="diag-action">' + escapeHtml(top.action || '') + '</span>';
+  if (top.chip) html += '<span class="diag-chip">' + escapeHtml(top.chip) + '</span>';
+  if (matched.length > 1) {
+    html += '<span class="diag-also">Also: ' + matched.slice(1).map(m => escapeHtml(m.head)).join(' ') + '</span>';
+  }
+  banner.className = 'diag-banner ' + top.cls;
+  banner.innerHTML = html;
+  banner.style.display = '';
 });
 
 // ---------- sparkline ----------
@@ -2380,6 +2576,7 @@ function applyRange(hours) {
     renderRoutersChart();
     renderSpeedChart();
     renderWifiChart();
+    renderLoadedLatencyChart();
     renderDevCountChart();
   });
 }
@@ -2410,6 +2607,28 @@ function renderSpeedChart() {
   const blue = catColor(0), aqua = catColor(4);
   if (chartInstances.speed) chartInstances.speed.destroy();
   const plan = DATA.plan || {};
+  // Failed test runs render as red × marks pinned at y=0 — a test that
+  // couldn't finish during congestion is itself a data point.
+  const failures = filterByRange(DATA.speed_failures || [], currentRangeHours);
+  const failColor = cssVar('--status-critical');
+  const datasets = [
+    { label: 'Download (Mbps)', data: series.map(p => p.down), borderColor: blue, backgroundColor: blue, borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, pointBackgroundColor: blue, pointBorderColor: surfaceColor(), pointBorderWidth: 2, tension: 0.2 },
+    { label: 'Upload (Mbps)', data: series.map(p => p.up), borderColor: aqua, backgroundColor: aqua, borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, pointBackgroundColor: aqua, pointBorderColor: surfaceColor(), pointBorderWidth: 2, tension: 0.2 },
+  ];
+  if (failures.length) {
+    datasets.push({
+      type: 'scatter', label: 'Failed test',
+      data: failures.map(f => ({ x: new Date(f.t), y: 0 })),
+      pointStyle: 'crossRot', pointRadius: 6, pointHoverRadius: 8, borderWidth: 2,
+      borderColor: failColor, backgroundColor: failColor,
+    });
+  }
+  // Tooltip mode 'x' (not 'index'): the failure scatter has its own x
+  // positions, and 'index' would pair unrelated indices across datasets.
+  const tt = tooltipBase();
+  tt.callbacks = { label: (ctx) => ctx.dataset.label === 'Failed test'
+    ? 'Failed: ' + (failures[ctx.dataIndex] ? failures[ctx.dataIndex].error : '')
+    : ctx.dataset.label + ': ' + ctx.formattedValue };
   chartInstances.speed = new Chart(canvas, {
     type: 'line',
     plugins: [ refLines([
@@ -2418,15 +2637,12 @@ function renderSpeedChart() {
     ]) ],
     data: {
       labels: series.map(p => new Date(p.t)),
-      datasets: [
-        { label: 'Download (Mbps)', data: series.map(p => p.down), borderColor: blue, backgroundColor: blue, borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, pointBackgroundColor: blue, pointBorderColor: surfaceColor(), pointBorderWidth: 2, tension: 0.2 },
-        { label: 'Upload (Mbps)', data: series.map(p => p.up), borderColor: aqua, backgroundColor: aqua, borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, pointBackgroundColor: aqua, pointBorderColor: surfaceColor(), pointBorderWidth: 2, tension: 0.2 },
-      ],
+      datasets: datasets,
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
+      interaction: { mode: 'x', intersect: false },
       // Anchor the axis at 0 and keep headroom above the plan lines, so
       // the "what am I paying for" reference is always on screen even
       // when measured speeds sit well below it. suggestedMax (not max)
@@ -2434,6 +2650,43 @@ function renderSpeedChart() {
       scales: { x: timeScale(), y: Object.assign(yScale('Mbps'), { min: 0 },
         (plan.down_mbps != null || plan.up_mbps != null)
           ? { suggestedMax: Math.max(plan.down_mbps || 0, plan.up_mbps || 0) + 100 } : {}) },
+      plugins: { legend: legendOpts(true), tooltip: tt },
+    },
+  });
+}
+
+// ---------- latency under load / bufferbloat (range-aware) ----------
+function renderLoadedLatencyChart() {
+  const canvas = document.getElementById('loadedLatencyChart');
+  const emptyEl = document.getElementById('loadedLatencyEmpty');
+  const showEmpty = (msg) => {
+    if (chartInstances.loadedLat) { chartInstances.loadedLat.destroy(); chartInstances.loadedLat = null; }
+    canvas.style.display = 'none'; emptyEl.style.display = 'block'; emptyEl.textContent = msg;
+  };
+  const all = (DATA.speed_series || []).filter(s => s.lat_down != null || s.lat_up != null);
+  if (all.length === 0) {
+    return showEmpty('No latency-under-load data yet — it needs the official Ookla speedtest CLI (see README) and appears after the next test.');
+  }
+  const series = filterByRange(all, currentRangeHours);
+  if (series.length === 0) return showEmpty('No loaded-latency data in the last ' + rangeWord() + '.');
+  canvas.style.display = ''; emptyEl.style.display = 'none';
+  const idle = catColor(2), down = catColor(0), up = catColor(4);
+  if (chartInstances.loadedLat) chartInstances.loadedLat.destroy();
+  chartInstances.loadedLat = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: series.map(p => new Date(p.t)),
+      datasets: [
+        { label: 'Idle ping', data: series.map(p => p.ping), borderColor: idle, backgroundColor: idle, borderWidth: 2, pointRadius: 2, pointHoverRadius: 5, borderDash: [5, 4], tension: 0.2 },
+        { label: 'While downloading', data: series.map(p => p.lat_down), borderColor: down, backgroundColor: down, borderWidth: 2, pointRadius: 2, pointHoverRadius: 5, tension: 0.2 },
+        { label: 'While uploading', data: series.map(p => p.lat_up), borderColor: up, backgroundColor: up, borderWidth: 2, pointRadius: 2, pointHoverRadius: 5, tension: 0.2 },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: { x: timeScale(), y: yScale('ms') },
       plugins: { legend: legendOpts(true), tooltip: tooltipBase() },
     },
   });
@@ -2528,6 +2781,7 @@ function rerenderCharts() {
   safely('router latency chart', renderRoutersChart);
   safely('speed test chart', renderSpeedChart);
   safely('wifi chart', renderWifiChart);
+  safely('loaded latency chart', renderLoadedLatencyChart);
   safely('device count chart', renderDevCountChart);
 }
 window.__rerenderCharts = rerenderCharts;

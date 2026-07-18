@@ -9,6 +9,7 @@ START-HERE-WINDOWS.txt
 data/
 logs/
 dashboard.html
+report.html
 __pycache__/
 scan_results.json
 *.db

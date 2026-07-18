@@ -183,7 +183,11 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   committed `.example.json` files show the format; normally written by
   the wizard/settings UI, hot-reloaded — routers ≤15s, devices ≤5min,
   config on next dashboard regen, no restarts):
-  - `routers.json` — [{name, ip, floor}], order = file order.
+  - `routers.json` — [{name, ip, floor}], order = file order. When the
+    file exists it is AUTHORITATIVE for the dashboard's router list —
+    deleted routers must not resurrect from router_pings history (they
+    used to); the history-derived fallback only applies when the file
+    is missing/empty.
   - `devices.json` — {mac: friendly name}.
   - `config.json` — {title, floors[], underground_floors[],
     main_router_floor} + optional `hide_ip_prefixes`, `thresholds`

@@ -1376,6 +1376,7 @@ def build_html(data):
         <div class="chart-label">Speed test (Mbps)</div>
         <div class="chart-box"><canvas id="speedChart"></canvas></div>
         <div id="speedEmpty" class="empty" style="display:none">No speed test data yet — install a speed test tool (see README) and it will appear here automatically.</div>
+        <div id="speedFailNote" class="stat-sub" style="display:none"></div>
       </div>
       <div class="chart-card">
         <div class="chart-label">Wi-Fi signal (dBm, higher is better)</div>
@@ -2742,19 +2743,38 @@ function renderSpeedChart() {
     { label: 'Upload (Mbps)', data: series.map(p => p.up), borderColor: aqua, backgroundColor: aqua, borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, pointBackgroundColor: aqua, pointBorderColor: surfaceColor(), pointBorderWidth: 2, tension: 0.2 },
   ];
   if (failures.length) {
+    // Purely visual markers: pointHitRadius 0 keeps them out of hover and
+    // tooltips entirely. (They used to be hoverable via interaction mode
+    // 'x', but that mode merges ADJACENT test runs sharing an x pixel
+    // into one tooltip — two downloads + two uploads at "the same time".
+    // Error text lives in the note under the chart instead.)
     datasets.push({
       type: 'scatter', label: 'Failed test',
       data: failures.map(f => ({ x: new Date(f.t), y: 0 })),
-      pointStyle: 'crossRot', pointRadius: 6, pointHoverRadius: 8, borderWidth: 2,
+      pointStyle: 'crossRot', pointRadius: 6, pointHitRadius: 0, borderWidth: 2,
       borderColor: failColor, backgroundColor: failColor,
     });
   }
-  // Tooltip mode 'x' (not 'index'): the failure scatter has its own x
-  // positions, and 'index' would pair unrelated indices across datasets.
+  // most-recent-test-failed note (also the home of the error detail)
+  const noteEl = document.getElementById('speedFailNote');
+  if (noteEl) {
+    const lastOk = series.length ? series[series.length - 1].t : null;
+    const lastFail = failures.length ? failures[failures.length - 1] : null;
+    if (lastFail && (!lastOk || Date.parse(lastFail.t) > Date.parse(lastOk))) {
+      noteEl.style.display = '';
+      noteEl.textContent = 'Last speed test failed (' + new Date(lastFail.t).toLocaleString() + '): ' + lastFail.error;
+    } else if (lastFail) {
+      noteEl.style.display = '';
+      noteEl.textContent = failures.length + ' failed test' + (failures.length === 1 ? '' : 's')
+        + ' in this window (red × marks) — latest error: ' + lastFail.error;
+    } else {
+      noteEl.style.display = 'none';
+    }
+  }
+  // belt-and-braces: index mode can still enumerate the scatter dataset at
+  // a coincident data index — keep it out of tooltip rows altogether
   const tt = tooltipBase();
-  tt.callbacks = { label: (ctx) => ctx.dataset.label === 'Failed test'
-    ? 'Failed: ' + (failures[ctx.dataIndex] ? failures[ctx.dataIndex].error : '')
-    : ctx.dataset.label + ': ' + ctx.formattedValue };
+  tt.filter = (item) => item.dataset.label !== 'Failed test';
   chartInstances.speed = new Chart(canvas, {
     type: 'line',
     plugins: [ refLines([
@@ -2768,7 +2788,8 @@ function renderSpeedChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      interaction: { mode: 'x', intersect: false },
+      // 'index' = one tooltip per test run (a download + its upload).
+      interaction: { mode: 'index', intersect: false },
       // Anchor the axis at 0 and keep headroom above the plan lines, so
       // the "what am I paying for" reference is always on screen even
       // when measured speeds sit well below it. suggestedMax (not max)

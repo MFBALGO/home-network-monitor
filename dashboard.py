@@ -790,14 +790,15 @@ def build_html(data):
   body { margin:0; background: var(--page); color: var(--text-primary);
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
     transition: background .2s ease, color .2s ease; min-height: 100vh; }
-  /* No visible scrollbars (scrolling still works with wheel/touch/keys),
-     and nothing may push the page wider than the window. */
-  html { scrollbar-width: none; -ms-overflow-style: none; }
-  html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; }
-  body { overflow-x: hidden; }
+  /* No visible scrollbars ANYWHERE (scrolling still works with wheel,
+     touch, and keyboard), and nothing may push the page wider than the
+     window. Applied to every element because different browsers hang the
+     page scrollbar on different elements (html vs body). */
+  * { scrollbar-width: none !important; -ms-overflow-style: none !important; }
+  *::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+  html, body { overflow-x: hidden; }
   .chart-box > canvas { max-width: 100%; }
-  #devicesTableWrap, #outagesTableWrap { overflow-x: auto; scrollbar-width: none; }
-  #devicesTableWrap::-webkit-scrollbar, #outagesTableWrap::-webkit-scrollbar { display: none; }
+  #devicesTableWrap, #outagesTableWrap { overflow-x: auto; }
   body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
     background-image: linear-gradient(var(--gridline-bg) 1px, transparent 1px),
                       linear-gradient(90deg, var(--gridline-bg) 1px, transparent 1px);

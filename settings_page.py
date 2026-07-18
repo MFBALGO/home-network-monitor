@@ -44,7 +44,9 @@ _SHARED_HEAD = """<!DOCTYPE html>
     --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     color-scheme: dark;
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; scrollbar-width: none !important; -ms-overflow-style: none !important; }
+  *::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+  html, body { overflow-x: hidden; }
   body { margin: 0; background: var(--page); color: var(--text-primary);
     font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
   .wrap { max-width: 860px; margin: 0 auto; padding: 28px 18px 60px; }

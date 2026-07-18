@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
 
@@ -37,6 +38,13 @@ if os.name == "nt" and (sys.stdout is None or sys.stderr is None):
         sys.stderr = _log_file
 DB_PATH = os.path.join(BASE_DIR, "data", "network_monitor.db")
 OUT_PATH = os.path.join(BASE_DIR, "dashboard.html")
+# ISP evidence report: a printable page of outages/speeds for complaining
+# to the ISP with receipts. Heavier queries than the dashboard, and a
+# 10-minute-old evidence document is as good as a fresh one — so it only
+# regenerates when its file is older than REPORT_REGEN_MIN minutes.
+REPORT_OUT_PATH = os.path.join(BASE_DIR, "report.html")
+REPORT_WINDOW_DAYS = 90    # matches the ping retention window
+REPORT_REGEN_MIN = 10
 ROUTERS_CONFIG_PATH = os.path.join(BASE_DIR, "routers.json")
 DEVICE_NAMES_PATH = os.path.join(BASE_DIR, "devices.json")
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
@@ -282,6 +290,16 @@ def main():
     device_names = {norm_mac(k): str(v).strip() for k, v in load_json_config(DEVICE_NAMES_PATH, {}).items() if str(v).strip()}
     for d in devices:
         d["name"] = device_names.get(norm_mac(d["mac"]))
+
+    # ISP evidence report: throttled, and a failure here must never take the
+    # dashboard down with it — the report is a bonus artifact.
+    try:
+        report_stale = (not os.path.exists(REPORT_OUT_PATH)
+                        or (time.time() - os.path.getmtime(REPORT_OUT_PATH)) > REPORT_REGEN_MIN * 60)
+        if report_stale:
+            generate_report(conn, site_config)
+    except Exception as e:
+        print(f"report generation failed (dashboard unaffected): {e}")
 
     public_ip_rows = q(conn, "SELECT ts, ip FROM public_ip WHERE ts >= ? AND ip IS NOT NULL ORDER BY ts", (since,))
     # Health of the public-IP checks themselves over the last 24h: repeated
@@ -1329,7 +1347,7 @@ def build_html(data):
   <section>
     <div class="section-head">
       <h2>Outages &amp; degradation log</h2>
-      <span class="section-note">last 7 days, most recent first</span>
+      <span class="section-note">last 7 days, most recent first · <a href="report.html" title="Printable outage/speed summary — evidence for ISP complaints">ISP evidence report &rarr;</a></span>
     </div>
     <div class="chart-card">
       <div id="outageSummary" class="outage-summary"></div>
@@ -2822,6 +2840,269 @@ safely('theme restore', function() {
 </html>
 """.replace("__DATA_JSON__", data_json).replace(
         "__TITLE__", html_escape(data.get("title") or "Home Network Monitor"))
+
+
+# ---------------------------------------------------------------------------
+# ISP evidence report
+# ---------------------------------------------------------------------------
+
+def generate_report(conn, site_config):
+    """Query 90 days of outages/speeds and write report.html — a printable
+    evidence document for ISP complaints. Reuses main()'s open connection."""
+    now = datetime.now(timezone.utc)
+    since = iso(now - timedelta(days=REPORT_WINDOW_DAYS))
+    try:
+        # end_ts clauses catch events that started before the window edge
+        # and events still open (end_ts IS NULL).
+        events = q(conn,
+                   "SELECT start_ts, end_ts, kind, scope, note, router_name FROM events"
+                   " WHERE kind IN ('outage','degraded')"
+                   " AND (start_ts >= ? OR end_ts >= ? OR end_ts IS NULL)"
+                   " ORDER BY start_ts DESC", (since, since))
+        speedtests = q(conn,
+                       "SELECT ts, download_mbps, upload_mbps, ping_ms FROM speedtests"
+                       " WHERE ts >= ? AND download_mbps IS NOT NULL ORDER BY ts", (since,))
+        # Measured hours per month = the uptime denominator. Counting
+        # distinct hour-buckets of actual ping rows automatically excludes
+        # time the monitor was off (asleep PC ≠ downtime). Keyed by UTC
+        # month while the page buckets in local time — a few hours of
+        # month-edge drift, negligible against a ~720-hour month.
+        measured = q(conn,
+                     "SELECT substr(ts,1,7) AS month, COUNT(DISTINCT substr(ts,1,13)) AS hours"
+                     " FROM pings WHERE ts >= ? GROUP BY month", (since,))
+    except sqlite3.OperationalError as e:
+        # A pre-upgrade DB missing a table yields an empty (but valid) report.
+        print(f"report queries degraded: {e}")
+        events, speedtests, measured = [], [], []
+
+    report = {
+        "generated_at": now.isoformat(),
+        "title": (site_config.get("title") or "Home Network Monitor") if isinstance(site_config, dict) else "Home Network Monitor",
+        "version": __version__,
+        "window_days": REPORT_WINDOW_DAYS,
+        "plan": {"down_mbps": site_config.get("plan_down_mbps"), "up_mbps": site_config.get("plan_up_mbps")},
+        "events": events,
+        "speedtests": speedtests,
+        "measured_hours": {m["month"]: m["hours"] for m in measured},
+    }
+    with open(REPORT_OUT_PATH, "w", encoding="utf-8") as f:
+        f.write(build_report_html(report))
+    print(f"wrote {REPORT_OUT_PATH}")
+
+
+def build_report_html(report):
+    """Standalone, print-first page. Same pipeline shape as build_html():
+    one template, data injected as JSON, rendering client-side — so the
+    file also works opened directly via file:// with no server."""
+    report_json = json.dumps(report)
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ — ISP evidence report</title>
+<style>
+  /* Print-first: black-on-white, quiet chrome. This page is meant to be
+     handed to an ISP, not admired on a NOC wall. */
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #1a1f2b;
+    background: #fff; margin: 0; padding: 32px 24px; line-height: 1.45; }
+  .sheet { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 2px; }
+  .sub { color: #5a6474; font-size: 13px; margin-bottom: 20px; }
+  h2 { font-size: 15px; margin: 26px 0 8px; border-bottom: 2px solid #1a1f2b; padding-bottom: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+    color: #5a6474; border-bottom: 1px solid #c9cedb; padding: 6px 8px; }
+  td { padding: 6px 8px; border-bottom: 1px solid #e4e7ef; vertical-align: top; }
+  tr { page-break-inside: avoid; }
+  .totals { display: flex; gap: 28px; flex-wrap: wrap; margin: 14px 0 4px; }
+  .tot .v { font-size: 24px; font-weight: 700; }
+  .tot .k { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #5a6474; }
+  .muted { color: #5a6474; }
+  .bad { color: #b3261e; font-weight: 600; }
+  .controls { display: flex; gap: 8px; align-items: center; margin: 0 0 18px; }
+  .controls button { font: inherit; font-size: 13px; padding: 6px 14px; border: 1px solid #c9cedb;
+    background: #fff; border-radius: 7px; cursor: pointer; }
+  .controls button.active { background: #1a1f2b; color: #fff; border-color: #1a1f2b; }
+  .controls .print-btn { margin-left: auto; font-weight: 600; }
+  .footnote { font-size: 11.5px; color: #5a6474; margin-top: 6px; }
+  .empty-good { padding: 14px; background: #eef6ee; border: 1px solid #b9d8b9; border-radius: 8px;
+    color: #1e5c1e; font-size: 14px; }
+  footer { margin-top: 30px; font-size: 11px; color: #5a6474; border-top: 1px solid #e4e7ef; padding-top: 10px; }
+  a.backlink { color: #35508a; font-size: 13px; }
+  @media print {
+    .no-print { display: none !important; }
+    body { padding: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="no-print" style="margin-bottom:14px;"><a class="backlink" href="dashboard.html">&larr; back to the dashboard</a></div>
+  <h1>__TITLE__ — internet reliability report</h1>
+  <div class="sub" id="subline"></div>
+  <div class="controls no-print">
+    <button data-days="7">7 days</button>
+    <button data-days="30" class="active">30 days</button>
+    <button data-days="90">90 days</button>
+    <button class="print-btn" onclick="window.print()">Print / save as PDF</button>
+  </div>
+
+  <h2>Summary</h2>
+  <div class="totals" id="totals"></div>
+  <div class="footnote" id="totalsNote"></div>
+
+  <h2>Monthly reliability</h2>
+  <div id="monthlyWrap"></div>
+
+  <h2 id="outageHead">Outages</h2>
+  <div id="outagesWrap"></div>
+
+  <h2 id="speedHead">Speed tests below plan</h2>
+  <div id="speedWrap"></div>
+
+  <footer id="footer"></footer>
+</div>
+
+<script>
+const R = __REPORT_JSON__;
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function fmtDur(secs) {
+  secs = Math.max(0, Math.round(secs));
+  if (secs < 60) return secs + 's';
+  if (secs < 3600) return Math.round(secs / 60) + 'm';
+  if (secs < 86400) return Math.floor(secs / 3600) + 'h ' + Math.round((secs % 3600) / 60) + 'm';
+  return Math.floor(secs / 86400) + 'd ' + Math.round((secs % 86400) / 3600) + 'h';
+}
+function local(ts) { return ts ? new Date(ts).toLocaleString() : ''; }
+const SCOPE_LABEL = {
+  internet: 'Internet down (ISP)', gateway: 'Router/gateway down',
+  dns: 'DNS failure', router: 'Access point down',
+};
+
+function render(days) {
+  const now = Date.now();
+  const cut = now - days * 86400000;
+  const evs = R.events.map(e => {
+    const s = Date.parse(e.start_ts), en = e.end_ts ? Date.parse(e.end_ts) : now;
+    return { ...e, s, en, ongoing: !e.end_ts, dur: (en - s) / 1000 };
+  }).filter(e => e.en >= cut);
+
+  // hard connectivity outages = the ISP-relevant ones
+  const hard = evs.filter(e => e.kind === 'outage' && (e.scope === 'internet' || e.scope === 'gateway'));
+  const slow = evs.filter(e => e.kind === 'degraded');
+  const other = evs.filter(e => e.kind === 'outage' && e.scope !== 'internet' && e.scope !== 'gateway');
+  // clamp downtime to the window so an outage straddling the edge doesn't overcount
+  const downSecs = hard.reduce((a, e) => a + Math.max(0, (Math.min(e.en, now) - Math.max(e.s, cut)) / 1000), 0);
+
+  document.getElementById('subline').textContent =
+    'Prepared ' + local(R.generated_at) + ' · window: last ' + days + ' days'
+    + (R.plan.down_mbps ? ' · plan: ' + R.plan.down_mbps + ' Mbps down / ' + (R.plan.up_mbps || '?') + ' Mbps up' : '');
+
+  document.getElementById('totals').innerHTML =
+    '<div class="tot"><div class="v' + (hard.length ? ' bad' : '') + '">' + hard.length + '</div><div class="k">internet/router outages</div></div>'
+    + '<div class="tot"><div class="v' + (downSecs ? ' bad' : '') + '">' + fmtDur(downSecs) + '</div><div class="k">total downtime</div></div>'
+    + '<div class="tot"><div class="v">' + slow.length + '</div><div class="k">slow/degraded spells</div></div>'
+    + '<div class="tot"><div class="v">' + other.length + '</div><div class="k">DNS / access-point incidents</div></div>';
+  document.getElementById('totalsNote').textContent = hard.length
+    ? 'Times are local (' + Intl.DateTimeFormat().resolvedOptions().timeZone + '). Downtime counts internet and router/gateway outages measured by 15-second connectivity checks.'
+    : 'No internet or router outages recorded in this window by 15-second connectivity checks.';
+
+  // ---- monthly table (local-time months) ----
+  const months = {};
+  hard.forEach(e => {
+    // attribute each outage to the month it started in (local time)
+    const d = new Date(Math.max(e.s, cut));
+    const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    if (!months[key]) months[key] = { n: 0, down: 0 };
+    months[key].n += 1;
+    months[key].down += Math.max(0, (Math.min(e.en, now) - Math.max(e.s, cut)) / 1000);
+  });
+  // ensure months with measurement but no outages also appear (uptime 100%)
+  Object.keys(R.measured_hours || {}).forEach(key => {
+    const monthEnd = new Date(key + '-01T00:00:00');
+    monthEnd.setMonth(monthEnd.getMonth() + 1);
+    if (monthEnd.getTime() >= cut && !months[key]) months[key] = { n: 0, down: 0 };
+  });
+  const monthKeys = Object.keys(months).sort().reverse();
+  if (monthKeys.length) {
+    let rows = monthKeys.map(key => {
+      const m = months[key];
+      const measuredH = (R.measured_hours || {})[key];
+      const label = new Date(key + '-15T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+      let uptime = '—', note = '';
+      if (measuredH) {
+        uptime = Math.max(0, 100 * (1 - m.down / (measuredH * 3600))).toFixed(3).replace(/\\.?0+$/, '') + '%';
+        const wallHours = 24 * new Date(new Date(key + '-01').getFullYear(), new Date(key + '-01').getMonth() + 1, 0).getDate();
+        if (measuredH < wallHours * 0.9) note = 'monitoring covered ~' + Math.round(measuredH) + 'h of this month';
+      }
+      return '<tr><td>' + esc(label) + '</td><td>' + m.n + '</td><td>' + (m.down ? fmtDur(m.down) : '—')
+        + '</td><td>' + uptime + '</td><td class="muted">' + esc(note) + '</td></tr>';
+    }).join('');
+    document.getElementById('monthlyWrap').innerHTML =
+      '<table><thead><tr><th>Month</th><th>Outages</th><th>Downtime</th><th>Measured uptime</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  } else {
+    document.getElementById('monthlyWrap').innerHTML = '<div class="muted">No measurements in this window yet.</div>';
+  }
+
+  // ---- outage table ----
+  const listed = evs.filter(e => e.kind === 'outage');
+  if (listed.length) {
+    const rows = listed.map(e =>
+      '<tr><td>' + local(e.start_ts) + '</td><td>' + (e.ongoing ? '<span class="bad">ongoing</span>' : local(e.end_ts))
+      + '</td><td>' + fmtDur(e.dur) + '</td><td>' + esc(SCOPE_LABEL[e.scope] || e.scope)
+      + (e.router_name ? ' — ' + esc(e.router_name) : '') + '</td></tr>').join('');
+    document.getElementById('outagesWrap').innerHTML =
+      '<table><thead><tr><th>Started</th><th>Ended</th><th>Duration</th><th>What went down</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  } else {
+    document.getElementById('outagesWrap').innerHTML = '<div class="empty-good">No outages recorded in this window — 100% of measured time. Good news.</div>';
+  }
+
+  // ---- below-plan speed tests ----
+  const plan = R.plan.down_mbps;
+  if (!plan) {
+    document.getElementById('speedWrap').innerHTML =
+      '<div class="muted">Set your plan speed in Settings (plan_down_mbps) to flag speed tests that under-deliver.</div>';
+  } else {
+    const tests = R.speedtests.filter(t => Date.parse(t.ts) >= cut);
+    // 80% of advertised: a common informal bar for "not delivering the plan"
+    const below = tests.filter(t => t.download_mbps < 0.8 * plan).sort((a, b) => a.download_mbps - b.download_mbps);
+    const head = tests.length
+      ? below.length + ' of ' + tests.length + ' tests (' + Math.round(100 * below.length / tests.length) + '%) measured under 80% of the ' + plan + ' Mbps plan.'
+      : 'No speed tests in this window.';
+    let html = '<div style="margin-bottom:8px;">' + esc(head) + '</div>';
+    if (below.length) {
+      html += '<table><thead><tr><th>When</th><th>Download</th><th>Upload</th><th>% of plan</th></tr></thead><tbody>'
+        + below.slice(0, 10).map(t => '<tr><td>' + local(t.ts) + '</td><td>' + t.download_mbps + ' Mbps</td><td>'
+          + (t.upload_mbps != null ? t.upload_mbps + ' Mbps' : '—') + '</td><td class="bad">'
+          + Math.round(100 * t.download_mbps / plan) + '%</td></tr>').join('')
+        + '</tbody></table>';
+      if (below.length > 10) html += '<div class="footnote">Worst 10 shown of ' + below.length + '.</div>';
+    }
+    document.getElementById('speedWrap').innerHTML = html;
+  }
+
+  document.getElementById('footer').textContent =
+    'Generated by Home Network Monitor v' + R.version + ' — connectivity measured every 15 seconds, speed tested every 30 minutes, from this household\\u2019s own connection.';
+}
+
+document.querySelectorAll('.controls button[data-days]').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.controls button[data-days]').forEach(x => x.classList.toggle('active', x === b));
+    render(parseInt(b.dataset.days, 10));
+  });
+});
+render(30);
+</script>
+</body>
+</html>
+""".replace("__REPORT_JSON__", report_json).replace(
+        "__TITLE__", html_escape(report.get("title") or "Home Network Monitor"))
 
 
 if __name__ == "__main__":

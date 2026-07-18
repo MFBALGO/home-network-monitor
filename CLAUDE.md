@@ -91,20 +91,32 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   Control" theme (light theme kept; theme + 60s auto-refresh persist via
   localStorage). One giant triple-quoted HTML template in `build_html()`,
   data injected as inline JSON via `.replace()` placeholders; all
-  rendering is client-side JS from `const DATA`. Feature set: stat cards
-  with GOOD/FAIR/HIGH rating badges (JS `THRESHOLDS` defaults,
-  overridable via config.json `thresholds`); an architectural SVG house
+  rendering is client-side JS from `const DATA`. Section order: stat
+  cards → house map → latency/speed charts → outages → devices. Feature
+  set: stat cards with GOOD/FAIR/HIGH rating badges (JS `THRESHOLDS`
+  defaults, overridable via config.json `thresholds`; the good/fair
+  legend lives in the badge's hover tooltip, not on the card face;
+  cards go 2-up under 480px); an architectural SVG house
   map — section-drawing style (flat roof slab, street-level datum line
   with elevation marker, hatched earth below), an "Internet" status node
   buried as a fiber line that rises into the main router (live latency +
   last speed test, red OFFLINE when down), compact router pills with
   hover/tap detail cards, Wi-Fi coverage bubbles (pulsing red hole when
   an AP is down), windows lit per-floor while that floor's APs are up,
-  animated packet links; outages log with SVG 7-day incident timeline +
-  filters; Chart.js charts (vendored) with threshold reference lines, a
+  animated packet links; below ~520px container width the map rerenders
+  as a compact portrait variant (`compact` flag: ~330-unit viewBox so
+  text keeps its size, pills packed into centered rows, per-floor band
+  height auto-grows to fit, no windows, fiber node below the house) —
+  chosen at render time, so a rotate applies on the next reload; outages
+  log with SVG 7-day incident timeline + filters (8 events shown,
+  "older" expand scrolls inside a capped `.list-scroll` box); Chart.js
+  charts (vendored) with threshold reference lines, a
   synced 24h/7d toggle, and the speed chart pinned to 0..plan+100 so the
   plan lines stay visible; devices table with friendly names from
-  devices.json, `hide_ip_prefixes` drops matching devices. Chart colors
+  devices.json (online rows first, away rows collapsed behind a toggle;
+  MAC in the name's tooltip, not a column — phone tables must fit
+  without side-scroll since scrollbars are invisible),
+  `hide_ip_prefixes` drops matching devices. Chart colors
   are baked at build time → charts fully re-render on theme change. Page
   scrollbars are hidden globally but scrolling still works — beware
   `overflow-x: clip` (it coerces overflow-y to clip and kills page

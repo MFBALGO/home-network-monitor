@@ -799,6 +799,10 @@ def build_html(data):
   html, body { overflow-x: hidden; }
   .chart-box > canvas { max-width: 100%; }
   #devicesTableWrap, #outagesTableWrap { overflow-x: auto; }
+  /* Expanded event/device lists scroll inside a capped box instead of
+     growing the page by 30+ rows. Scrollbars are hidden globally, so the
+     toggle button below the box stays the visible affordance. */
+  .list-scroll.expanded { max-height: 55vh; overflow-y: auto; }
   body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
     background-image: linear-gradient(var(--gridline-bg) 1px, transparent 1px),
                       linear-gradient(90deg, var(--gridline-bg) 1px, transparent 1px);
@@ -861,15 +865,14 @@ def build_html(data):
     font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
   .stat-value .unit { font-size: 14px; color: var(--muted); font-weight: 600; margin-left: 2px; }
   .stat-sub { font-size: 11.5px; color: var(--text-secondary); margin-top: 8px; }
-  /* rating pill + "what's normal" helper on each metric card */
+  /* rating pill on each metric card; the good/fair thresholds live in its
+     hover tooltip — a visible legend on every card was badge fatigue */
   .rating { font-family: var(--font-mono); font-size: 9px; font-weight: 800; letter-spacing: .1em;
-    padding: 2px 7px; border-radius: 5px; display: none; white-space: nowrap; flex-shrink: 0; }
+    padding: 2px 7px; border-radius: 5px; display: none; white-space: nowrap; flex-shrink: 0; cursor: help; }
   .rating.show { display: inline-block; }
   .rating.good { color: var(--status-good); background: var(--status-good-bg); box-shadow: inset 0 0 0 1px var(--glow-good); }
   .rating.fair { color: color-mix(in srgb, var(--status-warning) 80%, black); background: var(--status-warning-bg); }
   .rating.poor { color: var(--status-critical); background: var(--status-critical-bg); box-shadow: inset 0 0 0 1px var(--glow-bad); }
-  .stat-hint { font-size: 10px; color: var(--muted); font-family: var(--font-mono); margin-top: 9px;
-    padding-top: 8px; border-top: 1px solid var(--border-soft); line-height: 1.4; }
   .delta { font-size: 12px; font-weight: 700; display:inline-flex; align-items:center; gap:2px; font-family: var(--font-mono); }
   .delta.good { color: var(--success-text); }
   .delta.bad { color: var(--status-critical); }
@@ -927,6 +930,28 @@ def build_html(data):
   th { text-align: left; color: var(--muted); font-weight: 700; font-size: 9.5px; text-transform: uppercase;
     letter-spacing: .13em; font-family: var(--font-mono); border-bottom: 1px solid var(--grid); padding: 8px 10px; }
   td { padding: 9px 10px; border-bottom: 1px solid var(--border-soft); font-variant-numeric: tabular-nums; vertical-align: middle; }
+  /* phones: tighter cells so the 4-column tables fit without side-scroll
+     (scrollbars are hidden globally, so horizontal overflow is invisible).
+     overflow-wrap:anywhere collapses the name column's min-content width —
+     without it one long device name forces the whole table past the
+     viewport — and the 2-line clamp keeps verbose names from stacking
+     rows 200px tall. */
+  @media (max-width: 480px) {
+    /* two-up stat cards: a single 990px column of cards buried the whole
+       dashboard below a screen and a half of scrolling */
+    .grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .card-hero { grid-column: span 2; }
+    .stat-value { font-size: 24px; }
+    table { font-size: 12px; }
+    th, td { padding: 8px 4px; }
+    td.mono, .device-name .mono { font-size: 11px; }
+    .status-pill.small { padding: 2px 7px; font-size: 10px; }
+    .device-icon { display: none; }
+    .device-name b { font-weight: 600; }
+    .device-name span { overflow-wrap: anywhere; }
+    tr.event-row td.mono { overflow-wrap: anywhere; }
+    .device-name > span:last-child { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  }
   tbody tr { transition: background .12s ease; }
   tbody tr:hover { background: var(--surface-2); }
   tr:last-child td { border-bottom: none; }
@@ -1059,6 +1084,14 @@ def build_html(data):
   .house-svg .pillgrp { cursor: pointer; }
   .house-svg .pill-box { fill: var(--surface-1); stroke: currentColor; stroke-width: 1.5; }
   .house-svg .pill-name { fill: var(--text-primary); font-size: 11px; font-weight: 700; }
+  /* compact (phone) map: the viewBox shrinks to ~330 units so labels keep
+     most of their size; bump the small ones so nothing lands under ~9px.
+     Keep .pill-name in sync with the JS pillW() char-width estimate. */
+  .house-svg.compact .pill-name { font-size: 12px; }
+  .house-svg.compact .floor-label { font-size: 11px; }
+  .house-svg.compact .street-label { font-size: 10.5px; }
+  .house-svg.compact .net-label { font-size: 11.5px; }
+  .house-svg.compact .net-stat { font-size: 11px; }
   .house-svg .hovercard { opacity: 0; pointer-events: none; transition: opacity .15s ease; }
   .house-svg .hovercard.show { opacity: 1; }
   /* wi-fi coverage bubbles behind each AP */
@@ -1146,13 +1179,11 @@ def build_html(data):
         <div class="delta" id="uptimeDelta"></div>
       </div>
       <div class="stat-sub" id="loss24h"></div>
-      <div class="stat-hint" id="hintUptime24"></div>
     </div>
     <div class="card">
       <div class="card-head"><h3>Uptime · 7d</h3><span class="rating" id="rateUptime7"></span></div>
       <div class="stat-value" id="uptime7d">—</div>
       <div class="stat-sub" id="loss7d"></div>
-      <div class="stat-hint" id="hintUptime7"></div>
     </div>
     <div class="card">
       <div class="card-head"><h3>Avg latency · 24h</h3><span class="rating" id="rateLatency"></span></div>
@@ -1161,19 +1192,16 @@ def build_html(data):
         <div class="delta" id="latencyDelta"></div>
       </div>
       <div class="stat-sub">to 1.1.1.1 / 8.8.8.8 / 9.9.9.9</div>
-      <div class="stat-hint" id="hintLatency"></div>
     </div>
     <div class="card">
       <div class="card-head"><h3>DNS · 24h</h3><span class="rating" id="rateDns"></span></div>
       <div class="stat-value" id="dnsAvg">—</div>
       <div class="stat-sub" id="dnsSub">name-lookup speed</div>
-      <div class="stat-hint" id="hintDns"></div>
     </div>
     <div class="card">
       <div class="card-head"><h3>Jitter · 24h</h3><span class="rating" id="rateJitter"></span></div>
       <div class="stat-value" id="jitter24h">—</div>
       <div class="stat-sub">latency stability — lower is steadier (calls/gaming)</div>
-      <div class="stat-hint" id="hintJitter"></div>
     </div>
     <div class="card">
       <h3>Public IP</h3>
@@ -1195,32 +1223,6 @@ def build_html(data):
       <div class="chart-label">Per-router latency (ms)</div>
       <div class="chart-box lg"><canvas id="routersChart"></canvas></div>
       <div id="routersChartEmpty" class="empty" style="display:none">No router ping history yet.</div>
-    </div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>Outages &amp; degradation log</h2>
-      <span class="section-note">last 7 days, most recent first</span>
-    </div>
-    <div class="chart-card">
-      <div id="outageSummary" class="outage-summary"></div>
-      <div class="timeline-head">
-        <span class="timeline-label">Incident timeline · last 7 days</span>
-        <span class="timeline-legend" id="timelineLegend"></span>
-      </div>
-      <div id="outageTimeline"></div>
-      <div id="outageFilters" class="outage-filters"></div>
-      <div id="outagesTableWrap"></div>
-      <div class="legend-note">
-        <div class="legend-item"><span class="badge badge-gateway"><span class="dot"></span>Gateway down</span><span>Your router/Wi-Fi (or a router from the list above) was unreachable — local issue.</span></div>
-        <div class="legend-item"><span class="badge badge-internet"><span class="dot"></span>Internet down</span><span>Gateway was fine but the internet wasn't — likely your ISP.</span></div>
-        <div class="legend-item"><span class="badge badge-degraded"><span class="dot"></span>Slow / degraded</span><span>Nothing fully down, but latency or packet loss was elevated.</span></div>
-        <div class="legend-item"><span class="badge badge-dns"><span class="dot"></span>DNS failure</span><span>Name lookups were failing — sites won't load by name even though pings still work.</span></div>
-        <div class="legend-item"><span class="badge badge-ipchange"><span class="dot"></span>Public IP changed</span><span>Informational — your ISP reassigned your address (common around brief reconnects).</span></div>
-        <div class="legend-item"><span class="badge badge-newdevice"><span class="dot"></span>New device</span><span>A never-seen-before device joined the network — name it in <span class="mono">devices.json</span>.</span></div>
-        <div class="legend-item"><span class="badge badge-gap"><span class="dot"></span>Monitoring paused</span><span>No data was collected (Mac asleep or monitor stopped) — not an outage, but not measured uptime either.</span></div>
-      </div>
     </div>
   </section>
 
@@ -1262,6 +1264,32 @@ def build_html(data):
         <div class="chart-label">Wi-Fi signal (dBm, higher is better)</div>
         <div class="chart-box sm"><canvas id="wifiChart"></canvas></div>
         <div id="wifiEmpty" class="empty" style="display:none">No Wi-Fi signal data yet.</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Outages &amp; degradation log</h2>
+      <span class="section-note">last 7 days, most recent first</span>
+    </div>
+    <div class="chart-card">
+      <div id="outageSummary" class="outage-summary"></div>
+      <div class="timeline-head">
+        <span class="timeline-label">Incident timeline · last 7 days</span>
+        <span class="timeline-legend" id="timelineLegend"></span>
+      </div>
+      <div id="outageTimeline"></div>
+      <div id="outageFilters" class="outage-filters"></div>
+      <div id="outagesTableWrap"></div>
+      <div class="legend-note">
+        <div class="legend-item"><span class="badge badge-gateway"><span class="dot"></span>Gateway down</span><span>Your router/Wi-Fi (or a router from the list above) was unreachable — local issue.</span></div>
+        <div class="legend-item"><span class="badge badge-internet"><span class="dot"></span>Internet down</span><span>Gateway was fine but the internet wasn't — likely your ISP.</span></div>
+        <div class="legend-item"><span class="badge badge-degraded"><span class="dot"></span>Slow / degraded</span><span>Nothing fully down, but latency or packet loss was elevated.</span></div>
+        <div class="legend-item"><span class="badge badge-dns"><span class="dot"></span>DNS failure</span><span>Name lookups were failing — sites won't load by name even though pings still work.</span></div>
+        <div class="legend-item"><span class="badge badge-ipchange"><span class="dot"></span>Public IP changed</span><span>Informational — your ISP reassigned your address (common around brief reconnects).</span></div>
+        <div class="legend-item"><span class="badge badge-newdevice"><span class="dot"></span>New device</span><span>A never-seen-before device joined the network — name it in <span class="mono">devices.json</span>.</span></div>
+        <div class="legend-item"><span class="badge badge-gap"><span class="dot"></span>Monitoring paused</span><span>No data was collected (Mac asleep or monitor stopped) — not an outage, but not measured uptime either.</span></div>
       </div>
     </div>
   </section>
@@ -1449,25 +1477,24 @@ function hintText(key) {
     ? `Good ≤ ${g} · OK ≤ ${f} ${u}`
     : `Good ≥ ${g} · OK ≥ ${f} ${u}`;
 }
-function applyRating(rateId, hintId, value, key, hintOverride) {
+function applyRating(rateId, value, key) {
   const rEl = document.getElementById(rateId);
-  const hEl = document.getElementById(hintId);
   const lvl = rateLevel(value, key);
-  if (rEl) {
-    if (lvl == null) { rEl.className = 'rating'; rEl.textContent = ''; }
-    else {
-      rEl.className = 'rating show ' + ['good', 'fair', 'poor'][lvl];
-      rEl.textContent = THRESHOLDS[key].labels[lvl];
-    }
+  if (!rEl) return;
+  if (lvl == null) { rEl.className = 'rating'; rEl.textContent = ''; rEl.title = ''; }
+  else {
+    rEl.className = 'rating show ' + ['good', 'fair', 'poor'][lvl];
+    rEl.textContent = THRESHOLDS[key].labels[lvl];
+    // thresholds moved off the card face into the badge tooltip
+    rEl.title = hintText(key);
   }
-  if (hEl) hEl.textContent = hintOverride || hintText(key);
 }
 safely('metric ratings', function() {
-  applyRating('rateUptime24', 'hintUptime24', DATA.stats_24h.uptime_pct, 'uptime');
-  applyRating('rateUptime7',  'hintUptime7',  DATA.stats_7d.uptime_pct,  'uptime');
-  applyRating('rateLatency',  'hintLatency',  DATA.stats_24h.avg_latency, 'latency');
-  applyRating('rateDns',      'hintDns',      DATA.dns_24h ? DATA.dns_24h.avg : null, 'dns');
-  applyRating('rateJitter',   'hintJitter',   DATA.jitter_24h, 'jitter');
+  applyRating('rateUptime24', DATA.stats_24h.uptime_pct, 'uptime');
+  applyRating('rateUptime7',  DATA.stats_7d.uptime_pct,  'uptime');
+  applyRating('rateLatency',  DATA.stats_24h.avg_latency, 'latency');
+  applyRating('rateDns',      DATA.dns_24h ? DATA.dns_24h.avg : null, 'dns');
+  applyRating('rateJitter',   DATA.jitter_24h, 'jitter');
 });
 
 // ---------- sparkline ----------
@@ -1645,7 +1672,7 @@ safely('outages log', function() {
 
   // ---- the list (filterable, collapsible) ----
   const outWrap = document.getElementById('outagesTableWrap');
-  const EVENTS_SHOWN = 10;
+  const EVENTS_SHOWN = 8;
   let activeCat = 'all';
 
   function renderList() {
@@ -1671,12 +1698,14 @@ safely('outages log', function() {
     const moreBtn = extraCount > 0
       ? `<div style="text-align:center; margin-top:10px;"><button id="eventsToggle" class="ghost-btn">Show ${extraCount} older</button></div>`
       : '';
-    outWrap.innerHTML = `<table><thead><tr><th>Started</th><th>Type</th><th>Duration</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table>${moreBtn}`;
+    outWrap.innerHTML = `<div class="list-scroll"><table><thead><tr><th>Started</th><th>Type</th><th>Duration</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table></div>${moreBtn}`;
     if (extraCount > 0) {
       let expanded = false;
       document.getElementById('eventsToggle').addEventListener('click', () => {
         expanded = !expanded;
         outWrap.querySelectorAll('tr[data-extra]').forEach(tr => { tr.style.display = expanded ? '' : 'none'; });
+        // capped scroll box so expanding 30+ events doesn't balloon the page
+        outWrap.querySelector('.list-scroll').classList.toggle('expanded', expanded);
         document.getElementById('eventsToggle').textContent = expanded ? 'Show fewer' : `Show ${extraCount} older`;
       });
     }
@@ -1715,7 +1744,7 @@ safely('devices note', function() {
 if (!DATA.devices || DATA.devices.length === 0) {
   devWrap.innerHTML = '<div class="empty">No device scan data yet.</div>';
 } else {
-  let rows = DATA.devices.map(d => {
+  const deviceRow = (d, hidden) => {
     // friendly name from devices.json wins; hostname as detail or fallback
     const friendly = d.name ? escapeHtml(d.name) : null;
     const host = d.hostname ? escapeHtml(d.hostname) : null;
@@ -1729,15 +1758,36 @@ if (!DATA.devices || DATA.devices.length === 0) {
       ? '<span class="status-pill small status-up"><span class="status-dot"></span>Online</span>'
       : '<span class="status-pill small" style="background:var(--border-soft);color:var(--muted)"><span class="status-dot"></span>Away</span>';
     const seen = d.online ? 'now' : (d.last_seen ? timeSince(d.last_seen) + ' ago' : '—');
-    return `<tr>
-    <td><div class="device-name"><span class="device-icon">${deviceIcon}</span><span>${label}</span></div></td>
+    // MAC lives in the tooltip, not a column — nobody scans a MAC column,
+    // and it was the widest cell (forced side-scrolling on phones)
+    const mac = d.mac ? ` title="MAC ${escapeHtml(d.mac)}"` : '';
+    return `<tr${hidden ? ' style="display:none" data-away="1"' : ''}>
+    <td><div class="device-name"${mac}><span class="device-icon">${deviceIcon}</span><span>${label}</span></div></td>
     <td class="mono">${escapeHtml(d.ip)}</td>
-    <td class="mono">${escapeHtml(d.mac)}</td>
     <td>${pill}</td>
     <td>${seen}</td>
   </tr>`;
-  }).join('');
-  devWrap.innerHTML = `<table><thead><tr><th>Device</th><th>IP</th><th>MAC</th><th>Status</th><th>Last seen</th></tr></thead><tbody>${rows}</tbody></table>`;
+  };
+  // online devices up front; away ones collapsed behind a toggle so 20
+  // idle phones don't add 900px of table
+  const online = DATA.devices.filter(d => d.online);
+  const away = DATA.devices.filter(d => !d.online);
+  const collapseAway = online.length > 0 && away.length > 0;
+  const rows = online.map(d => deviceRow(d, false)).join('')
+    + away.map(d => deviceRow(d, collapseAway)).join('');
+  const awayBtn = collapseAway
+    ? `<div style="text-align:center; margin-top:10px;"><button id="awayToggle" class="ghost-btn">Show ${away.length} away device${away.length === 1 ? '' : 's'}</button></div>`
+    : '';
+  devWrap.innerHTML = `<table><thead><tr><th>Device</th><th>IP</th><th>Status</th><th>Last seen</th></tr></thead><tbody>${rows}</tbody></table>${awayBtn}`;
+  if (collapseAway) {
+    let awayShown = false;
+    document.getElementById('awayToggle').addEventListener('click', () => {
+      awayShown = !awayShown;
+      devWrap.querySelectorAll('tr[data-away]').forEach(tr => { tr.style.display = awayShown ? '' : 'none'; });
+      document.getElementById('awayToggle').textContent = awayShown
+        ? 'Hide away devices' : `Show ${away.length} away device${away.length === 1 ? '' : 's'}`;
+    });
+  }
 }
 
 // ---------- house map ----------
@@ -1758,22 +1808,62 @@ safely('house map', function() {
     : [...new Set(routers.map(r => r.floor).filter(Boolean))];
   if (floorNames.length === 0) floorNames.push('Home');   // gateway-only fallback
   const UG = new Set(H.underground || []);
-  const TOP = 96, BH = 172;               // wall top, per-floor band height
-  const FLOORS = floorNames.map((k, i) => ({ key: k, y0: TOP + i * BH, y1: TOP + (i + 1) * BH }));
-  const houseBottom = TOP + floorNames.length * BH;
+  // Phones: the 1000-unit-wide scene scales down to <300 CSS px, which
+  // renders every label at ~4px. Below ~520px we switch to a compact
+  // portrait layout: a ~330-unit viewBox (text keeps ~90% of its size),
+  // pills packed into centered rows, and each floor's band grows to fit
+  // its rows — the "auto-scaling floor height" mode.
+  const compact = (wrap.clientWidth || 900) < 520;
+  const W = compact ? 330 : 1000;
+  const TOP = compact ? 30 : 96, BH = 172; // wall top, desktop floor band height
+  const HX0 = compact ? 14 : 180, HX1 = compact ? W - 14 : 910;  // house walls
+  const CARD_W = 176, CARD_H = 88;        // hover-card size (was the always-on card)
+  const mainKey = (H.main_floor && floorNames.includes(H.main_floor))
+    ? H.main_floor : floorNames[Math.floor(floorNames.length / 2)];
+
+  // Compact pill: status dot + name. Everything else (IP, latency, uptime)
+  // lives in the hover card so the house doesn't read as a wall of boxes.
+  // (Defined before the floor build — compact floors are sized from pill
+  // widths.) Compact bumps the per-char estimate with the CSS font bump.
+  const pillLabel = name => name.length > 20 ? name.slice(0, 19) + '…' : name;
+  const pillW = (name, main) => 34 + pillLabel(name).length * (main ? 7.2 : 6.6) * (compact ? 1.1 : 1);
+
+  let FLOORS;
+  if (!compact) {
+    FLOORS = floorNames.map((k, i) => ({ key: k, y0: TOP + i * BH, y1: TOP + (i + 1) * BH }));
+  } else {
+    // pack each floor's pills into rows (main router gets its own row,
+    // centered), then size the floor band to the rows it holds
+    const maxRowW = HX1 - HX0 - 24;
+    let y = TOP;
+    FLOORS = floorNames.map(k => {
+      const rows = [];
+      if (gw && k === mainKey) rows.push([{ __main: true, name: 'Main Router', main: true }]);
+      let cur = [], wsum = 0;
+      routers.filter(r => r.floor === k).forEach(r => {
+        const pw = pillW(r.name, false) + 14;
+        if (cur.length && wsum + pw > maxRowW) { rows.push(cur); cur = []; wsum = 0; }
+        cur.push(r); wsum += pw;
+      });
+      if (cur.length) rows.push(cur);
+      const h = Math.max(86, 38 + rows.length * 48 + 8);
+      const f = { key: k, y0: y, y1: y + h, rows };
+      y = f.y1;
+      return f;
+    });
+  }
+  const houseBottom = FLOORS[FLOORS.length - 1].y1;
   // ground level sits above the first underground floor; if there is no
   // underground floor, it's the bottom of the house
   let groundY = houseBottom;
   for (const f of FLOORS) { if (UG.has(f.key)) { groundY = f.y0; break; } }
-  // house sits right of center: the earth on the left hosts the buried
-  // fiber uplink, so the map shows the whole chain internet -> router ->
-  // APs. Guarantee enough underground depth for the fiber node even in
-  // homes with no basement.
-  const HX0 = 180, HX1 = 910;             // house walls (yard on both sides)
-  const CARD_W = 176, CARD_H = 88;        // hover-card size (was the always-on card)
-  const mainFloor = FLOORS.find(f => f.key === H.main_floor) || FLOORS[Math.floor(FLOORS.length / 2)];
-  const MAIN = { x: 545, y: (mainFloor.y0 + mainFloor.y1) / 2 };
-  const NET = { x: 88, y: groundY + 52 }; // buried fiber node center
+  // Desktop: house sits right of center — the earth on the left hosts the
+  // buried fiber uplink, so the map shows the whole chain internet ->
+  // router -> APs. Compact: no yard, so the fiber node moves below the
+  // house instead. Guarantee enough underground depth for it either way.
+  const mainFloor = FLOORS.find(f => f.key === mainKey);
+  const MAIN = { x: compact ? (HX0 + HX1) / 2 : 545, y: (mainFloor.y0 + mainFloor.y1) / 2 };
+  const NET = { x: compact ? 80 : 88, y: (compact ? Math.max(groundY, houseBottom) : groundY) + 52 };
   const totalH = Math.max(houseBottom + 35, NET.y + 44);
   const netUp = DATA.current_status !== 'down';
 
@@ -1787,28 +1877,45 @@ safely('house map', function() {
   const spread = (n, a, b) => Array.from({length: n}, (_, i) => a + (i + 1) * (b - a) / (n + 1));
   const linspace = (n, a, b) => n === 1 ? [(a + b) / 2] : Array.from({length: n}, (_, i) => a + i * (b - a) / (n - 1));
 
-  // place each router on its floor; the main router's floor splits pills
-  // left/right of it so nothing overlaps. The right edge reserves room
-  // for the windows.
+  // place each router on its floor. Desktop: the main router's floor
+  // splits pills left/right of it so nothing overlaps, and the right edge
+  // reserves room for the windows. Compact: walk the pre-packed rows.
   const placed = [], unplaced = [];
-  const EDGE = HX0 + 95, EDGE2 = HX1 - 185;
-  FLOORS.forEach(f => {
-    let rs = routers.filter(r => r.floor === f.key);
-    let xs;
-    if (f.key === mainFloor.key) {
-      // this floor hosts the main router — split its routers left/right
-      const leftRs = [], rightRs = [];
-      rs.forEach((r, i) => (i % 2 === 0 ? leftRs : rightRs).push(r));
-      const leftXs = spread(leftRs.length, HX0 + 24, MAIN.x - 140);
-      const rightXs = spread(rightRs.length, MAIN.x + 140, EDGE2 + 70);
-      rs = [...leftRs, ...rightRs];
-      xs = [...leftXs, ...rightXs];
-    } else {
-      xs = linspace(rs.length, EDGE, EDGE2);
-    }
-    const cy = (f.y0 + f.y1) / 2 + 8;  // nudge down to clear the floor label
-    rs.forEach((r, i) => placed.push({ ...r, x: xs[i], y: cy }));
-  });
+  if (!compact) {
+    const EDGE = HX0 + 95, EDGE2 = HX1 - 185;
+    FLOORS.forEach(f => {
+      let rs = routers.filter(r => r.floor === f.key);
+      let xs;
+      if (f.key === mainFloor.key) {
+        // this floor hosts the main router — split its routers left/right
+        const leftRs = [], rightRs = [];
+        rs.forEach((r, i) => (i % 2 === 0 ? leftRs : rightRs).push(r));
+        const leftXs = spread(leftRs.length, HX0 + 24, MAIN.x - 140);
+        const rightXs = spread(rightRs.length, MAIN.x + 140, EDGE2 + 70);
+        rs = [...leftRs, ...rightRs];
+        xs = [...leftXs, ...rightXs];
+      } else {
+        xs = linspace(rs.length, EDGE, EDGE2);
+      }
+      const cy = (f.y0 + f.y1) / 2 + 8;  // nudge down to clear the floor label
+      rs.forEach((r, i) => placed.push({ ...r, x: xs[i], y: cy }));
+    });
+  } else {
+    FLOORS.forEach(f => {
+      (f.rows || []).forEach((row, ri) => {
+        const cy = f.y0 + 38 + ri * 48 + 24;
+        const widths = row.map(r => pillW(r.name, r.main));
+        const total = widths.reduce((a, b) => a + b, 0) + (row.length - 1) * 14;
+        let x = (HX0 + HX1) / 2 - total / 2;
+        row.forEach((r, i) => {
+          const cx = x + widths[i] / 2;
+          x += widths[i] + 14;
+          if (r.__main) { MAIN.x = cx; MAIN.y = cy; }
+          else placed.push({ ...r, x: cx, y: cy });
+        });
+      });
+    });
+  }
   routers.forEach(r => { if (!FLOORS.some(f => f.key === r.floor)) unplaced.push(r); });
 
   const fmtPct = v => v != null ? v + '%' : '—';
@@ -1843,30 +1950,26 @@ safely('house map', function() {
     </g>`;
   }
 
-  // Compact pill: status dot + name. Everything else (IP, latency, uptime)
-  // lives in the hover card so the house doesn't read as a wall of boxes.
-  const pillLabel = name => name.length > 20 ? name.slice(0, 19) + '…' : name;
-  const pillW = (name, main) => 34 + pillLabel(name).length * (main ? 7.2 : 6.6);
   function pill(x, y, opts, hcId) {
     const label = pillLabel(opts.name);
-    const w = pillW(opts.name, opts.main), h = opts.main ? 30 : 26;
+    const w = pillW(opts.name, opts.main), h = (opts.main ? 30 : 26) + (compact ? 4 : 0);
     const x0 = x - w / 2, y0 = y - h / 2;
     const cls = opts.main ? 'node-main' : (opts.status === 'up' ? 'node-up' : 'node-down');
     return `<g class="pillgrp ${cls}" data-hc="${hcId}">
       <rect class="pill-box" x="${x0}" y="${y0}" width="${w}" height="${h}" rx="${h / 2}"/>
       <circle class="status-dot-svg" cx="${x0 + 14}" cy="${y}" r="4"/>
-      <text class="pill-name" x="${x0 + 24}" y="${y + 4}"${opts.main ? ' style="font-size:12px"' : ''}>${escapeHtml(label)}</text>
+      <text class="pill-name" x="${x0 + 24}" y="${y + 4}"${opts.main ? ` style="font-size:${compact ? 13 : 12}px"` : ''}>${escapeHtml(label)}</text>
     </g>`;
   }
   // Hover card position: above the pill when there's room, else below.
   function hovercard(p, opts, hcId) {
     const above = p.y - 14 - CARD_H > TOP - 30;
     const cy = above ? p.y - 27 - CARD_H / 2 : p.y + 27 + CARD_H / 2;
-    const cx = Math.min(Math.max(p.x, CARD_W / 2 + 8), 1000 - CARD_W / 2 - 8);
+    const cx = Math.min(Math.max(p.x, CARD_W / 2 + 8), W - CARD_W / 2 - 8);
     return `<g class="hovercard" id="${hcId}">${card(cx, cy, opts)}</g>`;
   }
 
-  let svg = `<svg class="house-svg" viewBox="0 0 1000 ${totalH}" role="img" aria-label="Map of the internet connection and routers by floor">`;
+  let svg = `<svg class="house-svg${compact ? ' compact' : ''}" viewBox="0 0 ${W} ${totalH}" role="img" aria-label="Map of the internet connection and routers by floor">`;
 
   // ---- architectural backdrop: hatched earth below the street datum ----
   svg += `<defs>
@@ -1874,10 +1977,10 @@ safely('house map', function() {
       <line x1="0" y1="0" x2="0" y2="9" stroke="var(--baseline)" stroke-width="1" opacity="0.30"/>
     </pattern>
   </defs>`;
-  svg += `<rect fill="url(#earthHatch)" x="8" y="${groundY}" width="984" height="${totalH - groundY - 6}"/>`;
+  svg += `<rect fill="url(#earthHatch)" x="8" y="${groundY}" width="${W - 16}" height="${totalH - groundY - 6}"/>`;
 
   // street-level datum line with an elevation marker, like a section drawing
-  svg += `<line class="datum-line" x1="16" y1="${groundY}" x2="984" y2="${groundY}"/>`;
+  svg += `<line class="datum-line" x1="16" y1="${groundY}" x2="${W - 16}" y2="${groundY}"/>`;
   svg += `<path class="datum-mark" d="M 34 ${groundY - 12} h 12 l -6 12 z"/>`;
   svg += `<text class="street-label" x="54" y="${groundY - 6}">street level</text>`;
 
@@ -1893,14 +1996,16 @@ safely('house map', function() {
     }
   });
   FLOORS.forEach(f => {
-    const chipW = f.key.length * 6.6 + 20;
+    const chipW = f.key.length * (compact ? 7.4 : 6.6) + 20;
     svg += `<rect class="floor-chip" x="${HX0 + 12}" y="${f.y0 + 9}" width="${chipW}" height="20" rx="7"/>`;
     svg += `<text class="floor-label" x="${HX0 + 21}" y="${f.y0 + 23}">${escapeHtml(f.key)}</text>`;
   });
 
   // windows on the right of each above-ground floor, lit while that
-  // floor's access points are all up — a dark floor means trouble there
-  FLOORS.forEach(f => {
+  // floor's access points are all up — a dark floor means trouble there.
+  // Compact skips them: every horizontal unit belongs to the pills, and
+  // floor status is already readable from the pill dots.
+  if (!compact) FLOORS.forEach(f => {
     if (f.y0 >= groundY) return;  // basements don't get windows
     const statuses = routers.filter(r => r.floor === f.key).map(r => r.status);
     if (f.key === mainFloor.key && gw) statuses.push(gw.status);
@@ -1918,7 +2023,10 @@ safely('house map', function() {
     // riser straight up through the house to the main router.
     const nodeRight = NET.x + 62;
     let wanD;
-    if (MAIN.y + 30 < NET.y - 34) {
+    // buried run + riser needs vertical AND horizontal clearance; the
+    // compact layout rarely has the horizontal kind, so it takes the
+    // direct curve up through the section instead
+    if (MAIN.y + 30 < NET.y - 34 && MAIN.x - 34 > nodeRight + 10) {
       wanD = `M ${nodeRight} ${NET.y} L ${MAIN.x - 34} ${NET.y} Q ${MAIN.x} ${NET.y} ${MAIN.x} ${NET.y - 34} L ${MAIN.x} ${MAIN.y + 17}`;
     } else {
       // main router unusually low (e.g. in the basement) — connect directly
@@ -1949,10 +2057,10 @@ safely('house map', function() {
   // wi-fi coverage bubbles behind every node — an offline AP reads as a
   // pulsing hole in the coverage, not just one bad pill
   placed.forEach(p => {
-    svg += `<circle class="cover ${p.status === 'up' ? 'up' : 'down'}" cx="${p.x}" cy="${p.y}" r="62"/>`;
+    svg += `<circle class="cover ${p.status === 'up' ? 'up' : 'down'}" cx="${p.x}" cy="${p.y}" r="${compact ? 42 : 62}"/>`;
   });
   if (gw) {
-    svg += `<circle class="cover ${gw.status === 'up' ? 'main' : 'down'}" cx="${MAIN.x}" cy="${MAIN.y}" r="76"/>`;
+    svg += `<circle class="cover ${gw.status === 'up' ? 'main' : 'down'}" cx="${MAIN.x}" cy="${MAIN.y}" r="${compact ? 52 : 76}"/>`;
   }
 
   // links (under the cards): a soft glow stroke + an animated dashed core,
@@ -1973,12 +2081,13 @@ safely('house map', function() {
 
   // radar ripples radiating from the main router
   if (gw && !REDUCE_MOTION) {
-    svg += `<circle class="ripple" cx="${MAIN.x}" cy="${MAIN.y}" r="40" stroke-width="1.5">
-      <animate attributeName="r" from="40" to="120" dur="3.6s" repeatCount="indefinite"/>
+    const R0 = compact ? 30 : 40, R1 = compact ? 78 : 120;
+    svg += `<circle class="ripple" cx="${MAIN.x}" cy="${MAIN.y}" r="${R0}" stroke-width="1.5">
+      <animate attributeName="r" from="${R0}" to="${R1}" dur="3.6s" repeatCount="indefinite"/>
       <animate attributeName="opacity" values="0.5;0" dur="3.6s" repeatCount="indefinite"/>
     </circle>`;
-    svg += `<circle class="ripple" cx="${MAIN.x}" cy="${MAIN.y}" r="40" stroke-width="1.5">
-      <animate attributeName="r" from="40" to="120" begin="-1.8s" dur="3.6s" repeatCount="indefinite"/>
+    svg += `<circle class="ripple" cx="${MAIN.x}" cy="${MAIN.y}" r="${R0}" stroke-width="1.5">
+      <animate attributeName="r" from="${R0}" to="${R1}" begin="-1.8s" dur="3.6s" repeatCount="indefinite"/>
       <animate attributeName="opacity" values="0.5;0" begin="-1.8s" dur="3.6s" repeatCount="indefinite"/>
     </circle>`;
   }

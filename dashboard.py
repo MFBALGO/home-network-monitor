@@ -1016,6 +1016,8 @@ def build_html(data):
     text-transform: uppercase; font-family: var(--font-mono); }
   .house-svg .floor-chip { fill: var(--surface-1); stroke: var(--border-soft); }
   .house-svg .scene-grass { fill: var(--scene-grass); }
+  .house-svg .street-label { fill: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .16em;
+    text-transform: uppercase; font-family: var(--font-mono); opacity: 0.75; }
   .house-svg .scene-trunk { fill: var(--scene-trunk); }
   .house-svg .scene-leaf { fill: var(--scene-leaf); }
   .house-svg .scene-smoke { fill: var(--scene-smoke); animation: smokeRise 4s ease-out infinite; }
@@ -1848,6 +1850,11 @@ safely('house map', function() {
   svg += `<circle class="scene-leaf" cx="48" cy="${groundY - 70}" r="24"/><circle class="scene-leaf" cx="33" cy="${groundY - 56}" r="16"/><circle class="scene-leaf" cx="64" cy="${groundY - 58}" r="15"/>`;
   svg += `<circle class="scene-leaf" cx="952" cy="${groundY - 18}" r="15"/><circle class="scene-leaf" cx="968" cy="${groundY - 13}" r="11"/>`;
   svg += `<rect class="scene-grass" x="0" y="${groundY - 8}" width="1000" height="10" rx="5"/>`;
+  // label the ground line when part of the house is below it, using the
+  // same words as the settings editor's divider
+  if (groundY < houseBottom) {
+    svg += `<text class="street-label" x="930" y="${groundY - 16}" text-anchor="end">street level</text>`;
+  }
 
   // chimney (behind the roof) with drifting smoke
   svg += `<rect class="roof" x="760" y="40" width="34" height="52"/>`;
@@ -1918,7 +1925,8 @@ safely('house map', function() {
   if (unplaced.length) {
     const n = document.getElementById('houseMapNote');
     n.style.display = 'block';
-    n.textContent = 'Not on the map (set "floor" in routers.json): ' + unplaced.map(r => r.name).join(', ');
+    n.textContent = 'Not on the map yet (no floor assigned): ' + unplaced.map(r => r.name).join(', ')
+      + ' — pick each one’s floor in Settings → Routers.';
   }
 });
 

@@ -103,7 +103,19 @@ _SHARED_HEAD = """<!DOCTYPE html>
   .tabs { display: flex; gap: 8px; margin-bottom: 18px; }
   .tabs button { border-radius: 8px 8px 0 0; border-bottom: 2px solid transparent; }
   .tabs button.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-  .floor-item { display: flex; gap: 8px; align-items: center; padding: 5px 0; }
+  /* Floors editor: a mini cross-section of the house. Rows above the
+     street-level divider get a sky tint, rows below an earth tint — the
+     same visual language as the dashboard's house map. */
+  .floor-row { display: flex; gap: 8px; align-items: center; padding: 8px 10px; margin: 4px 0;
+    border: 1px solid var(--border-soft); border-radius: 8px; }
+  .floor-row.above { background: linear-gradient(180deg, rgba(63,198,255,0.07), rgba(63,198,255,0.02)); }
+  .floor-row.below { background: rgba(153,122,81,0.12); border-color: rgba(153,122,81,0.30); }
+  .ground-divider { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .ground-line { flex: 1; border-top: 2px dashed #79b768; opacity: 0.75; height: 0; }
+  .ground-label { color: #79b768; font-family: var(--font-mono); font-size: 10.5px;
+    letter-spacing: 1.2px; text-transform: uppercase; white-space: nowrap; }
+  .floor-main { white-space: nowrap; }
+  .floor-main.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
   .thresh-grid { display: grid; grid-template-columns: 110px 1fr 1fr; gap: 8px 12px; align-items: center; }
   .thresh-grid .hdr { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; }
 </style>
@@ -135,61 +147,96 @@ function clearMsg(el) { el.className = 'msg'; el.innerHTML = ''; }
 function fmtIssue(i) {
   return (i.file ? i.file + (i.path ? ' ' + i.path : '') + ': ' : '') + i.msg;
 }
-// Reusable floors editor (wizard step 2 + settings General tab).
+// Reusable floors editor (wizard step 2 + settings General tab): a visual
+// stack of floors, top floor first, with a movable dashed "street level"
+// line — floors below it are drawn underground (behind earth) on the house
+// map. state: {floors: [names], groundIndex: how many floors are above
+// street level, main: floor name of the main router, onchange}.
+function clampGround(state) {
+  // at least the top floor stays above ground; divider can sit at the very
+  // bottom (= nothing underground)
+  state.groundIndex = Math.min(Math.max(state.groundIndex, 1), state.floors.length || 1);
+}
+// Convert a config's underground_floors list to a divider position: count
+// how many floors, from the bottom up, are marked underground.
+function groundIndexFrom(floors, underground) {
+  const ug = new Set(underground || []);
+  let k = 0;
+  for (let i = floors.length - 1; i >= 0 && ug.has(floors[i]); i--) k++;
+  return floors.length - k;
+}
 function renderFloors(state, mountId) {
   const mount = document.getElementById(mountId);
-  mount.innerHTML = '';
+  clampGround(state);
+  const divider =
+    '<div class="ground-divider"><span class="ground-line"></span>' +
+    '<span class="ground-label">street level</span>' +
+    '<button class="small" data-role="ground-up" title="Raise the line: one more floor becomes underground">&#8593;</button>' +
+    '<button class="small" data-role="ground-down" title="Lower the line: one less floor underground">&#8595;</button>' +
+    '<span class="ground-line"></span></div>';
+  let html = '';
   state.floors.forEach((f, i) => {
-    const row = document.createElement('div');
-    row.className = 'floor-item';
-    row.innerHTML =
+    if (i === state.groundIndex) html += divider;
+    const below = i >= state.groundIndex;
+    html += '<div class="floor-row ' + (below ? 'below' : 'above') + '">' +
+      '<button class="small" data-i="' + i + '" data-role="up" title="Move floor up">&#8593;</button>' +
+      '<button class="small" data-i="' + i + '" data-role="down" title="Move floor down">&#8595;</button>' +
       '<input type="text" class="grow" value="' + esc(f) + '" data-i="' + i + '" data-role="name">' +
-      '<label style="margin:0;display:flex;align-items:center;gap:4px;font-size:11.5px">' +
-        '<input type="checkbox" data-i="' + i + '" data-role="under"' + (state.underground.includes(f) ? ' checked' : '') + '>underground</label>' +
-      '<label style="margin:0;display:flex;align-items:center;gap:4px;font-size:11.5px">' +
-        '<input type="radio" name="mainfloor-' + mountId + '" data-i="' + i + '" data-role="main"' + (state.main === f ? ' checked' : '') + '>main router</label>' +
-      '<button class="small" data-i="' + i + '" data-role="up" title="Move up">&#8593;</button>' +
-      '<button class="small" data-i="' + i + '" data-role="down" title="Move down">&#8595;</button>' +
-      '<button class="small danger" data-i="' + i + '" data-role="del" title="Remove">&#10005;</button>';
-    mount.appendChild(row);
+      '<button class="small floor-main' + (state.main === f ? ' active' : '') + '" data-i="' + i +
+        '" data-role="main" title="Draw the main router (your internet gateway) on this floor">' +
+        (state.main === f ? '&#9679; main router' : 'main router') + '</button>' +
+      '<button class="small danger" data-i="' + i + '" data-role="del" title="Remove floor">&#10005;</button>' +
+      '</div>';
   });
+  if (state.groundIndex >= state.floors.length) html += divider;
+  mount.innerHTML = html;
+
+  const rerender = () => { renderFloors(state, mountId); state.onchange && state.onchange(); };
   mount.onclick = (e) => {
-    const t = e.target; const i = +t.dataset.i;
+    const t = e.target.closest('button'); if (!t) return;
+    const i = +t.dataset.i;
+    if (t.dataset.role === 'ground-up') { state.groundIndex--; rerender(); }
+    if (t.dataset.role === 'ground-down') { state.groundIndex++; rerender(); }
     if (t.dataset.role === 'del') {
       const removed = state.floors.splice(i, 1)[0];
-      state.underground = state.underground.filter(f => f !== removed);
-      if (state.main === removed) state.main = state.floors[state.floors.length - 1] || null;
-      renderFloors(state, mountId); state.onchange && state.onchange();
+      if (i < state.groundIndex) state.groundIndex--;
+      if (state.main === removed) state.main = state.floors[0] || null;
+      rerender();
     }
     if (t.dataset.role === 'up' && i > 0) {
       [state.floors[i-1], state.floors[i]] = [state.floors[i], state.floors[i-1]];
-      renderFloors(state, mountId); state.onchange && state.onchange();
+      rerender();
     }
     if (t.dataset.role === 'down' && i < state.floors.length - 1) {
       [state.floors[i+1], state.floors[i]] = [state.floors[i], state.floors[i+1]];
-      renderFloors(state, mountId); state.onchange && state.onchange();
+      rerender();
     }
+    if (t.dataset.role === 'main') { state.main = state.floors[i]; rerender(); }
   };
   mount.onchange = (e) => {
     const t = e.target; const i = +t.dataset.i;
     if (t.dataset.role === 'name') {
       const old = state.floors[i]; const nu = t.value.trim();
       state.floors[i] = nu;
-      state.underground = state.underground.map(f => f === old ? nu : f);
       if (state.main === old) state.main = nu;
       state.onchange && state.onchange();
     }
-    if (t.dataset.role === 'under') {
-      const f = state.floors[i];
-      state.underground = state.underground.filter(x => x !== f);
-      if (t.checked) state.underground.push(f);
-      state.onchange && state.onchange();
-    }
-    if (t.dataset.role === 'main') { state.main = state.floors[i]; state.onchange && state.onchange(); }
   };
 }
 function addFloor(state, mountId) {
-  state.floors.push('New Floor');
+  // new floors go on top (houses grow upward); the underground count is
+  // unchanged, so groundIndex shifts with the insert
+  state.floors.unshift('New Floor');
+  state.groundIndex++;
+  if (!state.main) state.main = state.floors[0];
+  renderFloors(state, mountId);
+  state.onchange && state.onchange();
+}
+function addBasement(state, mountId) {
+  // appended at the bottom, below the divider, so it's underground already
+  let name = 'Basement', n = 2;
+  while (state.floors.includes(name)) name = 'Basement ' + n++;
+  state.floors.push(name);
   if (!state.main) state.main = state.floors[0];
   renderFloors(state, mountId);
   state.onchange && state.onchange();
@@ -217,10 +264,13 @@ WIZARD_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Setup — Home Network Mo
   <h2 style="margin-top:0">Your house</h2>
   <label>Dashboard title</label>
   <input type="text" id="wTitle" value="Home Network Monitor" maxlength="100">
-  <label>Floors (top floor first — used to draw the house map)</label>
+  <label>Floors — this is your house from the side, exactly as the dashboard will draw it
+  (top floor first). Floors under the dashed <span style="color:#79b768">street level</span> line
+  are drawn below ground.</label>
   <div id="wFloors"></div>
   <div class="row" style="margin-top:8px">
-    <button class="small" id="wAddFloor">+ Add floor</button>
+    <button class="small" id="wAddFloor">+ Add floor on top</button>
+    <button class="small" id="wAddBasement">+ Add basement</button>
   </div>
   <div class="row" style="margin-top:16px; justify-content:flex-end">
     <button class="primary" id="toStep3">Continue</button>
@@ -324,10 +374,11 @@ async function poll() {
 document.getElementById('scanRetry').onclick = startScan;
 
 // ---- step 2: floors ----
-S.floorState = { floors: ['Ground Floor'], underground: [], main: 'Ground Floor',
+S.floorState = { floors: ['Ground Floor'], groundIndex: 1, main: 'Ground Floor',
                  onchange: () => refreshFloorSelects() };
 renderFloors(S.floorState, 'wFloors');
 document.getElementById('wAddFloor').onclick = () => addFloor(S.floorState, 'wFloors');
+document.getElementById('wAddBasement').onclick = () => addBasement(S.floorState, 'wFloors');
 document.getElementById('toStep3').onclick = () => {
   const fs = S.floorState.floors.map(f => f.trim()).filter(Boolean);
   if (!fs.length) { alert('Add at least one floor.'); return; }
@@ -433,11 +484,12 @@ function wizardPayload(overwrite) {
   for (const inp of document.querySelectorAll('input[data-devname]')) {
     if (inp.value.trim()) devices[inp.dataset.devname] = inp.value.trim();
   }
-  const fs = S.floorState.floors.map(f => f.trim()).filter(Boolean);
+  const all = S.floorState.floors.map(f => f.trim());
+  const fs = all.filter(Boolean);
   const cfg = {
     title: document.getElementById('wTitle').value.trim() || 'Home Network Monitor',
     floors: fs,
-    underground_floors: S.floorState.underground.filter(f => fs.includes(f)),
+    underground_floors: all.slice(S.floorState.groundIndex).filter(Boolean),
     main_router_floor: fs.includes(S.floorState.main) ? S.floorState.main : fs[fs.length - 1],
   };
   const body = {config: cfg, routers, devices};
@@ -485,9 +537,14 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
   <div class="card">
     <label>Dashboard title</label>
     <input type="text" id="gTitle" maxlength="100">
-    <label>Floors (top floor first — used to draw the house map)</label>
+    <label>Floors — your house from the side, exactly as the dashboard's map draws it
+    (top floor first). Floors under the dashed <span style="color:#79b768">street level</span> line
+    are drawn below ground.</label>
     <div id="gFloors"></div>
-    <div class="row" style="margin-top:8px"><button class="small" id="gAddFloor">+ Add floor</button></div>
+    <div class="row" style="margin-top:8px">
+      <button class="small" id="gAddFloor">+ Add floor on top</button>
+      <button class="small" id="gAddBasement">+ Add basement</button>
+    </div>
     <label>Hide devices whose IP starts with (comma-separated, e.g. <span class="mono">192.168.100.</span>)</label>
     <input type="text" id="gHide" placeholder="leave empty to show everything">
     <label>Internet plan speeds, Mbps (drawn on the speed chart — leave empty to skip)</label>
@@ -553,7 +610,7 @@ const THRESH_METRICS = [
   ['wifi', 'Wi-Fi dBm', -60, -70],
 ];
 const S = { config: {}, routers: [], devices: {} };
-S.floorState = { floors: [], underground: [], main: null, onchange: refreshRouterFloorSelects };
+S.floorState = { floors: [], groundIndex: 0, main: null, onchange: refreshRouterFloorSelects };
 
 // ---- tabs ----
 document.querySelector('.tabs').onclick = (e) => {
@@ -577,7 +634,7 @@ async function load() {
 
   document.getElementById('gTitle').value = S.config.title || 'Home Network Monitor';
   S.floorState.floors = (S.config.floors || []).slice();
-  S.floorState.underground = (S.config.underground_floors || []).slice();
+  S.floorState.groundIndex = groundIndexFrom(S.floorState.floors, S.config.underground_floors);
   S.floorState.main = S.config.main_router_floor || null;
   renderFloors(S.floorState, 'gFloors');
   document.getElementById('gHide').value = (S.config.hide_ip_prefixes || []).join(', ');
@@ -600,15 +657,17 @@ async function load() {
 
 // ---- general save ----
 document.getElementById('gAddFloor').onclick = () => addFloor(S.floorState, 'gFloors');
+document.getElementById('gAddBasement').onclick = () => addBasement(S.floorState, 'gFloors');
 document.getElementById('gSave').onclick = async () => {
   const msg = document.getElementById('gMsg');
   clearMsg(msg);
   const cfg = Object.assign({}, S.config);  // keep unknown keys as-is
   cfg.title = document.getElementById('gTitle').value.trim() || 'Home Network Monitor';
-  const fs = S.floorState.floors.map(f => f.trim()).filter(Boolean);
+  const all = S.floorState.floors.map(f => f.trim());
+  const fs = all.filter(Boolean);
   if (fs.length) {
     cfg.floors = fs;
-    cfg.underground_floors = S.floorState.underground.filter(f => fs.includes(f));
+    cfg.underground_floors = all.slice(S.floorState.groundIndex).filter(Boolean);
     cfg.main_router_floor = fs.includes(S.floorState.main) ? S.floorState.main : fs[fs.length - 1];
   } else { delete cfg.floors; delete cfg.underground_floors; delete cfg.main_router_floor; }
   const hide = document.getElementById('gHide').value.split(',').map(s => s.trim()).filter(Boolean);

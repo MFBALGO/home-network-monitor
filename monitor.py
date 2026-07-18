@@ -219,6 +219,30 @@ def init_db():
             latency_ms REAL
         );
         CREATE INDEX IF NOT EXISTS idx_dns_checks_ts ON dns_checks(ts);
+
+        -- hourly neighbor-network snapshot: one row per visible BSSID,
+        -- rows of one scan share a ts (channel-congestion advice)
+        CREATE TABLE IF NOT EXISTS wifi_scan (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            ssid TEXT,
+            bssid TEXT,
+            channel TEXT,
+            band TEXT,
+            signal_pct REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_wifi_scan_ts ON wifi_scan(ts);
+
+        -- daily traceroute-based double-NAT check (~1 row/day, kept forever)
+        CREATE TABLE IF NOT EXISTS topology_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            private_hops INTEGER,
+            hop_ips TEXT,          -- JSON array of the first hops
+            double_nat INTEGER,    -- 1/0, NULL = inconclusive
+            cgnat INTEGER,         -- 1 when a 100.64/10 hop was seen
+            error TEXT
+        );
         """
     )
     # Migrations for databases created before these columns existed
@@ -234,6 +258,10 @@ def init_db():
         "ALTER TABLE speedtests ADD COLUMN loaded_latency_down_ms REAL",
         "ALTER TABLE speedtests ADD COLUMN loaded_latency_up_ms REAL",
         "ALTER TABLE speedtests ADD COLUMN packet_loss_pct REAL",
+        # which AP the monitor PC is associated to (roaming detection) and
+        # which band; macOS redacts BSSID without location permission -> NULL
+        "ALTER TABLE wifi ADD COLUMN bssid TEXT",
+        "ALTER TABLE wifi ADD COLUMN band TEXT",
     ):
         try:
             conn.execute(migration)
@@ -669,8 +697,24 @@ def _wifi_snapshot_windows():
         m = re.search(r"\(M?bit/s\)\s*:\s*([\d.,]+)|\(Mbps\)\s*:\s*([\d.,]+)", out)
         if m:
             tx_rate = (m.group(1) or m.group(2)).replace(",", ".")
+        # BSSID = which AP we're associated to; the label isn't localized.
+        bssid = None
+        m = re.search(r"^\s*BSSID\s*:\s*([0-9A-Fa-f:]{17})", out, re.M)
+        if m:
+            bssid = m.group(1).lower()
+        # Band: match the "5 GHz" VALUE shape (Win11 has a Band line whose
+        # label localizes, but "GHz" doesn't); else derive from channel —
+        # honest caveat: 6 GHz channel numbers overlap 2.4/5 GHz ones, so
+        # the fallback can mislabel 6E networks.
+        band = None
+        m = re.search(r":\s*([\d.,]+)\s*GHz", out)
+        if m:
+            band = m.group(1).replace(",", ".")
+        elif channel is not None:
+            band = "2.4" if int(channel) <= 14 else "5"
         return {"ssid": ssid, "rssi_dbm": rssi, "noise_dbm": None,
-                "channel": channel, "tx_rate_mbps": tx_rate}
+                "channel": channel, "tx_rate_mbps": tx_rate,
+                "bssid": bssid, "band": band}
     except Exception:
         return None
 
@@ -692,16 +736,90 @@ def get_wifi_snapshot():
             for iface in item.get("spairport_airport_interfaces", []):
                 current = iface.get("spairport_current_network_information")
                 if current:
+                    # channel string looks like "36 (5GHz, 80MHz)" — band is
+                    # inside it. BSSID: modern macOS redacts it without
+                    # location permission, so roaming detection is
+                    # Windows-only and we store NULL here.
+                    chan = current.get("spairport_network_channel")
+                    band = None
+                    m = re.search(r"([\d.]+)\s*GHz", str(chan or ""))
+                    if m:
+                        band = m.group(1)
                     return {
                         "ssid": current.get("_name"),
                         "rssi_dbm": current.get("spairport_signal_noise", "").split(" / ")[0].replace(" dBm", "").strip() or None,
                         "noise_dbm": current.get("spairport_signal_noise", "").split(" / ")[-1].replace(" dBm", "").strip() or None,
-                        "channel": current.get("spairport_network_channel"),
+                        "channel": chan,
                         "tx_rate_mbps": current.get("spairport_network_rate"),
+                        "bssid": None,
+                        "band": band,
                     }
     except Exception:
         pass
     return None
+
+
+def scan_wifi_networks():
+    """List neighboring Wi-Fi networks (one dict per visible BSSID) for
+    channel-congestion advice. Run hourly, NOT per-snapshot: asking the
+    adapter for a scan can briefly disturb our own Wi-Fi.
+
+    Windows 11 note: without Location permission for desktop apps,
+    `netsh wlan show networks` returns an empty list — treated as
+    'no data', never as an error."""
+    nets = []
+    try:
+        if IS_WINDOWS:
+            out = subprocess.run(
+                ["netsh", "wlan", "show", "networks", "mode=bssid"],
+                capture_output=True, text=True, timeout=20, **SUBPROCESS_EXTRA,
+            ).stdout
+            # Blocks look like:  SSID 3 : name / BSSID 1 : aa:bb:.. /
+            # Signal : 88% / Channel : 6  — labels localize except
+            # SSID/BSSID, so signal/channel are matched by value shape.
+            ssid = None
+            cur = None
+            for line in out.splitlines():
+                m = re.match(r"^SSID\s+\d+\s*:\s*(.*)$", line.strip())
+                if m:
+                    ssid = m.group(1).strip() or None
+                    continue
+                m = re.match(r"^\s*BSSID\s+\d+\s*:\s*([0-9A-Fa-f:]{17})", line)
+                if m:
+                    cur = {"ssid": ssid, "bssid": m.group(1).lower(),
+                           "channel": None, "band": None, "signal_pct": None}
+                    nets.append(cur)
+                    continue
+                if cur is not None:
+                    m = re.search(r":\s*(\d{1,3})\s*%", line)
+                    if m and cur["signal_pct"] is None:
+                        cur["signal_pct"] = int(m.group(1))
+                        continue
+                    m = re.search(r"^\s*[^:]+:\s*(\d{1,3})\s*$", line)
+                    if m and cur["channel"] is None and int(m.group(1)) <= 196:
+                        cur["channel"] = m.group(1)
+                        cur["band"] = "2.4" if int(m.group(1)) <= 14 else "5"
+        elif IS_MACOS:
+            # same system_profiler call the snapshot uses — other networks
+            # ride along for free
+            out = subprocess.run(
+                ["system_profiler", "SPAirPortDataType", "-json"],
+                capture_output=True, text=True, timeout=15, **SUBPROCESS_EXTRA,
+            ).stdout
+            data = json.loads(out)
+            for item in data.get("SPAirPortDataType", []):
+                for iface in item.get("spairport_airport_interfaces", []):
+                    for net in iface.get("spairport_airport_other_local_wireless_networks", []) or []:
+                        chan = str(net.get("spairport_network_channel") or "")
+                        m = re.match(r"(\d+)", chan)
+                        b = re.search(r"([\d.]+)\s*GHz", chan)
+                        nets.append({"ssid": net.get("_name"), "bssid": None,
+                                     "channel": m.group(1) if m else None,
+                                     "band": b.group(1) if b else None,
+                                     "signal_pct": None})
+    except Exception as e:
+        log_error(f"wifi neighbor scan failed: {e!r}")
+    return nets
 
 
 # ---------------------------------------------------------------------------
@@ -1070,15 +1188,60 @@ def ping_loop(conn, gateway):
 
 
 def wifi_loop(conn):
+    # Roaming detection: seed the last-known AP from the DB (same idea as
+    # public_ip_loop's seeding) so a monitor restart doesn't fake a roam.
+    last_bssid, last_ssid = None, None
+    try:
+        rows = db_query(conn, "SELECT bssid, ssid FROM wifi WHERE bssid IS NOT NULL ORDER BY ts DESC LIMIT 1")
+        if rows:
+            last_bssid, last_ssid = rows[0][0], rows[0][1]
+    except sqlite3.Error:
+        pass
+    cycle = 0
+    scan_logged_empty = False
     while True:
         snap = get_wifi_snapshot()
         if snap:
+            ts = now_iso()
             db_execute(
                 conn,
-                "INSERT INTO wifi (ts, ssid, rssi_dbm, noise_dbm, channel, tx_rate_mbps) VALUES (?,?,?,?,?,?)",
-                (now_iso(), snap.get("ssid"), snap.get("rssi_dbm"), snap.get("noise_dbm"),
-                 snap.get("channel"), snap.get("tx_rate_mbps")),
+                "INSERT INTO wifi (ts, ssid, rssi_dbm, noise_dbm, channel, tx_rate_mbps, bssid, band)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (ts, snap.get("ssid"), snap.get("rssi_dbm"), snap.get("noise_dbm"),
+                 snap.get("channel"), snap.get("tx_rate_mbps"), snap.get("bssid"), snap.get("band")),
             )
+            # BSSID changed within the same SSID = we silently hopped to a
+            # different AP. An SSID change is a network switch, not a roam.
+            bssid = snap.get("bssid")
+            if (bssid and last_bssid and bssid != last_bssid
+                    and snap.get("ssid") == last_ssid):
+                db_execute(
+                    conn,
+                    "INSERT INTO events (start_ts, end_ts, kind, scope, note) VALUES (?,?,?,?,?)",
+                    (ts, ts, "wifi_roam", "lan",
+                     f"This PC's Wi-Fi hopped to a different access point ({last_bssid} → {bssid})"
+                     f" on \"{snap.get('ssid')}\""),
+                )
+            if bssid:
+                last_bssid, last_ssid = bssid, snap.get("ssid")
+        # hourly neighbor scan (every 12th 5-minute cycle), only while the
+        # machine actually has Wi-Fi in play
+        if snap and cycle % 12 == 0:
+            nets = scan_wifi_networks()
+            if nets:
+                scan_logged_empty = False
+                ts = now_iso()
+                for n in nets:
+                    db_execute(
+                        conn,
+                        "INSERT INTO wifi_scan (ts, ssid, bssid, channel, band, signal_pct) VALUES (?,?,?,?,?,?)",
+                        (ts, n.get("ssid"), n.get("bssid"), n.get("channel"), n.get("band"), n.get("signal_pct")),
+                    )
+            elif not scan_logged_empty:
+                scan_logged_empty = True
+                log("wifi neighbor scan returned nothing (on Windows 11 this "
+                    "usually means Location permission is off for desktop apps)")
+        cycle += 1
         time.sleep(WIFI_SNAPSHOT_INTERVAL_SEC)
 
 
@@ -1447,6 +1610,106 @@ def command_loop(conn):
 
 
 # ---------------------------------------------------------------------------
+# Topology / double-NAT check
+# ---------------------------------------------------------------------------
+
+def check_double_nat(target="8.8.8.8"):
+    """Count private hops on the way out. Two (or more) RFC1918 hops before
+    the first public one = two routers are each doing NAT — the classic
+    ISP-box-in-front-of-your-own-router setup that breaks consoles, VoIP
+    and port forwarding. A 100.64/10 hop is carrier-grade NAT: also shared
+    address space, but at the ISP — not something the user can bridge.
+
+    Returns {private_hops, hop_ips, double_nat, cgnat, error}; double_nat
+    is None when the trace was inconclusive (timeouts before any public
+    hop) — an inconclusive run must never produce a warning."""
+    if IS_WINDOWS:
+        cmd = ["tracert", "-d", "-h", "4", "-w", "1000", target]
+    else:
+        cmd = ["traceroute", "-n", "-m", "4", "-w", "1", "-q", "1", target]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=45, **SUBPROCESS_EXTRA).stdout
+    except FileNotFoundError:
+        return {"private_hops": None, "hop_ips": [], "double_nat": None, "cgnat": 0,
+                "error": "traceroute not installed"}
+    except subprocess.TimeoutExpired:
+        return {"private_hops": None, "hop_ips": [], "double_nat": None, "cgnat": 0,
+                "error": "traceroute timed out"}
+
+    hops = []   # one entry per hop line: an IP string, or None for '*'
+    for line in out.splitlines():
+        # hop lines start with the hop number; the tracert header repeats
+        # the target IP but never matches this anchor
+        m = re.match(r"^\s*(\d{1,2})\s", line)
+        if not m:
+            continue
+        ips = re.findall(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", line)
+        hops.append(ips[-1] if ips else None)
+
+    # The verdict comes from hop 2's address class, NOT from counting
+    # private hops until a public one appears: many ISPs run 10.x/172.16.x
+    # internally for several hops past the customer edge (this very network
+    # shows 10.188.x at hop 3 inside the ISP), which would make the "count
+    # to first public" approach permanently inconclusive — or worse, call
+    # the ISP's own routing double NAT.
+    #   hop2 in 192.168/16 -> a second HOME router is NATing (ISP cores
+    #                          don't use 192.168): double NAT, confidently.
+    #   hop2 in 100.64/10  -> carrier-grade NAT: shared addressing at the
+    #                          ISP, not fixable in the house.
+    #   hop2 public        -> single NAT, all good.
+    #   hop2 in 10/8 etc.  -> ambiguous (home OR ISP addressing): stay
+    #                          inconclusive rather than risk a false alarm.
+    cgnat = 0
+    double_nat = None
+    leading_private = 0
+    for ip in hops:
+        if ip is None:
+            break
+        try:
+            if not ipaddress.ip_address(ip).is_private:
+                break
+        except ValueError:
+            break
+        leading_private += 1
+    h2 = hops[1] if len(hops) > 1 else None
+    if h2 is not None:
+        try:
+            addr2 = ipaddress.ip_address(h2)
+            if addr2 in ipaddress.ip_network("100.64.0.0/10"):
+                cgnat, double_nat = 1, False
+            elif addr2 in ipaddress.ip_network("192.168.0.0/16"):
+                double_nat = True
+            elif not addr2.is_private:
+                double_nat = False
+        except ValueError:
+            pass
+    return {"private_hops": leading_private if double_nat is not None else None,
+            "hop_ips": [h for h in hops if h][:4],
+            "double_nat": double_nat, "cgnat": cgnat, "error": None}
+
+
+def topology_loop(conn):
+    """Once at startup (fresh data after any reboot/network change), then
+    daily. ~1 tiny row per run, kept forever."""
+    while True:
+        try:
+            r = check_double_nat()
+            db_execute(
+                conn,
+                "INSERT INTO topology_checks (ts, private_hops, hop_ips, double_nat, cgnat, error)"
+                " VALUES (?,?,?,?,?,?)",
+                (now_iso(), r["private_hops"], json.dumps(r["hop_ips"]),
+                 None if r["double_nat"] is None else int(r["double_nat"]),
+                 r["cgnat"], r["error"]),
+            )
+            if r["double_nat"]:
+                log(f"double NAT detected: {r['private_hops']} private hops {r['hop_ips']}")
+        except Exception as e:
+            log_error(f"topology check failed: {e!r}")
+        time.sleep(24 * 3600)
+
+
+# ---------------------------------------------------------------------------
 # Alerting
 #
 # One notifier thread polls the events table for rows the other loops wrote
@@ -1701,7 +1964,7 @@ def alert_loop(conn):
                 row = {"id": r[0], "start_ts": r[1], "end_ts": r[2], "kind": r[3],
                        "scope": r[4], "note": r[5], "router_name": r[6]}
                 last_max_id = max(last_max_id, row["id"])
-                if row["kind"] in ("new_device", "ip_change"):
+                if row["kind"] in ("new_device", "ip_change", "wifi_roam"):
                     if enabled_for(row["kind"]):
                         if row["kind"] == "new_device":
                             new_devices.append(row)   # batched below
@@ -1769,7 +2032,7 @@ def retention_loop(conn):
     ~23k rows/day (~8M rows/year) — without pruning the DB grows without
     bound and dashboard queries slowly degrade. Events and speedtests are
     small and kept forever."""
-    tables = ["pings", "router_pings", "wifi", "devices", "public_ip", "dns_checks"]
+    tables = ["pings", "router_pings", "wifi", "devices", "public_ip", "dns_checks", "wifi_scan"]
     while True:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).isoformat()
         for table in tables:
@@ -1801,6 +2064,7 @@ def main():
         threading.Thread(target=retention_loop, args=(conn,), daemon=True),
         threading.Thread(target=command_loop, args=(conn,), daemon=True),
         threading.Thread(target=alert_loop, args=(conn,), daemon=True),
+        threading.Thread(target=topology_loop, args=(conn,), daemon=True),
     ]
     for t in threads:
         t.start()

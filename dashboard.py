@@ -192,11 +192,13 @@ def main():
     for migration in (
         "ALTER TABLE events ADD COLUMN router_name TEXT",
         "ALTER TABLE router_pings ADD COLUMN method TEXT",
-        # bufferbloat columns (mirror of monitor.py's list — keep in sync)
+        # bufferbloat + wifi columns (mirror of monitor.py's list — keep in sync)
         "ALTER TABLE speedtests ADD COLUMN jitter_ms REAL",
         "ALTER TABLE speedtests ADD COLUMN loaded_latency_down_ms REAL",
         "ALTER TABLE speedtests ADD COLUMN loaded_latency_up_ms REAL",
         "ALTER TABLE speedtests ADD COLUMN packet_loss_pct REAL",
+        "ALTER TABLE wifi ADD COLUMN bssid TEXT",
+        "ALTER TABLE wifi ADD COLUMN band TEXT",
     ):
         try:
             conn.execute(migration)
@@ -215,6 +217,18 @@ def main():
             success INTEGER NOT NULL, latency_ms REAL
         )"""
     )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS wifi_scan (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, ssid TEXT, bssid TEXT,
+            channel TEXT, band TEXT, signal_pct REAL
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS topology_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, private_hops INTEGER,
+            hop_ips TEXT, double_nat INTEGER, cgnat INTEGER, error TEXT
+        )"""
+    )
     conn.commit()
 
     pings = q(conn, "SELECT ts, target, target_type, success, latency_ms FROM pings WHERE ts >= ? ORDER BY ts", (since,))
@@ -222,7 +236,7 @@ def main():
     speedtests = q(conn, "SELECT ts, download_mbps, upload_mbps, ping_ms, error,"
                    " jitter_ms, loaded_latency_down_ms, loaded_latency_up_ms, packet_loss_pct"
                    " FROM speedtests WHERE ts >= ? ORDER BY ts", (since,))
-    wifi = q(conn, "SELECT ts, ssid, rssi_dbm, noise_dbm, channel, tx_rate_mbps FROM wifi WHERE ts >= ? ORDER BY ts", (since,))
+    wifi = q(conn, "SELECT ts, ssid, rssi_dbm, noise_dbm, channel, tx_rate_mbps, band FROM wifi WHERE ts >= ? ORDER BY ts", (since,))
     router_pings = q(conn, "SELECT ts, name, ip, success, latency_ms, method FROM router_pings WHERE ts >= ? ORDER BY ts", (since,))
     dns_checks = q(conn, "SELECT ts, domain, success, latency_ms FROM dns_checks WHERE ts >= ? ORDER BY ts", (since,))
 
@@ -300,6 +314,21 @@ def main():
             generate_report(conn, site_config)
     except Exception as e:
         print(f"report generation failed (dashboard unaffected): {e}")
+
+    # Latest neighbor-Wi-Fi snapshot (all rows sharing the newest ts) for
+    # the channel-congestion advice, plus the newest topology check.
+    try:
+        wifi_neighbors = q(conn,
+                           "SELECT ssid, bssid, channel, band, signal_pct FROM wifi_scan"
+                           " WHERE ts = (SELECT MAX(ts) FROM wifi_scan)")
+    except sqlite3.OperationalError:
+        wifi_neighbors = []
+    try:
+        topo_rows = q(conn, "SELECT ts, private_hops, hop_ips, double_nat, cgnat FROM topology_checks"
+                      " ORDER BY id DESC LIMIT 1")
+        topology = topo_rows[0] if topo_rows else None
+    except sqlite3.OperationalError:
+        topology = None
 
     public_ip_rows = q(conn, "SELECT ts, ip FROM public_ip WHERE ts >= ? AND ip IS NOT NULL ORDER BY ts", (since,))
     # Health of the public-IP checks themselves over the last 24h: repeated
@@ -398,6 +427,7 @@ def main():
     degraded_events = [e for e in events if e["kind"] == "degraded"]
     ip_change_events = [e for e in events if e["kind"] == "ip_change"]
     new_device_events = [e for e in events if e["kind"] == "new_device"]
+    wifi_roam_events = [e for e in events if e["kind"] == "wifi_roam"]
 
     # ---- monitoring gaps (Mac asleep / monitor stopped) ----
     # A hole in the ping timeline isn't an outage and isn't uptime either —
@@ -634,6 +664,10 @@ def main():
             {"start": e["start_ts"], "note": e["note"]}
             for e in new_device_events
         ],
+        "wifi_roam_events": [
+            {"start": e["start_ts"], "note": e["note"]}
+            for e in wifi_roam_events
+        ],
         "monitoring_gaps": [
             {"start": g["start"], "end": g["end"],
              "duration": fmt_duration(g["start"], g["end"]), "ongoing": g["end"] is None}
@@ -668,6 +702,10 @@ def main():
         "speed_failures": speed_failures,
         "public_ip_health": {"checks": ip_health.get("checks") or 0, "failures": ip_health.get("failures") or 0},
         "wifi_series": [{"t": w["ts"], "rssi": w["rssi_dbm"], "channel": w["channel"]} for w in wifi_series],
+        "wifi_neighbors": wifi_neighbors,
+        "own_wifi": ({"channel": wifi[-1].get("channel"), "band": wifi[-1].get("band"),
+                      "ssid": wifi[-1].get("ssid")} if wifi else None),
+        "topology": topology,
         "devices": devices,
         "last_device_scan_ts": last_scan_ts,
     }
@@ -1335,6 +1373,7 @@ def build_html(data):
         <div class="chart-label">Wi-Fi signal (dBm, higher is better)</div>
         <div class="chart-box sm"><canvas id="wifiChart"></canvas></div>
         <div id="wifiEmpty" class="empty" style="display:none">No Wi-Fi signal data yet.</div>
+        <div id="wifiAdvice" class="stat-sub" style="display:none"></div>
       </div>
       <div class="chart-card">
         <div class="chart-label" style="display:flex; align-items:center; gap:8px;">Latency under load (ms)
@@ -1606,6 +1645,42 @@ safely('metric ratings', function() {
   }
 });
 
+// ---------- wifi channel advice + double-NAT hint ----------
+safely('wifi advice', function() {
+  const el = document.getElementById('wifiAdvice');
+  const own = DATA.own_wifi;
+  const nb = DATA.wifi_neighbors || [];
+  if (!el || !own || !own.channel || nb.length === 0) return;
+  const ownCh = String(own.channel).match(/[0-9]+/);
+  if (!ownCh) return;
+  const ch = parseInt(ownCh[0], 10);
+  const band24 = ch <= 14;
+  // count neighbors on our channel (dedupe by bssid||ssid so mesh nodes
+  // of one network don't inflate the number too much)
+  const sameCh = nb.filter(n => n.channel && parseInt(n.channel, 10) === ch);
+  if (band24) {
+    // 2.4 GHz: only 1/6/11 don't overlap — recommend the quietest of those
+    const counts = {1: 0, 6: 0, 11: 0};
+    nb.forEach(n => {
+      const c = parseInt(n.channel, 10);
+      if (c in counts) counts[c] += 1;
+    });
+    if (sameCh.length >= 3) {
+      const best = [1, 6, 11].reduce((a, b) => counts[a] <= counts[b] ? a : b);
+      el.style.display = '';
+      el.textContent = 'Your 2.4 GHz channel ' + ch + ' is shared with ' + sameCh.length
+        + ' neighboring networks' + (best !== ch
+          ? ' — channel ' + best + ' looks quieter (' + counts[best] + '). Change it in the router’s Wi-Fi settings.'
+          : ' — but it’s still the quietest of 1/6/11. Nothing to do.');
+    }
+  } else if (sameCh.length >= 3) {
+    // 5 GHz: DFS/regulatory rules make specific recommendations unreliable
+    el.style.display = '';
+    el.textContent = 'Your 5 GHz channel ' + ch + ' is shared with ' + sameCh.length
+      + ' neighboring networks — worth trying a different channel in the router settings.';
+  }
+});
+
 // ---------- diagnosis banner: "what's wrong right now, in plain words" ----------
 // Rule table, first match wins. Order mirrors the monitor's own causal
 // precedence (a dead gateway suppresses the internet-down diagnosis: if
@@ -1772,7 +1847,7 @@ safely('outages log', function() {
   // classify every event once: category, display label, colors, geometry
   const TL_COLOR = { outage: 'var(--status-critical)', dns: 'var(--status-serious)',
     slow: 'var(--status-warning)', device: 'var(--status-good)', ip: 'var(--series-blue)',
-    paused: 'var(--muted)' };
+    paused: 'var(--muted)', wifi: 'var(--series-blue)' };
   function classify(e) {
     let cat, label, badgeClass, rowClass, point = false;
     if (e.kind === 'outage' && e.scope === 'gateway') { cat='outage'; label='Gateway down'; badgeClass='badge-gateway'; rowClass='event-gateway'; }
@@ -1781,6 +1856,7 @@ safely('outages log', function() {
     else if (e.kind === 'outage') { cat='outage'; label='Internet down'; badgeClass='badge-internet'; rowClass='event-internet'; }
     else if (e.kind === 'degraded') { cat='slow'; label='Slow / degraded'; badgeClass='badge-degraded'; rowClass='event-degraded'; }
     else if (e.kind === 'new_device') { cat='device'; label='New device'; badgeClass='badge-newdevice'; rowClass='event-newdevice'; point=true; }
+    else if (e.kind === 'wifi_roam') { cat='wifi'; label='Wi-Fi roamed'; badgeClass='badge-ipchange'; rowClass='event-ipchange'; point=true; }
     else if (e.kind === 'gap') { cat='paused'; label='Monitoring paused'; badgeClass='badge-gap'; rowClass='event-gap'; }
     else { cat='ip'; label='Public IP changed'; badgeClass='badge-ipchange'; rowClass='event-ipchange'; point=true; }
     return { ...e, cat, label, badgeClass, rowClass, point,
@@ -1793,6 +1869,7 @@ safely('outages log', function() {
     ...DATA.degraded_events.map(e => ({...e, kind: 'degraded', scope: 'internet'})),
     ...DATA.ip_change_events.map(e => ({...e, kind: 'ip_change', scope: 'internet', ongoing: false, duration: '—'})),
     ...(DATA.new_device_events || []).map(e => ({...e, kind: 'new_device', scope: 'lan', ongoing: false, duration: '—'})),
+    ...(DATA.wifi_roam_events || []).map(e => ({...e, kind: 'wifi_roam', scope: 'lan', ongoing: false, duration: '—'})),
     ...(DATA.monitoring_gaps || []).map(e => ({...e, kind: 'gap', scope: 'local',
         note: 'No data collected — Mac was likely asleep or the monitor was stopped'})),
   ].map(classify).sort((a, b) => b.startMs - a.startMs);
@@ -1874,8 +1951,8 @@ safely('outages log', function() {
     `<span class="tlk"><i style="background:${c}"></i>${n}</span>`).join('');
 
   // ---- filter chips ----
-  const CAT_NAMES = { outage: 'Outages', dns: 'DNS', slow: 'Slow', device: 'Devices', ip: 'IP changes', paused: 'Paused' };
-  const CAT_ORDER = ['outage', 'dns', 'slow', 'device', 'ip', 'paused'];
+  const CAT_NAMES = { outage: 'Outages', dns: 'DNS', slow: 'Slow', device: 'Devices', ip: 'IP changes', wifi: 'Wi-Fi roams', paused: 'Paused' };
+  const CAT_ORDER = ['outage', 'dns', 'slow', 'device', 'ip', 'wifi', 'paused'];
   const counts = {};
   allEvents.forEach(e => { counts[e.cat] = (counts[e.cat] || 0) + 1; });
   const present = CAT_ORDER.filter(c => counts[c]);
@@ -2340,6 +2417,27 @@ safely('house map', function() {
     n.style.display = 'block';
     n.textContent = 'Not on the map yet (no floor assigned): ' + unplaced.map(r => r.name).join(', ')
       + ' — pick each one’s floor in Settings → Routers.';
+  }
+});
+
+// ---------- double-NAT hint ----------
+// Placed AFTER the house map block on purpose: the map renderer writes
+// houseMapNote for unplaced routers, and this must append, not be
+// overwritten by it.
+safely('double NAT hint', function() {
+  const t = DATA.topology;
+  if (!t || !t.double_nat) return;
+  const n = document.getElementById('houseMapNote');
+  if (n) {
+    const extra = 'Two routers are each doing NAT (double NAT). Consoles, VoIP and port '
+      + 'forwarding may misbehave. Fix: bridge/modem mode on the ISP box — or set its DMZ '
+      + 'to your main router, which mostly mitigates it.';
+    n.textContent = (n.style.display === 'block' && n.textContent) ? n.textContent + ' · ' + extra : extra;
+    n.style.display = 'block';
+  }
+  const pip = document.getElementById('publicIpStable');
+  if (pip) {
+    pip.innerHTML += '<br><span style="color:var(--status-warning); font-weight:600;">⚠ double NAT detected — see the house map note</span>';
   }
 });
 

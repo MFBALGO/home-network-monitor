@@ -344,10 +344,19 @@ def start_discovery():
         try:
             scan = scan_routers.discover(progress=progress)
             gateway = _gateway_ip()
+            # piggyback a double-NAT check on the wizard scan — the exact
+            # moment a new user would benefit from hearing about it
+            topology = None
+            try:
+                import monitor
+                topology = monitor.check_double_nat()
+            except Exception:
+                pass
             with _job_lock:
                 _job.clear()
                 _job.update({"state": "done", "network": scan["network"],
                              "own_ip": scan["own_ip"],
+                             "topology": topology,
                              "results": _decorate(scan["results"], gateway)})
         except Exception as e:
             with _job_lock:

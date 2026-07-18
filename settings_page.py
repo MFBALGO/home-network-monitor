@@ -363,6 +363,15 @@ async function poll() {
   } else if (data.state === 'done') {
     S.results = data.results || [];
     document.getElementById('scanBar').style.width = '100%';
+    // double-NAT heads-up from the piggybacked traceroute check
+    const topo = data.topology;
+    if (topo && topo.double_nat) {
+      showMsg(document.getElementById('scanMsg'), 'error',
+        'Heads-up: two routers on this network are each doing NAT (double NAT). This can ' +
+        'break game consoles, VoIP and port forwarding. Fix: put the ISP box in bridge/modem ' +
+        'mode, or set its DMZ to your main router (which mostly mitigates it). Monitoring ' +
+        'works fine either way — continue below.');
+    }
     buildRouterTable();
     setStep(2);
   } else if (data.state === 'error') {

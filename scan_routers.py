@@ -30,6 +30,11 @@ import socket
 import subprocess
 import sys
 
+try:
+    from version import __version__
+except ImportError:  # partially-copied install
+    __version__ = "0.0.0"
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PORTS_TO_CHECK = [80, 443]
 CONNECT_TIMEOUT = 0.4      # per port, seconds
@@ -262,4 +267,7 @@ def main():
 
 
 if __name__ == "__main__":
+    if "--version" in sys.argv:
+        print(__version__)
+        sys.exit(0)
     main()

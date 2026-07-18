@@ -39,6 +39,11 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
+try:
+    from version import __version__
+except ImportError:  # partially-copied install (e.g. just this file on a Pi)
+    __version__ = "0.0.0"
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -913,7 +918,7 @@ def get_public_ip():
 
     for url in PUBLIC_IP_SERVICES:
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "home-network-monitor/1.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": f"home-network-monitor/{__version__}"})
             with urllib.request.urlopen(req, timeout=6) as resp:
                 text = resp.read().decode("utf-8", errors="ignore").strip()
                 # sanity check: looks like an IP, not an error page
@@ -1254,4 +1259,7 @@ def main():
 
 
 if __name__ == "__main__":
+    if "--version" in sys.argv:
+        print(__version__)
+        sys.exit(0)
     main()

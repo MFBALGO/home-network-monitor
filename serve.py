@@ -16,6 +16,11 @@ import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+try:
+    from version import __version__
+except ImportError:  # partially-copied install
+    __version__ = "0.0.0"
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("NETMON_WEB_PORT", "8080"))
 
@@ -43,7 +48,7 @@ ROUTES = {
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
-    server_version = "NetMonWeb/1.0"
+    server_version = "NetMonWeb/" + __version__
 
     def _serve(self, send_body):
         path = self.path.split("?", 1)[0].split("#", 1)[0]
@@ -93,4 +98,7 @@ def main():
 
 
 if __name__ == "__main__":
+    if "--version" in sys.argv:
+        print(__version__)
+        sys.exit(0)
     main()

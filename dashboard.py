@@ -11,10 +11,16 @@ manually refresh.
 
 import json
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
+
+try:
+    from version import __version__
+except ImportError:  # partially-copied install
+    __version__ = "0.0.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -53,6 +59,76 @@ def load_json_config(path, default):
             return json.load(f)
     except Exception:
         return default
+
+
+# Update check: ask GitHub (at most once a day, cached in data/) whether a
+# newer release exists, so the dashboard can show a small "update available"
+# pill. This is the ONLY thing in the toolkit that talks to anything other
+# than the ping/speed-test targets; set "update_check": false in config.json
+# to disable it entirely.
+UPDATE_CHECK_STATE_PATH = os.path.join(BASE_DIR, "data", "update_check.json")
+UPDATE_CHECK_URL = "https://api.github.com/repos/MFBALGO/home-network-monitor/releases/latest"
+UPDATE_CHECK_INTERVAL_HOURS = 24
+
+
+def _parse_version(tag):
+    """'v0.2.0' / '0.2.0' -> (0, 2, 0); None if it doesn't look like one."""
+    m = re.fullmatch(r"v?(\d+(?:\.\d+)*)", str(tag).strip())
+    if not m:
+        return None
+    return tuple(int(p) for p in m.group(1).split("."))
+
+
+def check_for_update(site_config):
+    """Returns {"latest": "0.2.0", "url": ...} if a newer release exists,
+    else None. Never raises and never blocks for more than ~5s: the whole
+    point of this dashboard is to keep working while the internet is down,
+    so a failed check is cached like a successful one (one attempt per day,
+    not one per minute)."""
+    try:
+        if site_config.get("update_check") is False:
+            return None
+
+        state = load_json_config(UPDATE_CHECK_STATE_PATH, {})
+        checked_at = state.get("checked_at")
+        fresh = False
+        if checked_at:
+            try:
+                age = datetime.now(timezone.utc) - datetime.fromisoformat(checked_at)
+                fresh = age < timedelta(hours=UPDATE_CHECK_INTERVAL_HOURS)
+            except ValueError:
+                pass
+
+        if not fresh:
+            # Record the attempt FIRST (keeping any previously-known result),
+            # so a hard failure below still counts as today's attempt.
+            state["checked_at"] = datetime.now(timezone.utc).isoformat()
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    UPDATE_CHECK_URL,
+                    headers={"User-Agent": f"home-network-monitor/{__version__}"})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    release = json.loads(resp.read().decode("utf-8", errors="ignore"))
+                state["latest_tag"] = release.get("tag_name")
+                state["html_url"] = release.get("html_url")
+            except Exception:
+                pass  # offline, rate-limited, or no releases yet (404) — keep old info
+            try:
+                os.makedirs(os.path.dirname(UPDATE_CHECK_STATE_PATH), exist_ok=True)
+                with open(UPDATE_CHECK_STATE_PATH, "w", encoding="utf-8") as f:
+                    json.dump(state, f, indent=2)
+            except OSError:
+                pass
+
+        latest = _parse_version(state.get("latest_tag") or "")
+        current = _parse_version(__version__)
+        if latest and current and latest > current:
+            return {"latest": ".".join(str(p) for p in latest),
+                    "url": state.get("html_url") or ""}
+        return None
+    except Exception:
+        return None
 
 PLACEHOLDER_HTML = """<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>Home Network Monitor</title>
@@ -487,6 +563,8 @@ def main():
 
     data = {
         "generated_at": now.isoformat(),
+        "version": __version__,
+        "update": check_for_update(site_config),
         "current_status": current_status,
         "current_latency": latest["latency_ms"] if latest else None,
         "stats_24h": stats_24h,
@@ -913,6 +991,10 @@ def build_html(data):
   .legend-item { display: flex; align-items: baseline; gap: 8px; line-height: 1.45; }
   .legend-item .badge { flex-shrink: 0; white-space: nowrap; min-width: 118px; }
   .footer-note { text-align:center; color: var(--muted); font-size: 11.5px; margin-top: 44px; font-family: var(--font-mono); }
+  #updatePill { margin-left: 10px; padding: 2px 9px; border-radius: 999px; font-size: 10.5px;
+    font-family: var(--font-mono); text-decoration: none; letter-spacing: 0.4px;
+    color: var(--accent); border: 1px solid var(--accent); opacity: 0.9; }
+  #updatePill:hover { opacity: 1; }
   .warning-banner { display:none; background: var(--status-warning-bg); border: 1px solid var(--border);
     border-left: 3px solid var(--status-warning); border-radius: 8px; padding: 12px 16px; margin-bottom: 20px;
     font-size: 13px; color: var(--text-primary); }
@@ -1001,7 +1083,7 @@ def build_html(data):
       </div>
       <div>
         <h1>__TITLE__</h1>
-        <div class="subtitle"><span class="live-dot"></span><span id="generatedAt"></span></div>
+        <div class="subtitle"><span class="live-dot"></span><span id="generatedAt"></span><a id="updatePill" target="_blank" rel="noopener" style="display:none"></a></div>
       </div>
     </div>
     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -1179,7 +1261,7 @@ def build_html(data):
     </div>
   </section>
 
-  <div class="footer-note">Everything on this page stays local — regenerated every minute by dashboard.py. Reload to see the latest.</div>
+  <div class="footer-note" id="footerNote">Everything on this page stays local — regenerated every minute by dashboard.py. Reload to see the latest.</div>
 </div>
 
 <script>
@@ -1225,6 +1307,17 @@ function cssVar(name) { return getComputedStyle(document.documentElement).getPro
 // ---------- header ----------
 document.getElementById('generatedAt').textContent =
   'Updated ' + new Date(DATA.generated_at).toLocaleString();
+
+if (DATA.update && DATA.update.latest) {
+  const up = document.getElementById('updatePill');
+  up.textContent = 'Update available: v' + DATA.update.latest;
+  if (DATA.update.url) up.href = DATA.update.url;
+  up.style.display = '';
+}
+if (DATA.version) {
+  document.getElementById('footerNote').textContent =
+    'netmon v' + DATA.version + ' — everything on this page stays local, regenerated every minute by dashboard.py. Reload to see the latest.';
+}
 
 const pill = document.getElementById('statusPill');
 if (DATA.current_status === 'up') {
@@ -2246,4 +2339,7 @@ safely('theme restore', function() {
 
 
 if __name__ == "__main__":
+    if "--version" in sys.argv:
+        print(__version__)
+        sys.exit(0)
     main()

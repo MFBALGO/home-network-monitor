@@ -1218,7 +1218,9 @@ def build_html(data):
           Refresh
         </button>
         <button id="autoRefreshBtn" title="Reload automatically every minute — the page regenerates every 60s">Auto: off</button>
+        <button id="testNowBtn" title="Run a live connectivity check right now: 5 pings to the router + internet and a DNS lookup (~15 seconds)" style="display:none">Test now</button>
       </div>
+      <span id="testNowResult" class="section-note" style="display:none"></span>
       <div class="theme-toggle" id="themeToggle">
         <button data-theme="light">Light</button>
         <button data-theme="dark">Dark</button>
@@ -2827,6 +2829,72 @@ safely('refresh controls', function() {
     applyAuto();
   });
   applyAuto();
+});
+
+// ---------- "Test now" button ----------
+// Talks to the LAN-carved-out /api/test/* endpoints (serve.py). Opening
+// dashboard.html via file:// has no server at all, so the button only
+// appears once a probe of the status endpoint answers.
+safely('test now', function() {
+  if (location.protocol === 'file:') return;
+  const btn = document.getElementById('testNowBtn');
+  const out = document.getElementById('testNowResult');
+  let polling = null;
+
+  function setBusy(phase) {
+    btn.disabled = true;
+    btn.textContent = 'Testing: ' + (phase || '…');
+  }
+  function setIdle(label) {
+    btn.disabled = false;
+    btn.textContent = label || 'Test now';
+    if (polling) { clearInterval(polling); polling = null; }
+  }
+  function showResult(res) {
+    if (!res) return;
+    const bits = [];
+    if (res.gateway) bits.push('router ' + (res.gateway.ok ? (res.gateway.avg_ms != null ? res.gateway.avg_ms + 'ms' : 'ok') : ('FAIL ' + res.gateway.ok + '/5')));
+    if (res.external) bits.push('internet ' + (res.external.ok ? (res.external.avg_ms != null ? res.external.avg_ms + 'ms' : 'ok') : 'FAIL'));
+    if (res.dns) bits.push('DNS ' + (res.dns.ok ? (res.dns.ms != null ? Math.round(res.dns.ms) + 'ms' : 'ok') : 'FAIL'));
+    if (res.speedtest) bits.push(res.speedtest.error ? 'speed test failed' : ('↓' + Math.round(res.speedtest.down) + ' ↑' + Math.round(res.speedtest.up)));
+    out.style.display = '';
+    out.textContent = bits.join(' · ') + ' — charts update on the next refresh';
+  }
+  function poll(sinceLoad) {
+    let waited = 0;
+    polling = setInterval(() => {
+      waited += 1.5;
+      fetch('/api/test/status').then(r => r.json()).then(st => {
+        if (st.state === 'running') { setBusy(st.phase); }
+        else if (st.state === 'done') { setIdle(); showResult(st.results); }
+        else if (st.state === 'error') { setIdle(); out.style.display = ''; out.textContent = 'test failed: ' + (st.error || 'unknown'); }
+        else if (waited > 10 && !sinceLoad) { setIdle(); out.style.display = ''; out.textContent = 'no response — is the monitor service running?'; }
+      }).catch(() => {});
+      if (waited > 180) setIdle();   // hard stop: never spin forever
+    }, 1500);
+  }
+
+  btn.addEventListener('click', () => {
+    out.style.display = 'none';
+    setBusy('starting');
+    fetch('/api/test/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(r => {
+        if (r.status === 202) { poll(false); }
+        else if (r.status === 409) { setIdle(); poll(true); }  // someone else started one — watch it
+        else if (r.status === 429) { setIdle(); out.style.display = ''; out.textContent = 'please wait a minute between tests'; }
+        else { setIdle(); out.style.display = ''; out.textContent = 'test unavailable (' + r.status + ')'; }
+      })
+      .catch(() => { setIdle(); out.style.display = ''; out.textContent = 'could not reach the server'; });
+  });
+
+  // only show the button where the endpoint actually answers (from LAN or
+  // localhost via serve.py); resume watching a test already in flight if
+  // the 60s auto-refresh reloaded the page mid-run
+  fetch('/api/test/status').then(r => {
+    if (!r.ok) return;
+    btn.style.display = '';
+    return r.json().then(st => { if (st.state === 'running') { setBusy(st.phase); poll(true); } });
+  }).catch(() => {});
 });
 
 // restore the saved theme (done last: applyTheme re-renders the charts)

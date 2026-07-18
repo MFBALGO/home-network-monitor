@@ -250,6 +250,14 @@ def db_execute(conn, sql, params=()):
         return cur
 
 
+def db_query(conn, sql, params=()):
+    """Read under the same lock as writes — the threads share ONE sqlite
+    connection, and interleaving a read into another thread's write is
+    undefined even with check_same_thread=False."""
+    with _lock:
+        return conn.execute(sql, params).fetchall()
+
+
 def close_dangling_events(conn):
     """Open events ('Ongoing' in the dashboard) are tracked by row id in
     memory only — if the monitor restarts mid-outage, the old row's end_ts
@@ -1282,6 +1290,479 @@ def router_loop(conn, routers):
         time.sleep(ROUTER_PING_INTERVAL_SEC)
 
 
+# ---------------------------------------------------------------------------
+# Command rail (web -> monitor) and on-demand tests
+#
+# The web process (serve.py/settings_api) and this monitor share no memory
+# and must not import each other (partial installs run either one alone).
+# Their only channel is two one-way JSON files, each with exactly ONE
+# writer — which is what makes the design race-free without locks:
+#   data/commands.json     written by settings_api, read here
+#   data/test_status.json  written here, read by settings_api
+# Both are written atomically (tmp + os.replace), same idiom as the
+# settings UI's config saves and the routers.json hot reload.
+# ---------------------------------------------------------------------------
+
+COMMANDS_PATH = os.path.join(BASE_DIR, "data", "commands.json")
+TEST_STATUS_PATH = os.path.join(BASE_DIR, "data", "test_status.json")
+CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+COMMAND_POLL_SEC = 2     # os.stat every 2s is effectively free
+COMMAND_TTL_SEC = 120    # ignore commands older than this (stale after a restart)
+
+
+def _file_stamp(path):
+    """(mtime, size) or None — cheap change detection, same trick as
+    _routers_file_stamp but for any file."""
+    try:
+        st = os.stat(path)
+        return (st.st_mtime, st.st_size)
+    except OSError:
+        return None
+
+
+def _read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _write_json_atomic(path, obj):
+    """tmp + fsync + os.replace, with the same Windows sharing-violation
+    retry as settings_api.save_json_atomic (deliberately duplicated — the
+    monitor must not import settings_api)."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f)
+        f.flush()
+        os.fsync(f.fileno())
+    for attempt in range(3):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(0.1 * (attempt + 1))
+    os.replace(tmp, path)
+
+
+def _set_test_status(**fields):
+    try:
+        _write_json_atomic(TEST_STATUS_PATH, fields)
+    except OSError as e:
+        log_error(f"couldn't write test status: {e!r}")
+
+
+def run_on_demand_test(conn, want_speedtest):
+    """The 'Test now' button: a quick ping burst + DNS check (+ optional
+    speed test), with per-phase progress in test_status.json. Results are
+    ALSO inserted into the normal tables with the normal target types, so
+    the next dashboard regen folds them into the charts."""
+    started = now_iso()
+
+    def phase(name):
+        _set_test_status(state="running", phase=name, started_ts=started)
+
+    results = {}
+    phase("ping")
+    gateway = get_default_gateway()
+    for target, ttype in ((gateway, "gateway"), ("1.1.1.1", "external")):
+        if not target:
+            continue
+        oks, lats = 0, []
+        for _ in range(5):
+            ok, lat = ping_once(target)
+            db_execute(conn, "INSERT INTO pings (ts, target, target_type, success, latency_ms) VALUES (?,?,?,?,?)",
+                       (now_iso(), target, ttype, int(ok), lat))
+            if ok:
+                oks += 1
+                if lat is not None:
+                    lats.append(lat)
+        results[ttype] = {"sent": 5, "ok": oks,
+                          "avg_ms": round(sum(lats) / len(lats), 1) if lats else None}
+
+    phase("dns")
+    domain = DNS_TEST_DOMAINS[0]
+    ok, lat = check_dns(domain)
+    db_execute(conn, "INSERT INTO dns_checks (ts, domain, success, latency_ms) VALUES (?,?,?,?)",
+               (now_iso(), domain, int(ok), lat))
+    results["dns"] = {"ok": bool(ok), "ms": lat, "domain": domain}
+
+    if want_speedtest:
+        phase("speedtest")
+        st = run_speedtest()
+        ts = now_iso()
+        if "error" in st:
+            db_execute(conn, "INSERT INTO speedtests (ts, error) VALUES (?,?)", (ts, st["error"]))
+            results["speedtest"] = {"error": st["error"][:200]}
+        else:
+            db_execute(
+                conn,
+                "INSERT INTO speedtests (ts, download_mbps, upload_mbps, ping_ms, server,"
+                " jitter_ms, loaded_latency_down_ms, loaded_latency_up_ms, packet_loss_pct)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
+                (ts, st.get("download_mbps"), st.get("upload_mbps"), st.get("ping_ms"), st.get("server"),
+                 st.get("jitter_ms"), st.get("loaded_latency_down_ms"),
+                 st.get("loaded_latency_up_ms"), st.get("packet_loss_pct")),
+            )
+            results["speedtest"] = {"down": st.get("download_mbps"), "up": st.get("upload_mbps"),
+                                    "ping": st.get("ping_ms")}
+
+    _set_test_status(state="done", started_ts=started, finished_ts=now_iso(), results=results)
+
+
+def command_loop(conn):
+    """Poll data/commands.json for actions from the web UI. A malformed or
+    stale command must never kill this thread — everything is guarded."""
+    stamp = _file_stamp(COMMANDS_PATH)
+    last_seen_id = None
+    while True:
+        time.sleep(COMMAND_POLL_SEC)
+        try:
+            new_stamp = _file_stamp(COMMANDS_PATH)
+            if new_stamp == stamp:
+                continue
+            stamp = new_stamp
+            cmd = _read_json(COMMANDS_PATH)
+            if not isinstance(cmd, dict) or cmd.get("id") == last_seen_id:
+                continue
+            last_seen_id = cmd.get("id")
+            # A command written while the monitor was off shouldn't fire on
+            # startup minutes later — the user's browser has long moved on.
+            issued = cmd.get("issued_ts")
+            try:
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(issued)).total_seconds()
+            except (TypeError, ValueError):
+                age = None
+            if age is None or age > COMMAND_TTL_SEC:
+                continue
+            action = cmd.get("action")
+            if action == "test_now":
+                run_on_demand_test(conn, bool(cmd.get("speedtest")))
+            elif action == "test_alert":
+                send_test_alert()
+        except Exception as e:
+            log_error(f"command loop error: {e!r}")
+            _set_test_status(state="error", error=str(e)[:200])
+
+
+# ---------------------------------------------------------------------------
+# Alerting
+#
+# One notifier thread polls the events table for rows the other loops wrote
+# (rather than instrumenting five writer loops). Toasts go out immediately
+# (they're local); webhook/email deliveries queue and retry with backoff —
+# which is exactly what an internet-down alert needs, since it can't leave
+# the LAN until the internet is back anyway.
+# ---------------------------------------------------------------------------
+
+ALERT_POLL_SEC = 10
+ALERT_DEFAULTS = {
+    "enabled": False,
+    "min_duration_sec": 60,     # blips shorter than this alert nothing
+    "cooldown_minutes": 5,      # per-(kind,scope,router) repeat suppression
+    "quiet_hours": None,        # {"start": "23:00", "end": "07:00"} local
+    "events": {"outage": True, "degraded": False, "new_device": True, "ip_change": False},
+    "channels": {
+        "toast": {"enabled": True},
+        "webhook": {"enabled": False, "url": "", "format": "json"},
+        "email": {"enabled": False, "host": "", "port": 587, "starttls": True,
+                  "username": "", "password": "", "from": "", "to": ""},
+    },
+}
+
+
+def load_alerts_config():
+    """The 'alerts' block of config.json merged over ALERT_DEFAULTS.
+    Tolerant of missing/partial config — alerting simply stays off."""
+    cfg = _read_json(CONFIG_PATH)
+    alerts = (cfg or {}).get("alerts")
+    merged = json.loads(json.dumps(ALERT_DEFAULTS))  # deep copy
+    if isinstance(alerts, dict):
+        for k, v in alerts.items():
+            if isinstance(v, dict) and isinstance(merged.get(k), dict):
+                for k2, v2 in v.items():
+                    if isinstance(v2, dict) and isinstance(merged[k].get(k2), dict):
+                        merged[k][k2].update(v2)
+                    else:
+                        merged[k][k2] = v2
+            else:
+                merged[k] = v
+    return merged
+
+
+def in_quiet_hours(cfg, dt=None):
+    """True while local time is inside the configured quiet window.
+    Handles ranges that cross midnight ('23:00'-'07:00')."""
+    qh = cfg.get("quiet_hours")
+    if not isinstance(qh, dict) or not qh.get("start") or not qh.get("end"):
+        return False
+    try:
+        now_hm = (dt or datetime.now()).strftime("%H:%M")
+        start, end = qh["start"], qh["end"]
+        if start <= end:
+            return start <= now_hm < end
+        return now_hm >= start or now_hm < end
+    except Exception:
+        return False
+
+
+def send_toast(title, message):
+    """Desktop notification. Windows: WinRT toast via PowerShell, using
+    PowerShell's own AppUserModelID (an unregistered app id gets silently
+    dropped on Win11). -EncodedCommand sidesteps all quoting issues.
+    macOS: osascript. Both fire-and-forget with a short timeout."""
+    try:
+        if IS_WINDOWS:
+            from html import escape as _xml_escape
+            import base64
+            script = (
+                "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null;"
+                "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType=WindowsRuntime] | Out-Null;"
+                "$x = New-Object Windows.Data.Xml.Dom.XmlDocument;"
+                "$x.LoadXml('<toast><visual><binding template=\"ToastGeneric\">"
+                f"<text>{_xml_escape(title)}</text><text>{_xml_escape(message)}</text>"
+                "</binding></visual></toast>');"
+                "$t = New-Object Windows.UI.Notifications.ToastNotification($x);"
+                "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("
+                "'{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show($t)"
+            )
+            encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+            subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                           capture_output=True, timeout=15, **SUBPROCESS_EXTRA)
+        elif IS_MACOS:
+            osa = f'display notification "{message}" with title "{title}"'.replace('\\', '')
+            subprocess.run(["osascript", "-e", osa], capture_output=True, timeout=10)
+    except Exception as e:
+        log_error(f"toast failed: {e!r}")
+
+
+def send_webhook(cfg, title, message, meta):
+    """POST to a user-supplied URL. format 'json' suits Slack/Discord-style
+    receivers (route it yourself), 'ntfy' sets ntfy.sh's Title header with a
+    plain-text body, 'text' is just the message. Raises on failure so the
+    caller's retry queue can back off."""
+    import urllib.request
+    url = cfg.get("url") or ""
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("webhook url must be http(s)")
+    fmt = cfg.get("format") or "json"
+    headers = {"User-Agent": f"home-network-monitor/{__version__}"}
+    if fmt == "json":
+        body = json.dumps({"title": title, "message": message, **meta}).encode()
+        headers["Content-Type"] = "application/json"
+    else:
+        body = message.encode()
+        headers["Content-Type"] = "text/plain; charset=utf-8"
+        if fmt == "ntfy":
+            headers["Title"] = title.encode("ascii", "replace").decode()
+            if meta.get("severity") == "down":
+                headers["Priority"] = "high"
+    req = urllib.request.Request(url, data=body, headers=headers)
+    urllib.request.urlopen(req, timeout=10).read(200)
+
+
+def send_email(cfg, title, message):
+    """Plain SMTP notification. Credentials live in config.json — which is
+    gitignored and unreachable from the LAN, but still plaintext on disk:
+    the settings UI tells users to prefer an app password. Raises on
+    failure for the retry queue."""
+    import smtplib
+    from email.message import EmailMessage
+    msg = EmailMessage()
+    msg["Subject"] = title
+    msg["From"] = cfg.get("from") or cfg.get("username") or "netmon@localhost"
+    msg["To"] = cfg.get("to") or ""
+    msg.set_content(message)
+    with smtplib.SMTP(cfg.get("host") or "", int(cfg.get("port") or 587), timeout=15) as s:
+        if cfg.get("starttls", True):
+            s.starttls()
+        if cfg.get("username"):
+            s.login(cfg["username"], cfg.get("password") or "")
+        s.send_message(msg)
+
+
+def send_test_alert():
+    """Settings-UI 'Send test alert' button, via the command rail. Goes to
+    every enabled channel immediately (ignores quiet hours — the user is
+    actively testing)."""
+    cfg = load_alerts_config()
+    title = "Home Network Monitor — test alert"
+    message = "Alerting works. This is a test sent from the Settings page."
+    ch = cfg.get("channels", {})
+    if ch.get("toast", {}).get("enabled"):
+        send_toast(title, message)
+    for name, sender in (("webhook", lambda c: send_webhook(c, title, message, {"kind": "test"})),
+                         ("email", lambda c: send_email(c, title, message))):
+        c = ch.get(name, {})
+        if c.get("enabled"):
+            try:
+                sender(c)
+                log(f"test alert sent via {name}")
+            except Exception as e:
+                log_error(f"test alert via {name} failed: {e!r}")
+
+
+def _event_headline(row):
+    """Plain-language one-liner for an event row (dict-style access)."""
+    kind, scope, rn = row["kind"], row["scope"], row["router_name"]
+    if kind == "outage":
+        return {"gateway": "Main router is unreachable — local problem, not the ISP",
+                "internet": "Internet is DOWN (router is fine — ISP side)",
+                "dns": "DNS is failing — websites won't load by name"}.get(
+                    scope, f'Access point "{rn or "?"}" is down')
+    if kind == "degraded":
+        return "Connection is up but degraded (high latency or packet loss)"
+    if kind == "new_device":
+        return row["note"] or "A never-seen device joined the network"
+    if kind == "ip_change":
+        return row["note"] or "Public IP address changed"
+    return f"{kind}/{scope}"
+
+
+def _fmt_secs(secs):
+    secs = max(0, int(secs))
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m"
+    return f"{secs // 3600}h {(secs % 3600) // 60}m"
+
+
+def alert_loop(conn):
+    """Watch the events table and notify. Seeded at MAX(id) so a restart
+    never re-alerts history (close_dangling_events has already sanitized
+    stale opens by the time we run). All state is in memory: worst case
+    after a crash is one missed alert, never a duplicate storm."""
+    try:
+        rows = db_query(conn, "SELECT COALESCE(MAX(id), 0) FROM events")
+        last_max_id = rows[0][0] if rows else 0
+    except sqlite3.Error:
+        last_max_id = 0
+    tracked = {}      # event id -> {"row": dict, "open_alerted": bool}
+    cooldowns = {}    # (kind, scope, router_name) -> unix ts of last OPEN alert
+    queue = []        # pending webhook/email: dicts with next_try/backoff
+    cfg = load_alerts_config()
+    cfg_stamp = _file_stamp(CONFIG_PATH)
+
+    def enabled_for(kind):
+        return cfg.get("enabled") and cfg.get("events", {}).get(kind, False)
+
+    def notify(title, message, meta, event_id=None, kind="open"):
+        quiet = in_quiet_hours(cfg)
+        ch = cfg.get("channels", {})
+        if ch.get("toast", {}).get("enabled") and not quiet:
+            send_toast(title, message)
+        now = time.time()
+        for name in ("webhook", "email"):
+            if ch.get(name, {}).get("enabled"):
+                queue.append({"channel": name, "title": title, "message": message, "meta": meta,
+                              "event_id": event_id, "kind": kind, "created": now,
+                              "next_try": now, "backoff": 30})
+
+    def flush_queue():
+        if in_quiet_hours(cfg):
+            return  # deferred: recovery messages carry the whole story later
+        now = time.time()
+        ch = cfg.get("channels", {})
+        for item in list(queue):
+            if item["next_try"] > now:
+                continue
+            if now - item["created"] > 24 * 3600:
+                queue.remove(item)   # too old to be useful
+                continue
+            try:
+                if item["channel"] == "webhook":
+                    send_webhook(ch.get("webhook", {}), item["title"], item["message"], item["meta"])
+                else:
+                    send_email(ch.get("email", {}), item["title"], item["message"])
+                queue.remove(item)
+            except Exception as e:
+                item["backoff"] = min(item["backoff"] * 2, 300)
+                item["next_try"] = now + item["backoff"]
+                log_error(f"alert via {item['channel']} failed (retrying in {item['backoff']}s): {e!r}")
+
+    while True:
+        time.sleep(ALERT_POLL_SEC)
+        try:
+            # hot-reload the alerts config with the usual stamp trick
+            new_stamp = _file_stamp(CONFIG_PATH)
+            if new_stamp != cfg_stamp:
+                cfg_stamp = new_stamp
+                cfg = load_alerts_config()
+                log("alerts config reloaded")
+
+            rows = db_query(
+                conn,
+                "SELECT id, start_ts, end_ts, kind, scope, note, router_name FROM events WHERE id > ?",
+                (last_max_id,))
+            new_devices = []
+            for r in rows:
+                row = {"id": r[0], "start_ts": r[1], "end_ts": r[2], "kind": r[3],
+                       "scope": r[4], "note": r[5], "router_name": r[6]}
+                last_max_id = max(last_max_id, row["id"])
+                if row["kind"] in ("new_device", "ip_change"):
+                    if enabled_for(row["kind"]):
+                        if row["kind"] == "new_device":
+                            new_devices.append(row)   # batched below
+                        else:
+                            notify("Home Network Monitor", _event_headline(row),
+                                   {"kind": row["kind"], "severity": "info"}, kind="info")
+                else:
+                    tracked[row["id"]] = {"row": row, "open_alerted": False}
+            if new_devices:
+                # a scan can find several unknowns at once — one message, not five
+                msg = (_event_headline(new_devices[0]) if len(new_devices) == 1
+                       else f"{len(new_devices)} never-seen devices joined the network (see dashboard)")
+                notify("Home Network Monitor", msg, {"kind": "new_device", "severity": "info"}, kind="info")
+
+            # open/close transitions for duration events
+            now_utc = datetime.now(timezone.utc)
+            for eid, st in list(tracked.items()):
+                got = db_query(conn, "SELECT end_ts FROM events WHERE id = ?", (eid,))
+                end_ts = got[0][0] if got else None
+                ev = st["row"]
+                start = datetime.fromisoformat(ev["start_ts"])
+                age = (now_utc - start).total_seconds()
+                key = (ev["kind"], ev["scope"], ev["router_name"])
+                if end_ts is None:
+                    # still open: alert once it has outlived min_duration
+                    if (not st["open_alerted"] and enabled_for(ev["kind"])
+                            and age >= cfg.get("min_duration_sec", 60)
+                            and time.time() - cooldowns.get(key, 0) > cfg.get("cooldown_minutes", 5) * 60):
+                        st["open_alerted"] = True
+                        cooldowns[key] = time.time()
+                        notify("Home Network Monitor", _event_headline(ev)
+                               + f" — ongoing for {_fmt_secs(age)}",
+                               {"kind": ev["kind"], "scope": ev["scope"], "router": ev["router_name"],
+                                "start": ev["start_ts"], "severity": "down"},
+                               event_id=eid, kind="open")
+                else:
+                    # closed: recovery message (with the full story), and drop
+                    # any still-undelivered OPEN item so a stale "DOWN!" never
+                    # lands after the fact
+                    dur = (datetime.fromisoformat(end_ts) - start).total_seconds()
+                    for item in list(queue):
+                        if item["event_id"] == eid and item["kind"] == "open":
+                            queue.remove(item)
+                    if st["open_alerted"] and enabled_for(ev["kind"]):
+                        local_s = start.astimezone().strftime("%H:%M")
+                        local_e = datetime.fromisoformat(end_ts).astimezone().strftime("%H:%M")
+                        notify("Home Network Monitor — recovered",
+                               # "is down/failing/unreachable" -> past tense for
+                               # every headline shape (first " is " only)
+                               _event_headline(ev).replace(" is DOWN", " was down").replace(" is ", " was ")
+                               + f" — {local_s}–{local_e}, {_fmt_secs(dur)}. Back to normal.",
+                               {"kind": ev["kind"], "scope": ev["scope"], "router": ev["router_name"],
+                                "start": ev["start_ts"], "end": end_ts, "severity": "recovered"},
+                               event_id=eid, kind="recovery")
+                    del tracked[eid]
+
+            flush_queue()
+        except Exception as e:
+            log_error(f"alert loop error: {e!r}")
+
+
 def retention_loop(conn):
     """Once a day, prune history older than RETENTION_DAYS from the
     high-volume tables. At 4 pings every 15s the pings table alone grows by
@@ -1318,6 +1799,8 @@ def main():
         threading.Thread(target=router_loop, args=(conn, routers), daemon=True),
         threading.Thread(target=dns_loop, args=(conn,), daemon=True),
         threading.Thread(target=retention_loop, args=(conn,), daemon=True),
+        threading.Thread(target=command_loop, args=(conn,), daemon=True),
+        threading.Thread(target=alert_loop, args=(conn,), daemon=True),
     ]
     for t in threads:
         t.start()

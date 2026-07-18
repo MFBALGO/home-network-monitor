@@ -533,6 +533,7 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
   <button data-tab="general" class="active">General</button>
   <button data-tab="routers">Routers</button>
   <button data-tab="devices">Devices</button>
+  <button data-tab="alerts">Alerts</button>
 </div>
 
 <div id="tab-general">
@@ -596,6 +597,86 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
   <div class="row" style="justify-content:flex-end"><button class="primary" id="dSave">Save device names</button></div>
 </div>
 
+<div id="tab-alerts" style="display:none">
+  <div class="card">
+    <label style="display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="aEnabled"> Enable alerts
+    </label>
+    <div class="sub" style="margin:6px 0 12px">Notifications fire when a problem has lasted at least
+    the minimum duration below, plus a recovery message with the total downtime when it ends.
+    While the internet itself is down, webhook/email alerts queue up and send on recovery.</div>
+    <label>Alert on</label>
+    <div class="row" style="gap:16px;flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="aEvOutage" checked> Outages</label>
+      <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="aEvDegraded"> Slow / degraded</label>
+      <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="aEvNewDevice" checked> New devices</label>
+      <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="aEvIpChange"> Public IP changes</label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label>Min duration before alerting (seconds)</label>
+        <input type="number" id="aMinDur" min="0" max="3600" placeholder="60" style="width:130px"></div>
+      <div><label>Repeat cooldown (minutes)</label>
+        <input type="number" id="aCooldown" min="0" max="1440" placeholder="5" style="width:130px"></div>
+    </div>
+    <label>Quiet hours (no desktop popups; webhook/email wait until the window ends — leave empty for none)</label>
+    <div class="row">
+      <input type="text" id="aQuietStart" placeholder="23:00" maxlength="5" style="width:90px">
+      <span>to</span>
+      <input type="text" id="aQuietEnd" placeholder="07:00" maxlength="5" style="width:90px">
+    </div>
+  </div>
+  <div class="card">
+    <h2 style="margin-top:0">Desktop popup (this PC)</h2>
+    <label style="display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="aToast" checked> Show a desktop notification on the monitor PC
+    </label>
+  </div>
+  <div class="card">
+    <h2 style="margin-top:0">Webhook</h2>
+    <div class="sub" style="margin-bottom:8px">Simplest phone push: make a topic at
+    <span class="mono">ntfy.sh</span>, put <span class="mono">https://ntfy.sh/your-topic</span> here
+    with format <span class="mono">ntfy</span>, and install their app. "json" posts
+    {title, message, …} for Slack/Discord-style receivers.</div>
+    <label style="display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="aWebhook"> Enabled
+    </label>
+    <label>URL</label>
+    <input type="text" id="aWebhookUrl" placeholder="https://ntfy.sh/my-home-network">
+    <label>Format</label>
+    <select id="aWebhookFmt" style="width:130px">
+      <option value="json">json</option><option value="ntfy">ntfy</option><option value="text">text</option>
+    </select>
+  </div>
+  <div class="card">
+    <h2 style="margin-top:0">Email</h2>
+    <div class="sub" style="margin-bottom:8px">The password is stored in plain text in
+    <span class="mono">config.json</span> on this PC (never leaves it, never shared over the LAN) —
+    use a dedicated <b>app password</b>, not your real account password.</div>
+    <label style="display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="aEmail"> Enabled
+    </label>
+    <div class="row">
+      <div><label>SMTP host</label><input type="text" id="aEmailHost" placeholder="smtp.gmail.com" style="width:200px"></div>
+      <div><label>Port</label><input type="number" id="aEmailPort" placeholder="587" min="1" max="65535" style="width:90px"></div>
+      <div><label style="display:flex;align-items:center;gap:6px;margin-top:24px"><input type="checkbox" id="aEmailTls" checked> STARTTLS</label></div>
+    </div>
+    <div class="row">
+      <div><label>Username</label><input type="text" id="aEmailUser" style="width:200px"></div>
+      <div><label>App password</label><input type="password" id="aEmailPass" style="width:200px"></div>
+    </div>
+    <div class="row">
+      <div><label>From</label><input type="text" id="aEmailFrom" placeholder="netmon@home" style="width:200px"></div>
+      <div><label>To</label><input type="text" id="aEmailTo" placeholder="you@example.com" style="width:200px"></div>
+    </div>
+  </div>
+  <div class="msg" id="aMsg"></div>
+  <div class="row" style="justify-content:flex-end">
+    <button class="small" id="aTest">Send test alert</button>
+    <span class="grow"></span>
+    <button class="primary" id="aSave">Save alert settings</button>
+  </div>
+</div>
+
 <div class="footer">Changes apply on their own: routers within ~15 s, device names within
 ~5 min, general settings on the next dashboard refresh (~1 min). No restarts needed.</div>
 
@@ -618,7 +699,7 @@ S.floorState = { floors: [], groundIndex: 0, main: null, onchange: refreshRouter
 document.querySelector('.tabs').onclick = (e) => {
   const b = e.target.closest('button'); if (!b) return;
   for (const x of document.querySelectorAll('.tabs button')) x.className = x === b ? 'active' : '';
-  for (const name of ['general','routers','devices']) {
+  for (const name of ['general','routers','devices','alerts']) {
     document.getElementById('tab-' + name).style.display = name === b.dataset.tab ? '' : 'none';
   }
 };
@@ -655,7 +736,98 @@ async function load() {
 
   renderRouters();
   renderDevices();
+  loadAlerts();
 }
+
+// ---- alerts tab ----
+function loadAlerts() {
+  const a = S.config.alerts || {};
+  const ev = a.events || {};
+  const ch = a.channels || {};
+  document.getElementById('aEnabled').checked = !!a.enabled;
+  document.getElementById('aEvOutage').checked = ev.outage !== false;
+  document.getElementById('aEvDegraded').checked = !!ev.degraded;
+  document.getElementById('aEvNewDevice').checked = ev.new_device !== false;
+  document.getElementById('aEvIpChange').checked = !!ev.ip_change;
+  document.getElementById('aMinDur').value = a.min_duration_sec != null ? a.min_duration_sec : '';
+  document.getElementById('aCooldown').value = a.cooldown_minutes != null ? a.cooldown_minutes : '';
+  document.getElementById('aQuietStart').value = (a.quiet_hours || {}).start || '';
+  document.getElementById('aQuietEnd').value = (a.quiet_hours || {}).end || '';
+  document.getElementById('aToast').checked = !ch.toast || ch.toast.enabled !== false;
+  const wh = ch.webhook || {};
+  document.getElementById('aWebhook').checked = !!wh.enabled;
+  document.getElementById('aWebhookUrl').value = wh.url || '';
+  document.getElementById('aWebhookFmt').value = wh.format || 'json';
+  const em = ch.email || {};
+  document.getElementById('aEmail').checked = !!em.enabled;
+  document.getElementById('aEmailHost').value = em.host || '';
+  document.getElementById('aEmailPort').value = em.port != null ? em.port : '';
+  document.getElementById('aEmailTls').checked = em.starttls !== false;
+  document.getElementById('aEmailUser').value = em.username || '';
+  document.getElementById('aEmailPass').value = em.password || '';
+  document.getElementById('aEmailFrom').value = em.from || '';
+  document.getElementById('aEmailTo').value = em.to || '';
+}
+
+function collectAlerts() {
+  const a = { enabled: document.getElementById('aEnabled').checked };
+  a.events = {
+    outage: document.getElementById('aEvOutage').checked,
+    degraded: document.getElementById('aEvDegraded').checked,
+    new_device: document.getElementById('aEvNewDevice').checked,
+    ip_change: document.getElementById('aEvIpChange').checked,
+  };
+  const md = parseFloat(document.getElementById('aMinDur').value);
+  if (!isNaN(md)) a.min_duration_sec = md;
+  const cd = parseFloat(document.getElementById('aCooldown').value);
+  if (!isNaN(cd)) a.cooldown_minutes = cd;
+  const qs = document.getElementById('aQuietStart').value.trim();
+  const qe = document.getElementById('aQuietEnd').value.trim();
+  if (qs && qe) a.quiet_hours = { start: qs, end: qe };
+  a.channels = {
+    toast: { enabled: document.getElementById('aToast').checked },
+    webhook: {
+      enabled: document.getElementById('aWebhook').checked,
+      url: document.getElementById('aWebhookUrl').value.trim(),
+      format: document.getElementById('aWebhookFmt').value,
+    },
+    email: {
+      enabled: document.getElementById('aEmail').checked,
+      host: document.getElementById('aEmailHost').value.trim(),
+      port: parseInt(document.getElementById('aEmailPort').value, 10) || 587,
+      starttls: document.getElementById('aEmailTls').checked,
+      username: document.getElementById('aEmailUser').value.trim(),
+      password: document.getElementById('aEmailPass').value,
+      from: document.getElementById('aEmailFrom').value.trim(),
+      to: document.getElementById('aEmailTo').value.trim(),
+    },
+  };
+  return a;
+}
+
+document.getElementById('aSave').onclick = async () => {
+  const msg = document.getElementById('aMsg');
+  clearMsg(msg);
+  const cfg = Object.assign({}, S.config);   // keep unknown keys as-is
+  cfg.alerts = collectAlerts();
+  const {status, data} = await api('/api/config', {config: cfg});
+  if (status === 200) {
+    S.config = cfg;
+    showMsg(msg, 'ok', 'Saved. The monitor picks this up within ~10 seconds — no restart.',
+      (data.warnings || []).map(fmtIssue));
+  } else {
+    showMsg(msg, 'error', 'Not saved:', (data.errors || []).map(fmtIssue));
+  }
+};
+
+document.getElementById('aTest').onclick = async () => {
+  const msg = document.getElementById('aMsg');
+  clearMsg(msg);
+  const {status} = await api('/api/alerts/test', {});
+  showMsg(msg, status === 202 ? 'ok' : 'error', status === 202
+    ? 'Test alert queued — it goes to every enabled channel within a few seconds. Save first if you just changed settings.'
+    : 'Could not queue the test alert (HTTP ' + status + ').');
+};
 
 // ---- general save ----
 document.getElementById('gAddFloor').onclick = () => addFloor(S.floorState, 'gFloors');

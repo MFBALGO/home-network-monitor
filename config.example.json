@@ -2,5 +2,19 @@
   "title": "Home Network Monitor",
   "floors": ["First Floor", "Ground Floor"],
   "underground_floors": [],
-  "main_router_floor": "Ground Floor"
+  "main_router_floor": "Ground Floor",
+  "plan_down_mbps": 500,
+  "plan_up_mbps": 200,
+  "alerts": {
+    "enabled": false,
+    "min_duration_sec": 60,
+    "cooldown_minutes": 5,
+    "events": {"outage": true, "degraded": false, "new_device": true, "ip_change": false},
+    "channels": {
+      "toast": {"enabled": true},
+      "webhook": {"enabled": false, "url": "https://ntfy.sh/your-topic-here", "format": "ntfy"},
+      "email": {"enabled": false, "host": "smtp.example.com", "port": 587, "starttls": true,
+                "username": "", "password": "", "from": "", "to": ""}
+    }
+  }
 }

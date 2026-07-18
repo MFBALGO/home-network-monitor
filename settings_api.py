@@ -23,6 +23,7 @@ import os
 import re
 import threading
 import time
+from datetime import datetime, timezone
 
 import scan_routers
 
@@ -163,9 +164,59 @@ def validate_config(cfg):
     if cfg.get("update_check") is not None and not isinstance(cfg.get("update_check"), bool):
         errors.append(_err("config", "update_check", "must be true or false"))
 
+    alerts = cfg.get("alerts")
+    if alerts is not None:
+        if not isinstance(alerts, dict):
+            errors.append(_err("config", "alerts", "must be an object"))
+        else:
+            if alerts.get("enabled") is not None and not isinstance(alerts["enabled"], bool):
+                errors.append(_err("config", "alerts.enabled", "must be true or false"))
+            for key, lo, hi in (("min_duration_sec", 0, 3600), ("cooldown_minutes", 0, 1440)):
+                v = alerts.get(key)
+                if v is not None and (not isinstance(v, (int, float)) or not lo <= v <= hi):
+                    errors.append(_err("config", f"alerts.{key}", f"must be a number between {lo} and {hi}"))
+            qh = alerts.get("quiet_hours")
+            if qh is not None and qh != {}:
+                hm = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+                if (not isinstance(qh, dict)
+                        or not isinstance(qh.get("start"), str) or not hm.fullmatch(qh["start"])
+                        or not isinstance(qh.get("end"), str) or not hm.fullmatch(qh["end"])):
+                    errors.append(_err("config", "alerts.quiet_hours",
+                                       'must be {"start": "HH:MM", "end": "HH:MM"} (or removed)'))
+            evs = alerts.get("events")
+            if evs is not None:
+                if not isinstance(evs, dict):
+                    errors.append(_err("config", "alerts.events", "must be an object of {event: true/false}"))
+                else:
+                    for k, v in evs.items():
+                        if k not in ("outage", "degraded", "new_device", "ip_change"):
+                            warnings.append(_err("config", f"alerts.events.{k}", "unknown event type - kept as-is"))
+                        elif not isinstance(v, bool):
+                            errors.append(_err("config", f"alerts.events.{k}", "must be true or false"))
+            ch = alerts.get("channels")
+            if ch is not None:
+                if not isinstance(ch, dict):
+                    errors.append(_err("config", "alerts.channels", "must be an object"))
+                else:
+                    wh = ch.get("webhook")
+                    if isinstance(wh, dict):
+                        if wh.get("enabled") and not str(wh.get("url", "")).startswith(("http://", "https://")):
+                            errors.append(_err("config", "alerts.channels.webhook.url", "must start with http:// or https://"))
+                        if wh.get("format") not in (None, "", "json", "ntfy", "text"):
+                            errors.append(_err("config", "alerts.channels.webhook.format", 'must be "json", "ntfy" or "text"'))
+                    em = ch.get("email")
+                    if isinstance(em, dict) and em.get("enabled"):
+                        if not em.get("host"):
+                            errors.append(_err("config", "alerts.channels.email.host", "required when email is enabled"))
+                        port = em.get("port")
+                        if port is not None and (not isinstance(port, int) or not 1 <= port <= 65535):
+                            errors.append(_err("config", "alerts.channels.email.port", "must be a port number (1-65535)"))
+                        if not em.get("to"):
+                            errors.append(_err("config", "alerts.channels.email.to", "required when email is enabled"))
+
     known = {"title", "floors", "underground_floors", "main_router_floor",
              "hide_ip_prefixes", "thresholds", "plan_down_mbps", "plan_up_mbps",
-             "update_check"}
+             "update_check", "alerts"}
     for key in cfg:
         if key not in known:
             warnings.append(_err("config", key, "unknown setting - kept as-is"))
@@ -328,7 +379,64 @@ def _file_meta(path):
     return {"exists": True, "mtime": st.st_mtime, "size": st.st_size}
 
 
+# ---------------------------------------------------------------------------
+# "Test now" command rail (writes data/commands.json for monitor.py; reads
+# back data/test_status.json that only the monitor writes — one writer per
+# file, so no locking is needed across the two processes)
+# ---------------------------------------------------------------------------
+
+COMMANDS_PATH = os.path.join(BASE_DIR, "data", "commands.json")
+TEST_STATUS_PATH = os.path.join(BASE_DIR, "data", "test_status.json")
+TEST_COOLDOWN_SEC = 60
+
+_test_lock = threading.Lock()
+_last_test_started = 0.0
+
+
+def start_test(body):
+    """Queue an on-demand connectivity test for the monitor to pick up
+    (its command poller runs every 2s). 409 while one runs, 429 inside the
+    cooldown — double-clicks and enthusiastic phone-tapping are expected."""
+    global _last_test_started
+    want_speed = bool(isinstance(body, dict) and body.get("speedtest"))
+    with _test_lock:
+        status = load_json(TEST_STATUS_PATH, {})
+        if status.get("state") == "running":
+            # trust a running status only if it's fresh — a monitor killed
+            # mid-test would otherwise wedge the button forever
+            try:
+                started = datetime.fromisoformat(status.get("started_ts"))
+                fresh = (datetime.now(timezone.utc) - started).total_seconds() < 300
+            except (TypeError, ValueError):
+                fresh = False
+            if fresh:
+                return 409, {"ok": False, "error": "a test is already running"}
+        if time.time() - _last_test_started < TEST_COOLDOWN_SEC:
+            return 429, {"ok": False, "error": "please wait a minute between tests"}
+        _last_test_started = time.time()
+        cmd = {"id": f"{int(time.time() * 1000)}-{os.getpid()}", "action": "test_now",
+               "speedtest": want_speed, "issued_ts": datetime.now(timezone.utc).isoformat()}
+        try:
+            save_json_atomic(COMMANDS_PATH, cmd)
+        except OSError as e:
+            return 500, {"ok": False, "error": f"couldn't write command: {e}"}
+    return 202, {"ok": True}
+
+
+def send_test_alert_command():
+    """Queue a test-alert command (Settings page button)."""
+    cmd = {"id": f"{int(time.time() * 1000)}-{os.getpid()}", "action": "test_alert",
+           "issued_ts": datetime.now(timezone.utc).isoformat()}
+    try:
+        save_json_atomic(COMMANDS_PATH, cmd)
+    except OSError as e:
+        return 500, {"ok": False, "error": f"couldn't write command: {e}"}
+    return 202, {"ok": True}
+
+
 def handle_get(path):
+    if path == "/api/test/status":
+        return 200, load_json(TEST_STATUS_PATH, {"state": "idle"})
     if path == "/api/config":
         return 200, {
             "config": load_json(CONFIG_PATH, {}),
@@ -354,6 +462,10 @@ def handle_post(path, body):
         return start_discovery()
     if path == "/api/config":
         return _save_config(body)
+    if path == "/api/test/run":
+        return start_test(body)
+    if path == "/api/alerts/test":
+        return send_test_alert_command()
     return 404, {"ok": False, "error": "unknown endpoint"}
 
 

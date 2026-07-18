@@ -16,6 +16,7 @@ registers it as the "NetMon Web" scheduled task and opens TCP 8080 on
 the Private firewall profile. Change the port with the NETMON_WEB_PORT
 environment variable if 8080 is taken.
 """
+import ipaddress
 import json
 import os
 import sys
@@ -66,6 +67,16 @@ ROUTES = {
 
 MAX_POST_BYTES = 256 * 1024
 
+# The ONLY /api/* paths reachable from the LAN (exact match). Everything
+# else under /api/* stays localhost-only. "Test now" is deliberately
+# LAN-usable: "internet feels slow on my phone -> tap Test" is its whole
+# point, it takes no meaningful input, and it's rate-limited server-side.
+# Delete an entry here to make it localhost-only again.
+LAN_API = {
+    "GET": {"/api/test/status"},
+    "POST": {"/api/test/run"},
+}
+
 WARMING_UP_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8">
 <title>Home Network Monitor</title></head>
 <body style="font-family:sans-serif;background:#05080f;color:#e8eef8;
@@ -100,6 +111,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
         host = (self.headers.get("Host") or "").split(":", 1)[0].strip("[]").lower()
         return host in ("localhost", "127.0.0.1", "::1")
 
+    def _host_is_private_ip(self):
+        """The LAN-API variant of the rebinding check: LAN users browse the
+        dashboard by IP, so for the carved-out endpoints we accept a Host
+        header that is a private/loopback IP LITERAL. A hostname Host
+        header still means some website's DNS pointed here — reject."""
+        if self._host_is_local():
+            return True
+        host = (self.headers.get("Host") or "").split(":", 1)[0].strip("[]")
+        try:
+            return ipaddress.ip_address(host).is_private
+        except ValueError:
+            return False
+
     def _send(self, status, body, ctype="text/html; charset=utf-8", extra=None):
         data = body.encode("utf-8") if isinstance(body, str) else body
         self.send_response(status)
@@ -129,7 +153,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                        else settings_page.WIZARD_HTML)
             return
         if settings_api and path.startswith("/api/"):
-            if not self._is_local():
+            lan_ok = path in LAN_API["GET"] and self._host_is_private_ip()
+            if not self._is_local() and not lan_ok:
                 self._send_json(403, {"ok": False, "error": "settings are only available on the monitor PC"})
                 return
             try:
@@ -199,14 +224,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # There is deliberately no password on the settings API, so these
         # guards do the work instead: only the machine itself may connect,
         # and a browser page from some random website must not be able to
-        # ride along on that (CSRF / DNS rebinding).
-        if not self._is_local() or not self._host_is_local():
+        # ride along on that (CSRF / DNS rebinding). The LAN_API paths get
+        # a deliberate carve-out: any LAN client, but the Host header must
+        # be a private-IP literal (and the JSON Content-Type below forces a
+        # CORS preflight this server never answers, killing cross-site
+        # fetches from the internet).
+        lan_ok = path in LAN_API["POST"] and self._host_is_private_ip()
+        if not lan_ok and (not self._is_local() or not self._host_is_local()):
             self._send_json(403, {"ok": False, "error": "settings are only available on the monitor PC"})
             return
         origin = self.headers.get("Origin")
-        if origin and origin.split("//", 1)[-1].split(":", 1)[0].lower() not in ("localhost", "127.0.0.1"):
-            self._send_json(403, {"ok": False, "error": "cross-origin requests are not allowed"})
-            return
+        if origin:
+            origin_host = origin.split("//", 1)[-1].split(":", 1)[0].strip("[]").lower()
+            origin_ok = origin_host in ("localhost", "127.0.0.1")
+            if not origin_ok and lan_ok:
+                # LAN carve-out: same-origin fetches from the dashboard page
+                # carry the dashboard's own private-IP origin
+                try:
+                    origin_ok = ipaddress.ip_address(origin_host).is_private
+                except ValueError:
+                    origin_ok = False
+            if not origin_ok:
+                self._send_json(403, {"ok": False, "error": "cross-origin requests are not allowed"})
+                return
         ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
         if ctype != "application/json":
             self._send_json(415, {"ok": False, "error": "Content-Type must be application/json"})

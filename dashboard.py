@@ -472,6 +472,15 @@ def main():
         if rname:
             router_meta[rname] = {"floor": (item.get("floor") or "").strip() or None, "order": idx}
 
+    # Deleting a router in Settings must actually remove it from the
+    # dashboard: without this filter, any router pinged in the last 7 days
+    # kept reappearing from history (map, pills, per-router chart) and the
+    # map nagged "pick its floor" for a router the user just deleted. When
+    # routers.json is missing/empty, fall back to history-derived names so
+    # a config-less install still shows what it monitors. Historical
+    # events in the outage log are unaffected — that's the record.
+    if router_meta:
+        router_names = [n for n in router_names if n in router_meta]
     router_summary = []
     for name in router_names:
         rows_for_router = [p for p in router_pings if p["name"] == name]
@@ -489,8 +498,7 @@ def main():
             "avg_latency": stats24["avg_latency"],
         })
     # Sort by routers.json order (user-controlled, naturally groups floors
-    # if the file is arranged that way); routers no longer in the config
-    # (old data) sink to the bottom alphabetically.
+    # if the file is arranged that way).
     router_summary.sort(key=lambda r: (router_meta.get(r["name"], {}).get("order", 9999), r["name"]))
 
     # ---- house/site configuration (config.json — all optional) ----

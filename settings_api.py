@@ -212,7 +212,7 @@ def validate_config(cfg):
                     errors.append(_err("config", "alerts.events", "must be an object of {event: true/false}"))
                 else:
                     for k, v in evs.items():
-                        if k not in ("outage", "degraded", "new_device", "ip_change"):
+                        if k not in ("outage", "degraded", "new_device", "ip_change", "instability"):
                             warnings.append(_err("config", f"alerts.events.{k}", "unknown event type - kept as-is"))
                         elif not isinstance(v, bool):
                             errors.append(_err("config", f"alerts.events.{k}", "must be true or false"))

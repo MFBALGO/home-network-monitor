@@ -629,6 +629,7 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
     <div class="row" style="gap:16px;flex-wrap:wrap">
       <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="aEvOutage" checked> Outages</label>
       <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="aEvDegraded"> Slow / degraded</label>
+      <label style="display:flex;align-items:center;gap:6px" title="Repeated micro-drops (each too short to be an outage) within an hour"><input type="checkbox" id="aEvInstability"> Flapping</label>
       <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="aEvNewDevice" checked> New devices</label>
       <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="aEvIpChange"> Public IP changes</label>
     </div>
@@ -795,6 +796,7 @@ function loadAlerts() {
   document.getElementById('aEnabled').checked = !!a.enabled;
   document.getElementById('aEvOutage').checked = ev.outage !== false;
   document.getElementById('aEvDegraded').checked = !!ev.degraded;
+  document.getElementById('aEvInstability').checked = !!ev.instability;
   document.getElementById('aEvNewDevice').checked = ev.new_device !== false;
   document.getElementById('aEvIpChange').checked = !!ev.ip_change;
   document.getElementById('aMinDur').value = a.min_duration_sec != null ? a.min_duration_sec : '';
@@ -822,6 +824,7 @@ function collectAlerts() {
   a.events = {
     outage: document.getElementById('aEvOutage').checked,
     degraded: document.getElementById('aEvDegraded').checked,
+    instability: document.getElementById('aEvInstability').checked,
     new_device: document.getElementById('aEvNewDevice').checked,
     ip_change: document.getElementById('aEvIpChange').checked,
   };

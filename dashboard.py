@@ -85,10 +85,15 @@ def configured_intervals(site_config):
     return vals
 
 
-def median_gap(ts_list, max_gaps=30):
+def median_gap(ts_list, max_gaps=7):
     """Median seconds between consecutive timestamps over the most recent
     max_gaps gaps — a check's measured cadence. None when there isn't
-    enough history to be meaningful."""
+    enough history to be meaningful. Kept deliberately SHORT (7 gaps, not
+    30): when the user changes an interval in Settings, a long window
+    keeps reporting the old cadence for hours — the footer said "every
+    ~5m" half a day after the scan moved to 30m. Seven gaps converge
+    within ~4 cycles while a median still shrugs off a couple of slow
+    outlier cycles."""
     parsed = []
     for t in ts_list[-(max_gaps + 1):]:
         try:
@@ -1901,7 +1906,14 @@ function tickCheckFoots() {
 function checkEff(key) {
   const C = DATA.checks || {};
   const m = (C.measured || {})[key], f = (C.freq || {})[key];
-  return m ? { freq: m, approx: true } : { freq: f, approx: false };
+  // A cycle is sleep(configured) + work time, so the real cadence can
+  // never be SHORTER than the configured interval. Measured below
+  // configured means the median still reflects history from before an
+  // interval change — trust the config until the data catches up (this
+  // is what made the device footer claim "~5m", amber and all, right
+  // after the user set the scan to 30m).
+  if (m && (!f || m >= f)) return { freq: m, approx: true };
+  return { freq: f || m, approx: false };
 }
 safely('check footers', function() {
   const C = DATA.checks || {};
@@ -2777,8 +2789,11 @@ safely('house map', function() {
     // the router cadence like every other method
     if (opts.method === 'arp' && ((DATA.checks || {}).arp_cmd) !== 'arp state') return checkEff('devices');
     if (opts.main) return checkEff('ping');                 // gateway rides the ping thread
-    if (opts.measured) return { freq: opts.measured, approx: true };
-    return { freq: ((DATA.checks || {}).freq || {}).router || 15, approx: false };
+    // same configured-is-the-floor rule as checkEff: per-router measured
+    // cadence below the configured router interval is stale history
+    const rf = ((DATA.checks || {}).freq || {}).router || 15;
+    if (opts.measured && opts.measured >= rf) return { freq: opts.measured, approx: true };
+    return { freq: rf, approx: false };
   }
 
   function pill(x, y, opts, hcId) {

@@ -12,6 +12,7 @@ manually refresh.
 import json
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import time
@@ -340,6 +341,10 @@ def main():
         " FROM public_ip WHERE ts >= ?",
         (iso(datetime.now(timezone.utc) - timedelta(hours=24)),),
     )[0]
+    # Last public-IP check ATTEMPT (including failed fetches) — the cadence
+    # footer should show when the check ran, not when it last succeeded.
+    ip_last_row = q(conn, "SELECT MAX(ts) AS ts FROM public_ip")[0]
+    ip_last_check = ip_last_row["ts"] if ip_last_row else None
 
     conn.close()
 
@@ -359,6 +364,7 @@ def main():
             "ip": g["target"],
             "status": "up" if g["success"] else "down",
             "latency": g["latency_ms"],
+            "last_check": g["ts"],
             "uptime_pct": round(100.0 * len(g24_ok) / len(g24), 2) if g24 else None,
             "avg_latency": round(sum(g24_lat) / len(g24_lat), 1) if g24_lat else None,
         }
@@ -494,6 +500,7 @@ def main():
             "status": "up" if latest_r["success"] else "down",
             "latency": latest_r["latency_ms"],
             "method": latest_r.get("method"),
+            "last_check": latest_r["ts"],
             "uptime_pct": stats24["uptime_pct"],
             "avg_latency": stats24["avg_latency"],
         })
@@ -716,6 +723,23 @@ def main():
         "topology": topology,
         "devices": devices,
         "last_device_scan_ts": last_scan_ts,
+        # Per-source "when did this last run" timestamps for the cadence
+        # footers (command · age · frequency on every card). Frequencies are
+        # hardcoded in the JS to mirror monitor.py's *_INTERVAL_SEC constants.
+        # speed uses the last ATTEMPT (failed runs included) — the footer
+        # answers "is the check running", not "did it succeed".
+        "checks": {
+            "ping": latest["ts"] if latest else None,
+            "dns": dns_checks[-1]["ts"] if dns_checks else None,
+            "speed": speedtests[-1]["ts"] if speedtests else None,
+            "wifi": wifi[-1]["ts"] if wifi else None,
+            "public_ip": ip_last_check,
+            "devices": last_scan_ts,
+            # which sweep the device scan actually uses (monitor.py checks
+            # nmap every cycle; same PATH here, so this matches in practice)
+            "device_cmd": "nmap sweep + arp" if shutil.which("nmap") else "ping sweep + arp",
+            "wifi_cmd": "netsh wlan" if sys.platform == "win32" else "system_profiler",
+        },
     }
 
     html = build_html(data)
@@ -1014,6 +1038,13 @@ def build_html(data):
     .chart-box.sm { height: 116px; }
     .chart-box.lg { height: 150px; }
   }
+  /* check-cadence footer: command · age · frequency. Deliberately dimmer
+     than everything else on the card — it's metadata, not a stat. Turns
+     amber when a check runs way past its cadence (per-card stall tell). */
+  .check-foot { margin-top: 10px; padding-top: 7px; border-top: 1px solid var(--border);
+    font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums; }
+  .check-foot.stale { color: var(--status-warning); font-weight: 700; }
   .chart-label { font-size: 10.5px; font-weight: 700; color: var(--muted); margin-bottom: 10px;
     font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .13em; }
   .panel-hud::before, .panel-hud::after { content:""; position:absolute; width:15px; height:15px; pointer-events:none; opacity:.55; }
@@ -1207,6 +1238,12 @@ def build_html(data):
   .house-svg.compact .net-stat { font-size: 11px; }
   .house-svg .hovercard { opacity: 0; pointer-events: none; transition: opacity .15s ease; }
   .house-svg .hovercard.show { opacity: 1; }
+  /* SVG flavors of the cadence footer (hover cards + internet node) */
+  .house-svg .card-div { stroke: var(--border); stroke-width: 1; }
+  .house-svg .card-foot { fill: var(--muted); font-size: 9px; font-family: var(--font-mono); }
+  .house-svg .card-foot.stale { fill: var(--status-warning); font-weight: 700; }
+  .house-svg .net-foot { fill: var(--text-secondary); font-size: 8px; font-family: var(--font-mono); opacity: .85; }
+  .house-svg .net-foot.stale { fill: var(--status-warning); opacity: 1; font-weight: 700; }
   /* wi-fi coverage bubbles behind each AP */
   .house-svg .cover { fill: currentColor; stroke: currentColor; stroke-opacity: .15; opacity: .06; }
   .house-svg .cover.up { color: var(--status-good); }
@@ -1288,6 +1325,7 @@ def build_html(data):
         </div>
         <canvas class="sparkline" id="sparkline" width="150" height="44"></canvas>
       </div>
+      <div class="check-foot" id="cfStatus"></div>
     </div>
     <div class="card">
       <div class="card-head"><h3>Uptime · 24h</h3><span class="rating" id="rateUptime24"></span></div>
@@ -1296,11 +1334,13 @@ def build_html(data):
         <div class="delta" id="uptimeDelta"></div>
       </div>
       <div class="stat-sub" id="loss24h"></div>
+      <div class="check-foot" id="cfUptime24"></div>
     </div>
     <div class="card">
       <div class="card-head"><h3>Uptime · 7d</h3><span class="rating" id="rateUptime7"></span></div>
       <div class="stat-value" id="uptime7d">—</div>
       <div class="stat-sub" id="loss7d"></div>
+      <div class="check-foot" id="cfUptime7"></div>
     </div>
     <div class="card">
       <div class="card-head"><h3>Avg latency · 24h</h3><span class="rating" id="rateLatency"></span></div>
@@ -1309,21 +1349,25 @@ def build_html(data):
         <div class="delta" id="latencyDelta"></div>
       </div>
       <div class="stat-sub">to 1.1.1.1 / 8.8.8.8 / 9.9.9.9</div>
+      <div class="check-foot" id="cfLatency"></div>
     </div>
     <div class="card">
       <div class="card-head"><h3>DNS · 24h</h3><span class="rating" id="rateDns"></span></div>
       <div class="stat-value" id="dnsAvg">—</div>
       <div class="stat-sub" id="dnsSub">name-lookup speed</div>
+      <div class="check-foot" id="cfDns"></div>
     </div>
     <div class="card">
       <div class="card-head"><h3>Jitter · 24h</h3><span class="rating" id="rateJitter"></span></div>
       <div class="stat-value" id="jitter24h">—</div>
       <div class="stat-sub">latency stability — lower is steadier (calls/gaming)</div>
+      <div class="check-foot" id="cfJitter"></div>
     </div>
     <div class="card">
       <h3>Public IP</h3>
       <div class="stat-value" id="publicIp" style="font-size:19px;">—</div>
       <div class="stat-sub" id="publicIpStable"></div>
+      <div class="check-foot" id="cfPublicIp"></div>
     </div>
   </div>
 
@@ -1340,6 +1384,7 @@ def build_html(data):
       <div class="chart-label">Per-router latency (ms)</div>
       <div class="chart-box lg"><canvas id="routersChart"></canvas></div>
       <div id="routersChartEmpty" class="empty" style="display:none">No router ping history yet.</div>
+      <div class="check-foot" id="cfRouters"></div>
     </div>
   </section>
 
@@ -1355,10 +1400,12 @@ def build_html(data):
       <div class="chart-card">
         <div class="chart-label">Average latency (ms)</div>
         <div class="chart-box"><canvas id="latencyChart"></canvas></div>
+        <div class="check-foot" id="cfLatencyChart"></div>
       </div>
       <div class="chart-card">
         <div class="chart-label">Packet loss (%)</div>
         <div class="chart-box sm"><canvas id="lossChart"></canvas></div>
+        <div class="check-foot" id="cfLossChart"></div>
       </div>
     </div>
   </section>
@@ -1377,12 +1424,14 @@ def build_html(data):
         <div class="chart-box"><canvas id="speedChart"></canvas></div>
         <div id="speedEmpty" class="empty" style="display:none">No speed test data yet — install a speed test tool (see README) and it will appear here automatically.</div>
         <div id="speedFailNote" class="stat-sub" style="display:none"></div>
+        <div class="check-foot" id="cfSpeed"></div>
       </div>
       <div class="chart-card">
         <div class="chart-label">Wi-Fi signal (dBm, higher is better)</div>
         <div class="chart-box sm"><canvas id="wifiChart"></canvas></div>
         <div id="wifiEmpty" class="empty" style="display:none">No Wi-Fi signal data yet.</div>
         <div id="wifiAdvice" class="stat-sub" style="display:none"></div>
+        <div class="check-foot" id="cfWifi"></div>
       </div>
       <div class="chart-card">
         <div class="chart-label" style="display:flex; align-items:center; gap:8px;">Latency under load (ms)
@@ -1390,6 +1439,7 @@ def build_html(data):
         <div class="chart-box sm"><canvas id="loadedLatencyChart"></canvas></div>
         <div id="loadedLatencyEmpty" class="empty" style="display:none">No latency-under-load data yet — it needs the official Ookla speedtest CLI (see README) and appears after the next test.</div>
         <div id="bufferbloatHint" class="stat-sub" style="display:none"></div>
+        <div class="check-foot" id="cfBufferbloat"></div>
       </div>
     </div>
   </section>
@@ -1435,6 +1485,7 @@ def build_html(data):
       <div class="chart-label">Devices online over time</div>
       <div class="chart-box sm"><canvas id="devCountChart"></canvas></div>
       <div id="devCountEmpty" class="empty" style="display:none">No scan history yet.</div>
+      <div class="check-foot" id="cfDevices"></div>
     </div>
     <div class="chart-card">
       <div id="devicesTableWrap"></div>
@@ -1547,6 +1598,71 @@ function timeSince(ts) {
   if (secs < 86400) return Math.round(secs / 3600) + 'h';
   return Math.round(secs / 86400) + 'd';
 }
+
+// ---------- check-cadence footers ----------
+// Every card riding a recurring check gets a footer: command · age ·
+// frequency. Elements carry data-* attrs and are re-queried on each tick,
+// so footers baked into re-rendered SVG (hover cards, internet node) keep
+// working without re-registration. Ages come from the wall clock (ticked
+// every 10s), so they stay honest between the page's 60s regens; a check
+// running way past its cadence turns the footer amber. Frequencies mirror
+// monitor.py's *_INTERVAL_SEC constants — update both together.
+function agoShort(secs) {
+  if (secs < 60) return Math.max(0, Math.round(secs)) + 's';
+  if (secs < 3600) return Math.round(secs / 60) + 'm';
+  if (secs < 86400) return Math.round(secs / 3600) + 'h';
+  return Math.round(secs / 86400) + 'd';
+}
+function freqShort(s) { return s < 60 ? s + 's' : s < 3600 ? (s / 60) + 'm' : (s / 3600) + 'h'; }
+function setCheckFoot(id, cmd, ts, freqSec) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.dataset.checkfoot = '1';
+  el.dataset.cmd = cmd;
+  el.dataset.freq = freqSec;
+  if (ts) el.dataset.ts = ts; else delete el.dataset.ts;
+}
+function tickCheckFoots() {
+  document.querySelectorAll('[data-checkfoot]').forEach(el => {
+    const freq = +el.dataset.freq;
+    // fmt: long = "ping · 6s ago · every 15s" (HTML cards),
+    //      mid  = "ping · 6s ago · 15s"       (hover cards — 176px wide),
+    //      min  = "ping · 6s · 15s"           (internet node — 124px wide)
+    const fmt = el.dataset.fmt || 'long';
+    let mid = 'no data yet', stale = false;
+    if (el.dataset.ts) {
+      const secs = (Date.now() - new Date(el.dataset.ts).getTime()) / 1000;
+      mid = agoShort(secs) + (fmt === 'min' ? '' : ' ago');
+      // generous slack: the page itself only regenerates every 60s, so a
+      // 15s check legitimately reads up to ~75s old right before a refresh
+      stale = secs > freq * 2 + 150;
+    }
+    el.textContent = el.dataset.cmd + ' · ' + mid + ' · '
+      + (fmt === 'long' ? 'every ' : '') + freqShort(freq);
+    el.classList.toggle('stale', stale);
+  });
+}
+safely('check footers', function() {
+  const C = DATA.checks || {};
+  setCheckFoot('cfStatus',       'ping', C.ping, 15);
+  setCheckFoot('cfUptime24',     'ping', C.ping, 15);
+  setCheckFoot('cfUptime7',      'ping', C.ping, 15);
+  setCheckFoot('cfLatency',      'ping', C.ping, 15);
+  setCheckFoot('cfJitter',       'ping', C.ping, 15);
+  setCheckFoot('cfLatencyChart', 'ping', C.ping, 15);
+  setCheckFoot('cfLossChart',    'ping', C.ping, 15);
+  setCheckFoot('cfDns',          'dns lookup', C.dns, 60);
+  setCheckFoot('cfPublicIp',     'https query', C.public_ip, 600);
+  setCheckFoot('cfSpeed',        'ookla speedtest cli', C.speed, 1800);
+  setCheckFoot('cfBufferbloat',  'ookla speedtest cli', C.speed, 1800);
+  setCheckFoot('cfWifi',         C.wifi_cmd || 'wi-fi snapshot', C.wifi, 300);
+  setCheckFoot('cfDevices',      C.device_cmd || 'device scan', C.devices, 300);
+  // per-router chart rides the router thread; freshest router check wins
+  const rLast = (DATA.router_summary || []).map(r => r.last_check).filter(Boolean).sort().pop();
+  setCheckFoot('cfRouters', 'ping / tcp / arp', rLast, 15);
+  tickCheckFoots();
+  setInterval(tickCheckFoots, 10000);
+});
 document.getElementById('publicIp').textContent = DATA.current_public_ip || '—';
 if (DATA.current_public_ip && DATA.ip_stable_since) {
   const prefix = DATA.ip_stable_at_least ? 'stable for at least ' : 'stable for ';
@@ -2034,7 +2150,9 @@ safely('devices note', function() {
     const ageMin = (Date.now() - new Date(DATA.last_device_scan_ts).getTime()) / 60000;
     const online = (DATA.devices || []).filter(d => d.online).length;
     const total = (DATA.devices || []).length;
-    let note = online + ' online · ' + total + ' seen this week · scanned ' + timeSince(DATA.last_device_scan_ts) + ' ago';
+    const scanCmd = (DATA.checks && DATA.checks.device_cmd) || 'device scan';
+    let note = online + ' online · ' + total + ' seen this week · '
+      + scanCmd + ' · scanned ' + timeSince(DATA.last_device_scan_ts) + ' ago · every 5m';
     if (ageMin > 15) {
       note += ' — stale! scans should run every 5 min; check the monitor service';
       noteEl.style.color = 'var(--status-critical)';
@@ -2119,7 +2237,7 @@ safely('house map', function() {
   const W = compact ? 330 : 1000;
   const TOP = compact ? 30 : 96, BH = 172; // wall top, desktop floor band height
   const HX0 = compact ? 14 : 180, HX1 = compact ? W - 14 : 910;  // house walls
-  const CARD_W = 176, CARD_H = 88;        // hover-card size (was the always-on card)
+  const CARD_W = 176, CARD_H = 106;       // hover-card size (was the always-on card)
   const mainKey = (H.main_floor && floorNames.includes(H.main_floor))
     ? H.main_floor : floorNames[Math.floor(floorNames.length / 2)];
 
@@ -2166,7 +2284,7 @@ safely('house map', function() {
   const mainFloor = FLOORS.find(f => f.key === mainKey);
   const MAIN = { x: compact ? (HX0 + HX1) / 2 : 545, y: (mainFloor.y0 + mainFloor.y1) / 2 };
   const NET = { x: compact ? 80 : 88, y: (compact ? Math.max(groundY, houseBottom) : groundY) + 52 };
-  const totalH = Math.max(houseBottom + 35, NET.y + 44);
+  const totalH = Math.max(houseBottom + 35, NET.y + 70);
   const netUp = DATA.current_status !== 'down';
 
   const wifiIcon = (cx, cy, scale) => `
@@ -2249,8 +2367,14 @@ safely('house map', function() {
       <rect class="bar-track" x="${x0 + 14}" y="${y0 + 63}" width="${barW}" height="4" rx="2"/>
       ${pctv != null ? `<rect class="bar-fill" x="${x0 + 14}" y="${y0 + 63}" width="${Math.min(fillW, barW)}" height="4" rx="2"/>` : ''}
       <text class="card-stats" x="${x0 + 14}" y="${y0 + 80}">24h uptime ${fmtPct(pctv)}</text>
+      <line class="card-div" x1="${x0 + 14}" y1="${y0 + 87}" x2="${x0 + w - 14}" y2="${y0 + 87}"/>
+      <text class="card-foot" x="${x0 + 14}" y="${y0 + 99}" data-checkfoot="1" data-fmt="mid"
+        data-cmd="${methodCmd(opts.method)}" data-freq="15"${opts.last_check ? ` data-ts="${opts.last_check}"` : ''}></text>
     </g>`;
   }
+  // how the router was reached on its last check — this doubles as the
+  // plain-language decoder for "Online · silent" (it literally says "arp")
+  function methodCmd(m) { return m === 'tcp' ? 'tcp 80/443' : m === 'arp' ? 'arp' : 'ping'; }
 
   function pill(x, y, opts, hcId) {
     const label = pillLabel(opts.name);
@@ -2343,8 +2467,9 @@ safely('house map', function() {
     svg += `</g>`;
   }
   const lastSpeed = (DATA.speed_series || []).slice(-1)[0];
+  const CHK = DATA.checks || {};
   svg += `<g class="net-node ${netUp ? 'up' : 'down'}">`;
-  svg += `<rect class="net-box" x="${NET.x - 62}" y="${NET.y - 30}" width="124" height="60" rx="10"/>`;
+  svg += `<rect class="net-box" x="${NET.x - 62}" y="${NET.y - 30}" width="124" height="84" rx="10"/>`;
   svg += `<circle class="status-dot-svg" cx="${NET.x - 46}" cy="${NET.y - 13}" r="4"/>`;
   svg += `<text class="net-label" x="${NET.x - 36}" y="${NET.y - 9}">Internet</text>`;
   svg += `<text class="net-stat" x="${NET.x - 46}" y="${NET.y + 8}">${
@@ -2354,6 +2479,12 @@ safely('house map', function() {
   } else if (!netUp) {
     svg += `<text class="net-stat" x="${NET.x - 46}" y="${NET.y + 22}">check the ISP</text>`;
   }
+  // cadence lines: the latency above is 15s-fresh but the speed figures can
+  // be up to 30min old — worth saying so right on the node
+  svg += `<text class="net-foot" x="${NET.x - 46}" y="${NET.y + 36}" data-checkfoot="1" data-fmt="min"
+    data-cmd="ping" data-freq="15"${CHK.ping ? ` data-ts="${CHK.ping}"` : ''}></text>`;
+  svg += `<text class="net-foot" x="${NET.x - 46}" y="${NET.y + 48}" data-checkfoot="1" data-fmt="min"
+    data-cmd="speedtest" data-freq="1800"${CHK.speed ? ` data-ts="${CHK.speed}"` : ''}></text>`;
   svg += `</g>`;
 
   // wi-fi coverage bubbles behind every node — an offline AP reads as a
@@ -2403,7 +2534,8 @@ safely('house map', function() {
   });
   if (gw) {
     const opts = { main: true, name: 'Main Router', ip: gw.ip,
-                   status: gw.status, uptime_pct: gw.uptime_pct, avg_latency: gw.avg_latency };
+                   status: gw.status, uptime_pct: gw.uptime_pct, avg_latency: gw.avg_latency,
+                   last_check: gw.last_check };
     svg += pill(MAIN.x, MAIN.y, opts, 'hc-main');
     hcs.push(hovercard(MAIN, opts, 'hc-main'));
   }
@@ -2411,6 +2543,9 @@ safely('house map', function() {
 
   svg += `</svg>`;
   wrap.innerHTML = svg;
+  // the SVG cadence footers were just (re)created empty — fill them now
+  // rather than waiting for the next 10s tick
+  tickCheckFoots();
 
   // hover on desktop, tap to toggle on touch
   wrap.querySelectorAll('.pillgrp').forEach(g => {

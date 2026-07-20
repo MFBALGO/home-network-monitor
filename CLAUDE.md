@@ -117,7 +117,15 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   set: stat cards with GOOD/FAIR/HIGH rating badges (JS `THRESHOLDS`
   defaults, overridable via config.json `thresholds`; the good/fair
   legend lives in the badge's hover tooltip, not on the card face;
-  cards go 2-up under 480px); an architectural SVG house
+  cards go 2-up under 480px); check-cadence footers on every stat/chart
+  card, router hover card, and the internet node (command · age ·
+  frequency, e.g. "ping · 6s ago · every 15s"; `[data-checkfoot]`
+  elements re-ticked every 10s client-side so ages stay honest between
+  60s regens, amber when a check runs >2× its cadence — frequencies are
+  hardcoded in the JS mirroring monitor.py's *_INTERVAL_SEC constants,
+  update both together; router footers show the live per-router method
+  from router_pings.method, which doubles as the "Online · silent"
+  decoder); an architectural SVG house
   map — section-drawing style (flat roof slab, street-level datum line
   with elevation marker, hatched earth below), an "Internet" status node
   buried as a fiber line that rises into the main router (live latency +

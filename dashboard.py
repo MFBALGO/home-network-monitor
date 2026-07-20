@@ -984,7 +984,10 @@ def build_html(data):
     background: radial-gradient(60% 100% at 50% 0%, var(--accent-soft), transparent 72%); }
   .topline { position:fixed; top:0; left:0; right:0; height:2px; z-index:5;
     background: linear-gradient(90deg, transparent, var(--accent) 25%, var(--accent) 75%, transparent); opacity:.7; }
-  .wrap { padding: 34px 24px 60px; max-width: 1220px; margin: 0 auto; position:relative; z-index:1; }
+  /* 1560 (was 1220): on modern wide monitors the old cap left a third of
+     the screen empty and crushed the 3-up chart row to ~370px each.
+     Content is still capped — full-bleed dashboards get unreadable. */
+  .wrap { padding: 34px 24px 60px; max-width: 1560px; margin: 0 auto; position:relative; z-index:1; }
 
   .topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom: 26px; gap: 16px; flex-wrap: wrap; }
   .brand { display:flex; align-items:center; gap:14px; }
@@ -1033,6 +1036,10 @@ def build_html(data):
   .card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
   .card-head h3 { margin:0; }
   @media (min-width: 940px) { .card-hero { grid-column: span 2; } }
+  /* wide screens: auto-fit would cut 6+ narrow columns and leave a ragged
+     4-empty-cell second row (hero spans 2, so 7 cards fill exactly 8
+     slots) — a fixed 4-up grid gives two full rows instead */
+  @media (min-width: 1280px) { .grid { grid-template-columns: repeat(4, 1fr); } }
   .stat-row { display:flex; align-items:flex-end; justify-content:space-between; gap: 10px; }
   .stat-value { font-size: 29px; font-weight: 600; letter-spacing: -.01em; line-height:1;
     font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -1240,7 +1247,7 @@ def build_html(data):
   .diag-crit .diag-head { color: var(--status-critical); }
 
   /* ---------- house map ---------- */
-  .house-svg { display:block; width:100%; max-width: 860px; margin: 0 auto; height:auto; }
+  .house-svg { display:block; width:100%; max-width: 960px; margin: 0 auto; height:auto; }
   .house-svg .wall { fill: var(--scene-wall); stroke: var(--baseline); stroke-width: 1.5; }
   .house-svg .roof { fill: var(--scene-roof); stroke: var(--baseline); stroke-width: 1.5; stroke-linejoin: round; }
   .house-svg .basement-band { fill: var(--grid); opacity: 0.32; }

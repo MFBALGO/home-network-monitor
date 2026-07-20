@@ -1104,6 +1104,7 @@ def build_html(data):
   .chart-card + .chart-card { margin-top: 12px; }
   /* two-up responsive grid: two charts per row on wide screens, one on phones */
   .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+  .chart-card + .chart-grid { margin-top: 12px; }  /* full-width card above a chart pair */
   .chart-grid > .chart-card { margin-top: 0; }
   /* fixed-height wrapper so maintainAspectRatio:false charts stay compact */
   .chart-box { position: relative; width: 100%; height: 168px; }
@@ -1501,21 +1502,14 @@ def build_html(data):
         <button data-range="168" class="active">7d</button>
       </div>
     </div>
+    <div class="chart-card">
+      <div class="chart-label">Speed test (Mbps)</div>
+      <div class="chart-box"><canvas id="speedChart"></canvas></div>
+      <div id="speedEmpty" class="empty" style="display:none">No speed test data yet — install a speed test tool (see README) and it will appear here automatically.</div>
+      <div id="speedFailNote" class="stat-sub" style="display:none"></div>
+      <div class="check-foot" id="cfSpeed"></div>
+    </div>
     <div class="chart-grid">
-      <div class="chart-card">
-        <div class="chart-label">Speed test (Mbps)</div>
-        <div class="chart-box"><canvas id="speedChart"></canvas></div>
-        <div id="speedEmpty" class="empty" style="display:none">No speed test data yet — install a speed test tool (see README) and it will appear here automatically.</div>
-        <div id="speedFailNote" class="stat-sub" style="display:none"></div>
-        <div class="check-foot" id="cfSpeed"></div>
-      </div>
-      <div class="chart-card">
-        <div class="chart-label">Wi-Fi signal (dBm, higher is better)</div>
-        <div class="chart-box sm"><canvas id="wifiChart"></canvas></div>
-        <div id="wifiEmpty" class="empty" style="display:none">No Wi-Fi signal data yet.</div>
-        <div id="wifiAdvice" class="stat-sub" style="display:none"></div>
-        <div class="check-foot" id="cfWifi"></div>
-      </div>
       <div class="chart-card">
         <div class="chart-label" style="display:flex; align-items:center; gap:8px;">Latency under load (ms)
           <span class="rating" id="rateBufferbloat"></span></div>
@@ -1523,6 +1517,13 @@ def build_html(data):
         <div id="loadedLatencyEmpty" class="empty" style="display:none">No latency-under-load data yet — it needs the official Ookla speedtest CLI (see README) and appears after the next test.</div>
         <div id="bufferbloatHint" class="stat-sub" style="display:none"></div>
         <div class="check-foot" id="cfBufferbloat"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-label">Wi-Fi signal (dBm, higher is better)</div>
+        <div class="chart-box sm"><canvas id="wifiChart"></canvas></div>
+        <div id="wifiEmpty" class="empty" style="display:none">No Wi-Fi signal data yet.</div>
+        <div id="wifiAdvice" class="stat-sub" style="display:none"></div>
+        <div class="check-foot" id="cfWifi"></div>
       </div>
     </div>
   </section>

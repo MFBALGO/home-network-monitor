@@ -243,6 +243,11 @@ def main():
         "ALTER TABLE speedtests ADD COLUMN packet_loss_pct REAL",
         "ALTER TABLE wifi ADD COLUMN bssid TEXT",
         "ALTER TABLE wifi ADD COLUMN band TEXT",
+        # ping bursts / per-resolver DNS / flight-recorder evidence
+        "ALTER TABLE pings ADD COLUMN sent INTEGER",
+        "ALTER TABLE pings ADD COLUMN received INTEGER",
+        "ALTER TABLE dns_checks ADD COLUMN resolver TEXT",
+        "ALTER TABLE events ADD COLUMN evidence TEXT",
     ):
         try:
             conn.execute(migration)
@@ -273,16 +278,40 @@ def main():
             hop_ips TEXT, double_nat INTEGER, cgnat INTEGER, error TEXT
         )"""
     )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS blips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, end_ts TEXT NOT NULL,
+            target_class TEXT NOT NULL, failed_checks INTEGER NOT NULL
+        )"""
+    )
     conn.commit()
 
-    pings = q(conn, "SELECT ts, target, target_type, success, latency_ms FROM pings WHERE ts >= ? ORDER BY ts", (since,))
-    events = q(conn, "SELECT start_ts, end_ts, kind, scope, note, router_name FROM events WHERE start_ts >= ? ORDER BY start_ts DESC", (since,))
+    pings = q(conn, "SELECT ts, target, target_type, success, latency_ms, sent, received FROM pings WHERE ts >= ? ORDER BY ts", (since,))
+    events = q(conn, "SELECT start_ts, end_ts, kind, scope, note, router_name, evidence FROM events WHERE start_ts >= ? ORDER BY start_ts DESC", (since,))
     speedtests = q(conn, "SELECT ts, download_mbps, upload_mbps, ping_ms, error,"
                    " jitter_ms, loaded_latency_down_ms, loaded_latency_up_ms, packet_loss_pct"
                    " FROM speedtests WHERE ts >= ? ORDER BY ts", (since,))
     wifi = q(conn, "SELECT ts, ssid, rssi_dbm, noise_dbm, channel, tx_rate_mbps, band FROM wifi WHERE ts >= ? ORDER BY ts", (since,))
     router_pings = q(conn, "SELECT ts, name, ip, success, latency_ms, method FROM router_pings WHERE ts >= ? ORDER BY ts", (since,))
-    dns_checks = q(conn, "SELECT ts, domain, success, latency_ms FROM dns_checks WHERE ts >= ? ORDER BY ts", (since,))
+    dns_checks_all = q(conn, "SELECT ts, domain, success, latency_ms, resolver FROM dns_checks WHERE ts >= ? ORDER BY ts", (since,))
+    # The system-resolver rows are "the DNS every app actually experiences"
+    # — they alone feed the chart/24h stats so history stays comparable.
+    # Direct per-resolver rows power the resolver-status line on the card.
+    dns_checks = [c for c in dns_checks_all if c["resolver"] in (None, "system")]
+    resolver_status = {}
+    dns_cutoff_1h = iso(datetime.now(timezone.utc) - timedelta(hours=1))
+    for c in dns_checks_all:
+        r = c["resolver"]
+        if r in (None, "system"):
+            continue
+        st = resolver_status.setdefault(r, {"ok": None, "ms": None, "ts": None,
+                                            "fails_1h": 0, "checks_1h": 0})
+        st["ok"], st["ms"], st["ts"] = bool(c["success"]), c["latency_ms"], c["ts"]
+        if c["ts"] >= dns_cutoff_1h:
+            st["checks_1h"] += 1
+            if not c["success"]:
+                st["fails_1h"] += 1
+    blips = q(conn, "SELECT ts, end_ts, target_class, failed_checks FROM blips WHERE ts >= ? ORDER BY ts", (since,))
 
     def ip_key(d):
         # numeric sort, not lexical ("...100.2" should come before "...100.153")
@@ -412,6 +441,14 @@ def main():
             "avg_latency": round(sum(g24_lat) / len(g24_lat), 1) if g24_lat else None,
         }
 
+    # Per-PACKET loss when the row has burst counts (sent/received), falling
+    # back to whole-check granularity for pre-burst history. A check that
+    # lost 1 packet of 3 used to be indistinguishable from a perfect one.
+    def pkt_counts(p):
+        if p.get("sent"):
+            return p["sent"], (p["received"] or 0)
+        return 1, (1 if p["success"] else 0)
+
     def window_stats(hours, offset_hours=0):
         end = now - timedelta(hours=offset_hours)
         start = end - timedelta(hours=hours)
@@ -420,10 +457,17 @@ def main():
             return {"uptime_pct": None, "avg_latency": None, "loss_pct": None, "count": 0}
         successes = [p for p in w if p["success"]]
         latencies = [p["latency_ms"] for p in successes if p["latency_ms"] is not None]
+        # uptime = check-level reachability ("could we reach the internet");
+        # loss = packet-level (burst rows), the number that explains stutter
+        w_sent = w_recv = 0
+        for p in w:
+            s, r = pkt_counts(p)
+            w_sent += s
+            w_recv += r
         return {
             "uptime_pct": round(100.0 * len(successes) / len(w), 2),
             "avg_latency": round(sum(latencies) / len(latencies), 1) if latencies else None,
-            "loss_pct": round(100.0 * (1 - len(successes) / len(w)), 2),
+            "loss_pct": round(100.0 * (1 - w_recv / w_sent), 2) if w_sent else None,
             "count": len(w),
         }
 
@@ -474,6 +518,7 @@ def main():
 
     outage_events = [e for e in events if e["kind"] == "outage"]
     degraded_events = [e for e in events if e["kind"] == "degraded"]
+    instability_events = [e for e in events if e["kind"] == "instability"]
     ip_change_events = [e for e in events if e["kind"] == "ip_change"]
     new_device_events = [e for e in events if e["kind"] == "new_device"]
     wifi_roam_events = [e for e in events if e["kind"] == "wifi_roam"]
@@ -614,8 +659,12 @@ def main():
     buckets = {}
     for p in external:
         k = bucket_key(p["ts"])
-        b = buckets.setdefault(k, {"latencies": [], "total": 0, "success": 0, "by_target": {}})
+        b = buckets.setdefault(k, {"latencies": [], "total": 0, "success": 0,
+                                   "sent": 0, "recv": 0, "by_target": {}})
         b["total"] += 1
+        s, r = pkt_counts(p)
+        b["sent"] += s
+        b["recv"] += r
         if p["success"]:
             b["success"] += 1
             if p["latency_ms"] is not None:
@@ -654,7 +703,7 @@ def main():
     for k in full_keys:
         b = buckets.get(k)
         avg_lat = round(sum(b["latencies"]) / len(b["latencies"]), 1) if b and b["latencies"] else None
-        loss = round(100.0 * (1 - b["success"] / b["total"]), 1) if b and b["total"] else None
+        loss = round(100.0 * (1 - b["recv"] / b["sent"]), 1) if b and b["sent"] else None
         jit = None
         if b:
             diffs = []
@@ -694,6 +743,21 @@ def main():
         and "no speed test tool installed" not in s["error"]
     ]
 
+    def parse_evidence(e):
+        """events.evidence is JSON written by the monitor's flight recorder;
+        pass it through parsed (or None) so the JS never eval's anything."""
+        raw = e.get("evidence")
+        if not raw:
+            return None
+        try:
+            ev = json.loads(raw)
+            return ev if isinstance(ev, dict) and "skipped" not in ev else None
+        except (ValueError, TypeError):
+            return None
+
+    blips_cutoff_24h = iso(now - timedelta(hours=24))
+    blips_24h = sum(1 for b in blips if b["ts"] >= blips_cutoff_24h)
+
     data = {
         "generated_at": now.isoformat(),
         "version": __version__,
@@ -706,15 +770,27 @@ def main():
         "sparkline": sparkline,
         "outage_events": [
             {"start": e["start_ts"], "end": e["end_ts"], "scope": e["scope"], "note": e["note"],
-             "router_name": e.get("router_name"),
+             "router_name": e.get("router_name"), "evidence": parse_evidence(e),
              "duration": fmt_duration(e["start_ts"], e["end_ts"]), "ongoing": e["end_ts"] is None}
             for e in outage_events
         ],
         "degraded_events": [
             {"start": e["start_ts"], "end": e["end_ts"], "note": e["note"],
+             "evidence": parse_evidence(e),
              "duration": fmt_duration(e["start_ts"], e["end_ts"]), "ongoing": e["end_ts"] is None}
             for e in degraded_events
         ],
+        "instability_events": [
+            {"start": e["start_ts"], "end": e["end_ts"], "note": e["note"],
+             "duration": fmt_duration(e["start_ts"], e["end_ts"]), "ongoing": e["end_ts"] is None}
+            for e in instability_events
+        ],
+        # micro-outages: too short for the events log, charted as timeline
+        # ticks + a 24h counter (their absence is itself a good sign)
+        "blips": [{"t": b["ts"], "end": b["end_ts"], "cls": b["target_class"],
+                   "checks": b["failed_checks"]} for b in blips],
+        "blips_24h": blips_24h,
+        "resolver_status": resolver_status,
         "ip_change_events": [
             {"start": e["start_ts"], "note": e["note"]}
             for e in ip_change_events
@@ -1216,6 +1292,22 @@ def build_html(data):
   .timeline-svg .tl-nowlab { fill: var(--accent); font-size:9px; font-weight:700; }
   .timeline-svg .tl-ev { filter: drop-shadow(0 0 3px currentColor); }
   .timeline-empty { padding:14px 2px; }
+  /* flight-recorder evidence: toggle button in the detail cell + a
+     collapsed full-width row rendering the snapshot */
+  .ev-btn { font-family: var(--font-mono); font-size: 10px; padding: 1px 7px; margin-left: 7px;
+    border-radius: 5px; border: 1px solid var(--border); background: var(--surface-1);
+    color: var(--accent); cursor: pointer; }
+  .ev-btn:hover { border-color: var(--accent); }
+  .ev-row td { background: var(--surface-1); border-left: 3px solid var(--border); }
+  .ev-body { font-family: var(--font-mono); font-size: 11px; line-height: 1.9; color: var(--text-secondary);
+    padding: 4px 2px; }
+  .ev-body .ev-k { color: var(--muted); font-weight: 700; text-transform: uppercase; font-size: 9.5px;
+    letter-spacing: .1em; margin-right: 7px; }
+  .ev-body .ev-ok { color: var(--status-good); }
+  .ev-body .ev-bad { color: var(--status-critical); }
+  .ev-body .ev-note { color: var(--muted); font-size: 10px; }
+  .ev-trace { margin: 3px 0 0; padding: 7px 10px; background: var(--surface-2); border-radius: 6px;
+    overflow-x: auto; font-size: 10.5px; line-height: 1.55; color: var(--text-secondary); }
 
   .outage-filters { display:flex; gap:6px; flex-wrap:wrap; margin:18px 0 12px; }
   .ofilter { border:1px solid var(--border); background:var(--surface-1); color:var(--muted); font-family:var(--font-mono);
@@ -1701,8 +1793,25 @@ safely('speed card', function() {
   }
 });
 if (DATA.dns_24h && DATA.dns_24h.checks) {
-  document.getElementById('dnsSub').textContent = DATA.dns_24h.failures
+  // sub-line: system-resolver health, then the direct per-resolver verdict
+  // (router DNS proxy vs 1.1.1.1 vs 8.8.8.8 — queried separately, so
+  // "router DNS ✗" while the publics answer = reboot the router, not the ISP)
+  let sub = DATA.dns_24h.failures
     ? DATA.dns_24h.failures + ' failed lookups' : 'all lookups succeeded';
+  const rs = DATA.resolver_status || {};
+  const names = Object.keys(rs);
+  if (names.length) {
+    const label = n => n === 'gateway' ? 'router' : n;
+    const bad = names.filter(n => rs[n] && rs[n].ok === false);
+    sub += bad.length ? ' · ' + bad.map(n => label(n) + ' DNS ✗').join(' · ')
+                      : ' · ' + names.length + ' resolvers ✓';
+    const el = document.getElementById('dnsSub');
+    el.title = names.map(n => label(n) + ': ' + (rs[n].ok ? (rs[n].ms != null ? rs[n].ms + 'ms' : 'ok') : 'FAILING')
+      + (rs[n].fails_1h ? ` (${rs[n].fails_1h}/${rs[n].checks_1h} failed last hour)` : '')).join(' · ');
+    el.textContent = sub;
+  } else {
+    document.getElementById('dnsSub').textContent = sub;
+  }
 }
 setStat('jitter24h', DATA.jitter_24h, 'ms');
 
@@ -2019,7 +2128,16 @@ safely('diagnosis banner', function() {
         action: 'Might be a blip — if this banner is still here in a few minutes, power-cycle ' + (softDown.length === 1 ? 'it' : 'them') + '.' });
     }
   }
-  // 7. Degraded: up, but measurably worse than the thresholds.
+  // 7. Flapping: repeated micro-drops, none long enough to be an outage.
+  //    Feels like "the internet keeps hiccuping" and used to be invisible.
+  const flap = ongoing('instability_events')[0];
+  if (flap) {
+    matched.push({ cls: 'diag-serious',
+      head: 'The connection is flapping — repeated brief drops in the last hour.',
+      action: 'Each drop is seconds long, but together they point at an unstable line/modem. The blip log below is exactly the evidence ISPs ask for.',
+      chip: 'flapping for ' + durTxt(flap) });
+  }
+  // 8. Degraded: up, but measurably worse than the thresholds.
   const degr = ongoing('degraded_events')[0];
   if (degr) {
     const parts = [];
@@ -2032,7 +2150,7 @@ safely('diagnosis banner', function() {
       action: 'If this keeps happening, the report below is evidence for your ISP.',
       chip: 'for ' + durTxt(degr) });
   }
-  // 8. All clear.
+  // 9. All clear.
   if (!matched.length) {
     if ((DATA.stats_24h || {}).uptime_pct == null) return;  // brand-new install, nothing to say yet
     matched.push({ cls: 'diag-ok',
@@ -2112,7 +2230,7 @@ safely('outages log', function() {
   // classify every event once: category, display label, colors, geometry
   const TL_COLOR = { outage: 'var(--status-critical)', dns: 'var(--status-serious)',
     slow: 'var(--status-warning)', device: 'var(--status-good)', ip: 'var(--series-blue)',
-    paused: 'var(--muted)', wifi: 'var(--series-blue)' };
+    paused: 'var(--muted)', wifi: 'var(--series-blue)', flap: 'var(--status-serious)' };
   function classify(e) {
     let cat, label, badgeClass, rowClass, point = false;
     if (e.kind === 'outage' && e.scope === 'gateway') { cat='outage'; label='Gateway down'; badgeClass='badge-gateway'; rowClass='event-gateway'; }
@@ -2120,6 +2238,7 @@ safely('outages log', function() {
     else if (e.kind === 'outage' && e.scope === 'dns') { cat='dns'; label='DNS failure'; badgeClass='badge-dns'; rowClass='event-dns'; }
     else if (e.kind === 'outage') { cat='outage'; label='Internet down'; badgeClass='badge-internet'; rowClass='event-internet'; }
     else if (e.kind === 'degraded') { cat='slow'; label='Slow / degraded'; badgeClass='badge-degraded'; rowClass='event-degraded'; }
+    else if (e.kind === 'instability') { cat='flap'; label='Flapping'; badgeClass='badge-degraded'; rowClass='event-degraded'; }
     else if (e.kind === 'new_device') { cat='device'; label='New device'; badgeClass='badge-newdevice'; rowClass='event-newdevice'; point=true; }
     else if (e.kind === 'wifi_roam') { cat='wifi'; label='Wi-Fi roamed'; badgeClass='badge-ipchange'; rowClass='event-ipchange'; point=true; }
     else if (e.kind === 'gap') { cat='paused'; label='Monitoring paused'; badgeClass='badge-gap'; rowClass='event-gap'; }
@@ -2132,6 +2251,7 @@ safely('outages log', function() {
   const allEvents = [
     ...DATA.outage_events.map(e => ({...e, kind: 'outage'})),
     ...DATA.degraded_events.map(e => ({...e, kind: 'degraded', scope: 'internet'})),
+    ...(DATA.instability_events || []).map(e => ({...e, kind: 'instability', scope: 'internet'})),
     ...DATA.ip_change_events.map(e => ({...e, kind: 'ip_change', scope: 'internet', ongoing: false, duration: '—'})),
     ...(DATA.new_device_events || []).map(e => ({...e, kind: 'new_device', scope: 'lan', ongoing: false, duration: '—'})),
     ...(DATA.wifi_roam_events || []).map(e => ({...e, kind: 'wifi_roam', scope: 'lan', ongoing: false, duration: '—'})),
@@ -2157,6 +2277,7 @@ safely('outages log', function() {
   let worst = null, worstN = 0;
   Object.keys(tally).forEach(k => { if (tally[k] > worstN) { worst = k; worstN = tally[k]; } });
 
+  const blips = DATA.blips || [];
   const chips = [
     { k: 'Outages · 7d', v: String(hardDown.length), s: hardDown.length ? 'reachability failures' : 'none — all clear',
       cls: hardDown.length ? 'bad' : 'good' },
@@ -2164,6 +2285,11 @@ safely('outages log', function() {
     { k: 'Longest outage', v: longest ? fmtDur(longest) : '—', s: 'single worst event', cls: longest ? 'warn' : 'good' },
     { k: 'Most affected', v: worst || '—', s: worst ? worstN + (worstN === 1 ? ' outage' : ' outages') : (slowCount ? slowCount + ' slow spells' : 'nothing'),
       cls: worst ? 'warn' : 'good' },
+    // micro-drops: recovered before the outage threshold, so they appear
+    // nowhere else — yet frequent blips ARE the unstable-line signature
+    { k: 'Blips · 7d', v: String(blips.length),
+      s: blips.length ? (DATA.blips_24h || 0) + ' in last 24h — drops too brief to be outages' : 'no micro-drops either',
+      cls: blips.length ? 'warn' : 'good' },
   ];
   document.getElementById('outageSummary').innerHTML = chips.map(c =>
     `<div class="osum ${c.cls}"><div class="k">${c.k}</div><div class="v">${escapeHtml(c.v)}</div><div class="s">${escapeHtml(c.s)}</div></div>`
@@ -2200,6 +2326,13 @@ safely('outages log', function() {
     const title = `${e.label} · ${new Date(e.startMs).toLocaleString()}`;
     svg += `<g fill="${e.tlColor}" style="color:${e.tlColor}"><rect class="tl-ev" x="${(x - 1).toFixed(1)}" y="${TOP + 2}" width="2" height="${TRACK_H - 4}"/><circle class="tl-ev" cx="${x.toFixed(1)}" cy="${TOP - 1}" r="3"/><title>${escapeHtml(title)}</title></g>`;
   });
+  // blips: short amber ticks hugging the bottom edge of the track (point
+  // events already own the top edge). One tick per micro-drop.
+  blips.filter(b => Date.parse(b.t) >= WIN_START).forEach(b => {
+    const x = xFor(Date.parse(b.t));
+    const title = `Blip · ${new Date(Date.parse(b.t)).toLocaleString()} · ${b.checks} failed check${b.checks === 1 ? '' : 's'} (${b.cls})`;
+    svg += `<rect class="tl-ev" x="${(x - 1).toFixed(1)}" y="${BOT - 9}" width="2" height="8" fill="var(--status-warning)" style="color:var(--status-warning)" opacity="0.9"><title>${escapeHtml(title)}</title></rect>`;
+  });
   // "now" marker
   svg += `<line class="tl-now" x1="${RIGHT}" y1="${TOP - 6}" x2="${RIGHT}" y2="${BOT + 4}"/>`;
   svg += `<text class="tl-nowlab" x="${RIGHT}" y="${TOP - 9}" text-anchor="end">NOW</text>`;
@@ -2211,13 +2344,14 @@ safely('outages log', function() {
 
   // timeline colour legend
   const legendKeys = [['Down', 'var(--status-critical)'], ['DNS', 'var(--status-serious)'],
-    ['Slow', 'var(--status-warning)'], ['New device', 'var(--status-good)'], ['Paused', 'var(--muted)']];
+    ['Slow', 'var(--status-warning)'], ['Blip', 'var(--status-warning)'],
+    ['New device', 'var(--status-good)'], ['Paused', 'var(--muted)']];
   document.getElementById('timelineLegend').innerHTML = legendKeys.map(([n, c]) =>
     `<span class="tlk"><i style="background:${c}"></i>${n}</span>`).join('');
 
   // ---- filter chips ----
-  const CAT_NAMES = { outage: 'Outages', dns: 'DNS', slow: 'Slow', device: 'Devices', ip: 'IP changes', wifi: 'Wi-Fi roams', paused: 'Paused' };
-  const CAT_ORDER = ['outage', 'dns', 'slow', 'device', 'ip', 'wifi', 'paused'];
+  const CAT_NAMES = { outage: 'Outages', dns: 'DNS', slow: 'Slow', flap: 'Flapping', device: 'Devices', ip: 'IP changes', wifi: 'Wi-Fi roams', paused: 'Paused' };
+  const CAT_ORDER = ['outage', 'dns', 'slow', 'flap', 'device', 'ip', 'wifi', 'paused'];
   const counts = {};
   allEvents.forEach(e => { counts[e.cat] = (counts[e.cat] || 0) + 1; });
   const present = CAT_ORDER.filter(c => counts[c]);
@@ -2233,6 +2367,46 @@ safely('outages log', function() {
   const EVENTS_SHOWN = 8;
   let activeCat = 'all';
 
+  // Render a flight-recorder snapshot in plain terms. Every field is
+  // optional — partial captures render whatever they managed to grab.
+  function evidenceHtml(ev) {
+    const parts = [];
+    if (ev.dns) {
+      const line = Object.keys(ev.dns).map(k => {
+        const v = ev.dns[k] || {};
+        const nm = k === 'gateway' ? 'router' : k;
+        return `<span class="${v.ok ? 'ev-ok' : 'ev-bad'}">${escapeHtml(nm)} ${v.ok ? '✓' + (v.ms != null ? ' ' + v.ms + 'ms' : '') : '✗'}</span>`;
+      }).join(' · ');
+      parts.push('<div><span class="ev-k">DNS at failure</span> ' + line + '</div>');
+    }
+    if (ev.gateway_ping) {
+      const g = ev.gateway_ping;
+      const ok = (g.received || 0) > 0;
+      parts.push(`<div><span class="ev-k">Gateway</span> <span class="${ok ? 'ev-ok' : 'ev-bad'}">${g.received}/${g.sent} pings answered${g.avg_ms != null ? ', ' + g.avg_ms + 'ms' : ''}</span></div>`);
+    }
+    if (ev.routers_alive) {
+      const line = Object.keys(ev.routers_alive).map(n => {
+        const s = ev.routers_alive[n];
+        const ok = s === 'ping' || s === 'web' || s === true;
+        return `<span class="${ok ? 'ev-ok' : 'ev-bad'}">${escapeHtml(n)} ${ok ? '✓' : '?'}</span>`;
+      }).join(' · ');
+      parts.push('<div><span class="ev-k">Routers</span> ' + line + ' <span class="ev-note">(? = no quick reply; ARP-only routers always show ?)</span></div>');
+    }
+    if (ev.traceroute && ev.traceroute.length) {
+      // NB: double backslash — this JS lives in a Python string; a lone
+      // backslash-n would reach the browser as a real newline mid-string
+      parts.push('<div><span class="ev-k">Traceroute (where the path stopped)</span><pre class="ev-trace">'
+        + ev.traceroute.map(escapeHtml).join('\\n') + '</pre></div>');
+    } else if (ev.traceroute_error) {
+      parts.push('<div><span class="ev-k">Traceroute</span> <span class="ev-bad">failed to run</span></div>');
+    }
+    const cap = [];
+    if (ev.captured_ts) cap.push('captured ' + new Date(Date.parse(ev.captured_ts)).toLocaleString());
+    if (ev.capture_secs != null) cap.push('took ' + ev.capture_secs + 's');
+    if (cap.length) parts.push('<div class="ev-note">' + escapeHtml(cap.join(' · ')) + '</div>');
+    return '<div class="ev-body">' + (parts.join('') || '<span class="ev-note">snapshot was empty</span>') + '</div>';
+  }
+
   function renderList() {
     const rowsData = (activeCat === 'all' ? allEvents : allEvents.filter(e => e.cat === activeCat)).slice(0, 200);
     if (rowsData.length === 0) {
@@ -2245,12 +2419,18 @@ safely('outages log', function() {
       const badge = `<span class="badge ${e.badgeClass}"><span class="dot"></span>${escapeHtml(e.label)}</span>`;
       const dur = e.ongoing ? '<span class="ongoing-tag">Ongoing</span>' : (e.point ? '—' : escapeHtml(e.duration));
       const hidden = idx >= EVENTS_SHOWN ? ' style="display:none" data-extra="1"' : '';
+      // flight-recorder snapshot (captured in the outage's first seconds):
+      // a toggle in the detail cell + a collapsed full-width row under it
+      const evBtn = e.evidence ? ` <button class="ev-btn" data-evtoggle="${idx}">evidence</button>` : '';
+      const evRow = e.evidence ? `<tr class="ev-row" data-evrow="${idx}"${idx >= EVENTS_SHOWN ? ' data-extra="1"' : ''} style="display:none">
+        <td colspan="4">${evidenceHtml(e.evidence)}</td>
+      </tr>` : '';
       return `<tr class="event-row ${e.rowClass}"${hidden}>
         <td>${new Date(e.startMs).toLocaleString()}</td>
         <td>${badge}</td>
         <td>${dur}</td>
-        <td class="mono">${escapeHtml(e.note)}</td>
-      </tr>`;
+        <td class="mono">${escapeHtml(e.note)}${evBtn}</td>
+      </tr>${evRow}`;
     }).join('');
     const extraCount = rowsData.length - EVENTS_SHOWN;
     const moreBtn = extraCount > 0
@@ -2261,7 +2441,12 @@ safely('outages log', function() {
       let expanded = false;
       document.getElementById('eventsToggle').addEventListener('click', () => {
         expanded = !expanded;
-        outWrap.querySelectorAll('tr[data-extra]').forEach(tr => { tr.style.display = expanded ? '' : 'none'; });
+        outWrap.querySelectorAll('tr[data-extra]').forEach(tr => {
+          // evidence rows stay closed until their own toggle opens them;
+          // collapsing the list closes any that were open
+          if (tr.hasAttribute('data-evrow')) { if (!expanded) tr.style.display = 'none'; return; }
+          tr.style.display = expanded ? '' : 'none';
+        });
         // capped scroll box so expanding 30+ events doesn't balloon the page
         outWrap.querySelector('.list-scroll').classList.toggle('expanded', expanded);
         document.getElementById('eventsToggle').textContent = expanded ? 'Show fewer' : `Show ${extraCount} older`;
@@ -2269,6 +2454,14 @@ safely('outages log', function() {
     }
   }
   renderList();
+
+  // evidence toggles (delegated: rows regenerate on every filter change)
+  outWrap.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.ev-btn');
+    if (!btn) return;
+    const row = outWrap.querySelector(`tr[data-evrow="${btn.dataset.evtoggle}"]`);
+    if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+  });
 
   filtersWrap.addEventListener('click', (ev) => {
     const btn = ev.target.closest('.ofilter');

@@ -1028,7 +1028,8 @@ def build_html(data):
   /* the "command deck": house map front and center, stat cards flanking
      it left/right on wide screens. Below 1200px it degrades to map first,
      then cards in the old auto-fit grid (source order = map first). */
-  .deck { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 14px; }
+  .deck { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 14px;
+    margin-bottom: 12px; /* breathing room before the per-router chart */ }
   .deck-map { grid-column: 1 / -1; }
   /* flex-column cards so the cadence footer pins to the bottom when the
      side columns stretch to match the map's height */
@@ -1042,7 +1043,6 @@ def build_html(data):
     .deck-map { grid-column: 2; grid-row: 1 / span 4; }
     .deck-l { grid-column: 1; }
     .deck-r { grid-column: 3; }
-    .deck-tall { grid-row: span 2; }  /* right column has 3 cards to the left's 4 */
   }
   .card { position:relative; background: linear-gradient(180deg, var(--surface-2), var(--surface-1) 58%);
     border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px 15px; box-shadow: var(--shadow); }
@@ -1450,7 +1450,13 @@ def build_html(data):
         <div class="stat-sub">latency stability — lower is steadier (calls/gaming)</div>
         <div class="check-foot" id="cfJitter"></div>
       </div>
-      <div class="card deck-r deck-tall">
+      <div class="card deck-r">
+        <div class="card-head"><h3>Speed · last test</h3><span class="rating" id="rateSpeed"></span></div>
+        <div class="stat-value" id="speedLast">—</div>
+        <div class="stat-sub" id="speedLastSub">Mbps down / up</div>
+        <div class="check-foot" id="cfSpeedCard"></div>
+      </div>
+      <div class="card deck-r">
         <h3>Public IP</h3>
         <div class="stat-value" id="publicIp" style="font-size:19px;">—</div>
         <div class="stat-sub" id="publicIpStable"></div>
@@ -1663,6 +1669,28 @@ setStat('uptime7d', DATA.stats_7d.uptime_pct, '%');
 document.getElementById('loss7d').textContent = DATA.stats_7d.loss_pct != null ? DATA.stats_7d.loss_pct + '% packet loss' : '';
 setStat('avgLatency24h', DATA.stats_24h.avg_latency, 'ms');
 setStat('dnsAvg', DATA.dns_24h ? DATA.dns_24h.avg : null, 'ms');
+safely('speed card', function() {
+  // last successful speed test; the sub-line rates it against the plan
+  // (amber under 80% — same below-plan cutoff as the ISP evidence report)
+  const s = (DATA.speed_series || []).slice(-1)[0];
+  const el = document.getElementById('speedLast'), sub = document.getElementById('speedLastSub');
+  if (!s || s.down == null) { sub.textContent = 'no speed test yet'; return; }
+  el.innerHTML = Math.round(s.down) + '<span class="unit">&#8595;</span> '
+    + (s.up != null ? Math.round(s.up) : '—') + '<span class="unit">&#8593;</span>';
+  const plan = DATA.plan || {};
+  if (plan.down_mbps) {
+    const pct = Math.round(100 * s.down / plan.down_mbps);
+    sub.textContent = pct + '% of the ' + plan.down_mbps + ' Mbps plan';
+    const rEl = document.getElementById('rateSpeed');
+    const lvl = pct >= 90 ? 0 : pct >= 80 ? 1 : 2;
+    rEl.className = 'rating show ' + ['good', 'fair', 'poor'][lvl];
+    rEl.textContent = ['GOOD', 'FAIR', 'LOW'][lvl];
+    rEl.title = 'vs your plan: 90%+ good, 80%+ fair';
+    if (lvl === 2) sub.style.color = 'var(--status-warning)';
+  } else {
+    sub.textContent = 'Mbps down / up';
+  }
+});
 if (DATA.dns_24h && DATA.dns_24h.checks) {
   document.getElementById('dnsSub').textContent = DATA.dns_24h.failures
     ? DATA.dns_24h.failures + ' failed lookups' : 'all lookups succeeded';
@@ -1751,6 +1779,7 @@ safely('check footers', function() {
   setCheckFoot('cfDns',          'dns lookup', C.dns, dns.freq, dns.approx);
   setCheckFoot('cfPublicIp',     'https query', C.public_ip, pip.freq, pip.approx);
   setCheckFoot('cfSpeed',        'ookla speedtest cli', C.speed, spd.freq, spd.approx);
+  setCheckFoot('cfSpeedCard',    'ookla speedtest cli', C.speed, spd.freq, spd.approx);
   setCheckFoot('cfBufferbloat',  'ookla speedtest cli', C.speed, spd.freq, spd.approx);
   setCheckFoot('cfWifi',         C.wifi_cmd || 'wi-fi snapshot', C.wifi, wifi.freq, wifi.approx);
   setCheckFoot('cfDevices',      C.device_cmd || 'device scan', C.devices, dev.freq, dev.approx);

@@ -106,6 +106,13 @@ DNS_TEST_DOMAINS = ["apple.com", "google.com", "cloudflare.com"]
 # admin page on 80/443 even when they're configured to ignore ICMP.
 ROUTER_TCP_PORTS = (80, 443)
 
+# Closed-port liveness probe for routers that ignore ping AND run no web
+# server (old APs/bridges): a live host answers a SYN on a closed port
+# with RST ("connection refused"), which proves it's on the wire RIGHT
+# NOW — unlike the ARP cache, whose entries linger ~20 minutes after a
+# device dies. Port 9 (discard) is essentially never open on home gear.
+ROUTER_PROBE_PORT = 9
+
 # Plain-text "what's my IP" endpoints, tried in order until one works. All
 # three are simple, free, no-signup services widely used for this exact
 # purpose (no request body, no auth, just your IP echoed back as text).
@@ -671,15 +678,53 @@ def tcp_check(ip, ports=ROUTER_TCP_PORTS, timeout_sec=1.5):
     return False, None
 
 
-def arp_alive(ip):
-    """Last-resort liveness check: a host that answers ARP is physically on
-    the network even if it filters ping and has no web ports open (some
-    old APs/bridges are exactly this antisocial). The preceding ping
-    attempt forces an ARP resolution, so a fresh non-incomplete entry
-    means the host answered. Caveat: ARP entries linger for a few minutes
-    after a device actually goes down, so 'down' detection via this
-    method lags by up to ~20 min — still far better than showing a
-    healthy device as permanently offline."""
+def rst_probe(ip, port=ROUTER_PROBE_PORT, timeout_sec=3):
+    """Liveness probe for ping-deaf, portless routers: connect() to a
+    closed port. ConnectionRefusedError means the host sent back an RST —
+    it is alive this instant, and the refusal round-trip is a real latency
+    sample. Timeout / host-unreachable means ARP itself got no answer (or
+    a firewall silently ate the SYN — the caller falls through to the
+    neighbor-state check for that case, so a paranoid-but-alive host
+    can't regress to "down"). Returns (alive, latency_ms).
+    NB the 3s default: Windows retries the SYN a couple of times after an
+    RST before surfacing WSAECONNREFUSED, so a "refused" verdict takes
+    ~2.1s there — a 2s timeout would race it and lose (measured on the
+    live install; unix refusals return in milliseconds)."""
+    t0 = time.perf_counter()
+    try:
+        with socket.create_connection((ip, port), timeout=timeout_sec):
+            pass
+        # port 9 actually open — odd, but an answer is an answer
+        return True, round((time.perf_counter() - t0) * 1000, 3)
+    except ConnectionRefusedError:
+        return True, round((time.perf_counter() - t0) * 1000, 3)
+    except OSError:
+        return False, None
+
+
+def _neighbor_state_windows(ip):
+    """The neighbor-cache STATE for one IP via netsh, lowercased
+    ('reachable', 'stale', 'probe', 'unreachable', ...). The state is
+    what presence can't tell you: 'reachable' means an ARP reply arrived
+    within the last ~30s, while a months-dead device can still SIT in the
+    table with a cached MAC. Returns '' when the IP has no entry at all,
+    None when netsh itself failed (caller falls back to presence)."""
+    try:
+        out = subprocess.run(["netsh", "interface", "ipv4", "show", "neighbors"],
+                             capture_output=True, text=True, timeout=5, **SUBPROCESS_EXTRA).stdout
+    except Exception:
+        return None
+    for line in out.splitlines():
+        m = re.match(rf"^\s*{re.escape(ip)}\s+\S+\s+(\S+)\s*$", line)
+        if m:
+            return m.group(1).strip().lower()
+    return ""
+
+
+def _arp_presence(ip):
+    """The old presence-only check: a valid MAC in the ARP table. Kept as
+    the unix path and the Windows fallback — its entries linger ~20 min
+    after a device dies, so it says "was here recently", not "is here"."""
     try:
         if IS_WINDOWS:
             # `arp -a <ip>` prints the entry (dash-separated MAC) or an
@@ -693,15 +738,59 @@ def arp_alive(ip):
         return False
 
 
+def arp_alive(ip):
+    """Last-resort liveness check: does the host answer ARP? A host that
+    does is physically on the network even if it filters ping, has no web
+    ports, and drops closed-port SYNs (this network's Buffalo APs do all
+    three). The preceding ping/TCP/RST attempts each forced an ARP
+    resolution, so the OS has JUST tried to verify this neighbor.
+
+    Windows: read the neighbor STATE instead of trusting cache presence —
+    'reachable' = answered an ARP probe seconds ago (alive), while a dead
+    device's entry decays Stale→Probe→Unreachable within ~10s of our
+    traffic. This cuts silent-router down-detection from ~20 min (cache
+    linger — the old presence check's blind spot) to a couple of check
+    cycles. Transient states (stale/delay/probe = verification in flight)
+    get two short re-reads; if the verdict still hasn't landed — or netsh
+    speaks a language we don't recognize — fall back to the presence
+    check, so this tier can only ever get MORE accurate, never become a
+    new source of false downs. macOS/Linux keep the presence check (BSD
+    arp exposes no state column)."""
+    if IS_WINDOWS:
+        for attempt in range(3):
+            state = _neighbor_state_windows(ip)
+            if state is None:
+                return _arp_presence(ip)          # netsh failed
+            if state in ("", "unreachable", "incomplete"):
+                return False
+            if state in ("reachable", "permanent"):
+                return True
+            if attempt < 2:
+                time.sleep(3)   # stale/delay/probe: NUD verdict lands in seconds
+        return _arp_presence(ip)                   # unresolved (or localized)
+    return _arp_presence(ip)
+
+
 def check_router(ip):
-    """Ping first; then a TCP web-port probe; then ARP liveness.
-    Returns (success, latency_ms, method): 'icmp', 'tcp', or 'arp'."""
+    """Ping first; then a TCP web-port probe; then a closed-port RST
+    probe; then the ARP cache as a last resort. Returns (success,
+    latency_ms, method): 'icmp', 'tcp', 'probe', or 'arp'. 'probe'
+    proves liveness THIS cycle — silent-router down-detection drops from
+    ~20 min (ARP-cache linger) to ~3 checks. 'arp' remains only for
+    hosts whose firewall drops the probe SYN."""
     ok, latency = ping_once(ip)
     if ok:
         return True, latency, "icmp"
     ok, latency = tcp_check(ip)
     if ok:
         return True, latency, "tcp"
+    ok, latency = rst_probe(ip)
+    if ok:
+        # Windows surfaces "refused" only after ~2s of SYN retries, so the
+        # measured time is retry ceremony, not network RTT — recording it
+        # would put a fake 2000ms line on the per-router chart. Unix
+        # refusals return in real round-trip time and are worth keeping.
+        return True, (None if IS_WINDOWS else latency), "probe"
     if arp_alive(ip):
         return True, None, "arp"
     return False, None, "icmp"
@@ -1919,17 +2008,21 @@ def _capture_evidence(conn, event_id, gateway, trigger):
 
         # Which configured routers/APs were alive — "everything but the
         # internet answers" vs "half the LAN is dark" are different faults.
-        # Values: 'ping' / 'web' (= answered TCP but not ping) / 'no-reply'.
-        # ARP-only routers land on 'no-reply' even when up — the tag says
-        # "unverifiable in a hurry", deliberately NOT "down".
+        # Values: 'ping' / 'web' (TCP 80/443) / 'probe' (closed-port RST —
+        # how silent APs prove themselves) / 'no-reply'. 'no-reply' means
+        # "answered nothing in a hurry", deliberately NOT "down".
         routers = {}
         for r in load_routers()[:12]:
             ok, _ms = ping_once(r["ip"], timeout_sec=1)
-            if not ok:
-                ok_tcp, _ = tcp_check(r["ip"], timeout_sec=1)
-                routers[r["name"]] = "web" if ok_tcp else "no-reply"
-            else:
+            if ok:
                 routers[r["name"]] = "ping"
+                continue
+            ok_tcp, _ = tcp_check(r["ip"], timeout_sec=1)
+            if ok_tcp:
+                routers[r["name"]] = "web"
+                continue
+            ok_rst, _ = rst_probe(r["ip"], timeout_sec=1)
+            routers[r["name"]] = "probe" if ok_rst else "no-reply"
         if routers:
             ev["routers_alive"] = routers
 

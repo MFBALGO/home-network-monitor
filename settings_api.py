@@ -260,6 +260,7 @@ def validate_routers(routers, floors=None):
     floor_set = set(floors) if isinstance(floors, list) else set()
 
     seen_names, seen_ips = set(), set()
+    isp_count = 0
     for i, r in enumerate(routers):
         if not isinstance(r, dict):
             errors.append(_err("routers", f"[{i}]", "each entry must be an object"))
@@ -292,8 +293,20 @@ def validate_routers(routers, floors=None):
                 warnings.append(_err("routers", f"[{i}].floor",
                                      f"'{floor}' is not in the floors list - shown unplaced on the house map"))
 
+        # role 'isp' marks the ISP modem/ONT: monitored like any router,
+        # but drawn on the house wall instead of a floor (Settings has a
+        # dedicated section for it). Only one makes topological sense.
+        role = r.get("role")
+        if role is not None:
+            if role != "isp":
+                errors.append(_err("routers", f"[{i}].role", 'only "isp" is supported'))
+            else:
+                isp_count += 1
+                if isp_count > 1:
+                    errors.append(_err("routers", f"[{i}].role", "at most one ISP box"))
+
         for key in r:
-            if key not in ("name", "ip", "floor"):
+            if key not in ("name", "ip", "floor", "role"):
                 warnings.append(_err("routers", f"[{i}].{key}", "unknown field - kept as-is"))
     return errors, warnings
 

@@ -107,11 +107,26 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
     `route print`/`Get-NetRoute` gateway, `Get-NetIPAddress` prefix,
     `netsh wlan` Wi-Fi (% → approx dBm). Every subprocess gets
     CREATE_NO_WINDOW on Windows.
-  - Router liveness 3-tier: ping → TCP 80/443 → ARP (~20min down-lag).
-    `method` column in `router_pings` records icmp/tcp/arp; dashboard
-    shows "Online (web)" for tcp, "Online (silent)" for arp — silent
-    nodes render in a muted sage green (--status-silent) on the map,
-    distinct from the vivid --status-good of ping-answering routers.
+  - Router liveness 4-tier: ping → TCP 80/443 → closed-port RST probe
+    (rst_probe, port 9: a live host refuses the SYN with an RST = fresh
+    proof + a real latency sample; needs timeout ≥3s on Windows, which
+    retries the SYN after an RST so "refused" surfaces at ~2.1s) → ARP.
+    The ARP tier is STATE-AWARE on Windows (netsh neighbor state:
+    'reachable' = answered ARP seconds ago; dead entries decay to
+    unreachable within ~10s of our traffic, cutting silent-router
+    down-detection from ~20min cache-linger to ~2-3 cycles; transient
+    stale/probe states get re-read, unrecognized/localized output falls
+    back to the old presence check) and presence-only on mac/linux.
+    NOTE this network's Buffalo APs DROP closed-port SYNs (stealth), so
+    the RST tier never fires for them — the state-aware ARP tier is
+    what actually detects them; rst_probe earns its keep on gear that
+    refuses (GE230 and the Linksys do). `method` column in
+    `router_pings` records icmp/tcp/probe/arp; dashboard shows
+    "Online · web" for tcp, "Online · silent" for probe AND arp — sage
+    green (--status-silent) on the map. Footers: probe = "rst probe" at
+    router cadence; arp = "arp state" at router cadence on Windows,
+    "arp cache" at device-scan cadence elsewhere (checks.arp_cmd
+    carries the platform).
   - Device scan: nmap `-sn` sweep when installed (checked every cycle),
     else built-in ping sweep, then `arp -an`/`arp -a` (NOT plain `arp -a`
     on mac — reverse-DNS blew the timeout: the old "0 devices" bug), then
@@ -227,7 +242,14 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   committed `.example.json` files show the format; normally written by
   the wizard/settings UI, hot-reloaded — routers ≤15s, devices ≤5min,
   config on next dashboard regen, no restarts):
-  - `routers.json` — [{name, ip, floor}], order = file order. When the
+  - `routers.json` — [{name, ip, floor, role?}], order = file order.
+    `role: "isp"` (at most one; Settings → Routers has a dedicated
+    "Internet box" section for it) marks the ISP modem/ONT: monitored
+    like any router, but the map draws it as a wall-mounted box where
+    the fiber enters — chain internet → ISP box → main router, with the
+    first segment colored by internet reachability and the second by
+    the box's own liveness — instead of a floor pill; it's excluded
+    from floor derivation and gets its own diagnosis-banner wording. When the
     file exists it is AUTHORITATIVE for the dashboard's router list —
     deleted routers must not resurrect from router_pings history (they
     used to); the history-derived fallback only applies when the file

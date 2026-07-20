@@ -594,6 +594,17 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
 
 <div id="tab-routers" style="display:none">
   <div class="card">
+    <h3 style="margin:0 0 4px">Internet box (ISP modem / ONT)</h3>
+    <div class="sub" style="margin-bottom:8px">The box your internet line plugs into,
+      <b>before</b> your own router — often at 192.168.100.1 or 192.168.0.1. Monitoring it
+      splits "my router died" from "the ISP's box died", and it's drawn on the house wall
+      where the line enters, not on a floor. Leave the IP empty if you don't have one
+      (or it's in bridge mode).</div>
+    <div class="row" style="margin-bottom:16px">
+      <input type="text" id="ispName" placeholder="Name (e.g. ISP Box)" style="max-width:190px">
+      <input type="text" id="ispIp" class="mono" placeholder="IP (e.g. 192.168.100.1)" style="max-width:200px">
+    </div>
+    <h3 style="margin:0 0 6px">Routers &amp; access points</h3>
     <table id="rTable"><tr><th>Name</th><th>IP</th><th>Floor</th><th></th></tr></table>
     <div class="row" style="margin-top:10px">
       <button class="small" id="rAdd">+ Add router</button>
@@ -947,9 +958,14 @@ function settingsFloorOptions(sel) {
   return opts;
 }
 function renderRouters() {
+  // the role:'isp' entry lives in its own two fields above the table —
+  // it's monitored like any router but it isn't an AP on a floor
+  const isp = S.routers.find(r => r.role === 'isp');
+  document.getElementById('ispName').value = isp ? (isp.name || '') : '';
+  document.getElementById('ispIp').value = isp ? (isp.ip || '') : '';
   const t = document.getElementById('rTable');
   t.innerHTML = '<tr><th>Name</th><th>IP</th><th>Floor</th><th></th></tr>' +
-    S.routers.map(routerRow).join('');
+    S.routers.filter(r => r.role !== 'isp').map(routerRow).join('');
 }
 function refreshRouterFloorSelects() {
   for (const sel of document.querySelectorAll('.r-floor')) {
@@ -959,6 +975,11 @@ function refreshRouterFloorSelects() {
 }
 function collectRouters() {
   const out = [];
+  const ispIp = document.getElementById('ispIp').value.trim();
+  if (ispIp) {
+    out.push({name: document.getElementById('ispName').value.trim() || 'ISP Box',
+              ip: ispIp, role: 'isp'});
+  }
   for (const tr of document.querySelectorAll('#rTable tr')) {
     const name = tr.querySelector('.r-name');
     if (!name) continue;

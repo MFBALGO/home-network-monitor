@@ -564,7 +564,10 @@ def main():
     for idx, item in enumerate(router_config):
         rname = (item.get("name") or "").strip()
         if rname:
-            router_meta[rname] = {"floor": (item.get("floor") or "").strip() or None, "order": idx}
+            router_meta[rname] = {"floor": (item.get("floor") or "").strip() or None, "order": idx,
+                                  # role 'isp' marks the ISP modem/ONT: monitored like any
+                                  # router but drawn on the house WALL, not a floor
+                                  "role": (item.get("role") or "").strip() or None}
 
     # Deleting a router in Settings must actually remove it from the
     # dashboard: without this filter, any router pinged in the last 7 days
@@ -584,6 +587,7 @@ def main():
         router_summary.append({
             "name": name,
             "floor": meta.get("floor"),
+            "role": meta.get("role"),
             "ip": latest_r["ip"],
             "status": "up" if latest_r["success"] else "down",
             "latency": latest_r["latency_ms"],
@@ -608,6 +612,8 @@ def main():
         # derive from the routers' floor labels, in routers.json order
         seen = set()
         for r in router_summary:
+            if r.get("role") == "isp":
+                continue   # the wall box is not on a floor
             fl = r.get("floor")
             if fl and fl not in seen:
                 seen.add(fl)
@@ -859,6 +865,11 @@ def main():
             # nmap every cycle; same PATH here, so this matches in practice)
             "device_cmd": "nmap sweep + arp" if shutil.which("nmap") else "ping sweep + arp",
             "wifi_cmd": "netsh wlan" if sys.platform == "win32" else "system_profiler",
+            # arp-tier evidence: on Windows the monitor reads the neighbor
+            # STATE (fresh every router cycle); elsewhere it's the lingering
+            # cache, refreshed by the device sweep — footers must not claim
+            # freshness the platform can't deliver
+            "arp_cmd": "arp state" if sys.platform == "win32" else "arp cache",
             # configured cadence (config.json "intervals" over defaults) vs
             # what the data actually shows — the footers prefer measured
             "freq": configured_intervals(site_config),
@@ -1406,6 +1417,8 @@ def build_html(data):
   .house-svg .pillgrp { cursor: pointer; }
   .house-svg .pill-box { fill: var(--surface-1); stroke: currentColor; stroke-width: 1.5; }
   .house-svg .pill-name { fill: var(--text-primary); font-size: 11px; font-weight: 700; }
+  .house-svg .isp-sub { fill: var(--muted); font-size: 9px; font-family: var(--font-mono);
+    text-transform: uppercase; letter-spacing: .1em; }
   /* compact (phone) map: the viewBox shrinks to ~330 units so labels keep
      most of their size; bump the small ones so nothing lands under ~9px.
      Keep .pill-name in sync with the JS pillW() char-width estimate. */
@@ -2113,14 +2126,25 @@ safely('diagnosis banner', function() {
   }
   // 6. One or more access points down (debounced events first, live
   //    router_summary as a softer fallback — that's a single ping sample).
-  const apOuts = byScope('router');
+  //    The ISP box gets its own wording: it's not "a spot with weak
+  //    Wi-Fi", it's the whole house's uplink hardware.
+  const ispName = (((DATA.router_summary || []).find(r => r.role === 'isp')) || {}).name;
+  const routerOuts = byScope('router');
+  const ispOut = ispName ? routerOuts.find(e => e.router_name === ispName) : null;
+  if (ispOut) {
+    matched.push({ cls: 'diag-serious',
+      head: 'The ISP’s box ("' + ispName + '") isn’t responding.',
+      action: 'If the internet is still up it may just be ignoring checks — but if this coincides with drops, power-cycle the ISP box; if it doesn’t come back, that’s a call to the ISP, not a router problem.',
+      chip: 'down for ' + durTxt(ispOut) });
+  }
+  const apOuts = routerOuts.filter(e => e !== ispOut);
   if (apOuts.length) {
     const names = apOuts.map(e => e.router_name || 'a router').join(', ');
     matched.push({ cls: 'diag-serious',
       head: (apOuts.length === 1 ? 'Access point "' + names + '" is down.' : 'Access points down: ' + names + '.'),
       action: 'Power-cycle ' + (apOuts.length === 1 ? 'it' : 'them') + '. Wi-Fi near ' + (apOuts.length === 1 ? 'that spot' : 'those spots') + ' will be weak or dead until then.',
       chip: 'down for ' + durTxt(apOuts[0]) });
-  } else {
+  } else if (!ispOut) {
     const softDown = (DATA.router_summary || []).filter(r => r.status === 'down');
     if (softDown.length) {
       matched.push({ cls: 'diag-warn',
@@ -2387,10 +2411,10 @@ safely('outages log', function() {
     if (ev.routers_alive) {
       const line = Object.keys(ev.routers_alive).map(n => {
         const s = ev.routers_alive[n];
-        const ok = s === 'ping' || s === 'web' || s === true;
+        const ok = s === 'ping' || s === 'web' || s === 'probe' || s === true;
         return `<span class="${ok ? 'ev-ok' : 'ev-bad'}">${escapeHtml(n)} ${ok ? '✓' : '?'}</span>`;
       }).join(' · ');
-      parts.push('<div><span class="ev-k">Routers</span> ' + line + ' <span class="ev-note">(? = no quick reply; ARP-only routers always show ?)</span></div>');
+      parts.push('<div><span class="ev-k">Routers</span> ' + line + ' <span class="ev-note">(? = answered nothing in a hurry — not proof it was down)</span></div>');
     }
     if (ev.traceroute && ev.traceroute.length) {
       // NB: double backslash — this JS lives in a Python string; a lone
@@ -2548,7 +2572,12 @@ if (!DATA.devices || DATA.devices.length === 0) {
 // ---------- house map ----------
 safely('house map', function() {
   const wrap = document.getElementById('houseMapWrap');
-  const routers = (DATA.router_summary || []);
+  // The ISP box (role:'isp' in routers.json) is not an AP on a floor —
+  // topologically it sits BETWEEN the internet and the main router, so it
+  // renders as a utility box on the house wall where the fiber enters,
+  // never as a floor pill.
+  const ispBox = (DATA.router_summary || []).find(r => r.role === 'isp');
+  const routers = (DATA.router_summary || []).filter(r => r.role !== 'isp');
   const gw = DATA.gateway;
   if (!gw && routers.length === 0) {
     wrap.innerHTML = `<div class="empty">No routers configured yet. On the monitor PC, open <a href="http://localhost:8080/setup">the setup wizard</a> (or Settings &rarr; Routers) — or hand-edit <span class="mono">routers.json</span>; changes are picked up within 15 seconds. See the README for the format.</div>`;
@@ -2618,7 +2647,16 @@ safely('house map', function() {
   // house instead. Guarantee enough underground depth for it either way.
   const mainFloor = FLOORS.find(f => f.key === mainKey);
   const MAIN = { x: compact ? (HX0 + HX1) / 2 : 545, y: (mainFloor.y0 + mainFloor.y1) / 2 };
-  const NET = { x: compact ? 80 : 88, y: (compact ? Math.max(groundY, houseBottom) : groundY) + 52 };
+  // Compact + ISP box: push the internet node further down so the wall box
+  // fits between the foundation and the node without covering any pills.
+  const NET = { x: compact ? 80 : 88,
+                y: (compact ? Math.max(groundY, houseBottom) + (ispBox ? 96 : 0) : groundY) + 52 };
+  // The ISP box mounts ON the wall: desktop = straddling the left wall
+  // just above the street datum (where a real ONT/meter hangs); compact =
+  // between the foundation and the internet node.
+  const ISP = ispBox
+    ? (compact ? { x: NET.x, y: houseBottom + 44 } : { x: HX0, y: groundY - 44 })
+    : null;
   const totalH = Math.max(houseBottom + 35, NET.y + 70);
   const netUp = DATA.current_status !== 'down';
 
@@ -2682,10 +2720,12 @@ safely('house map', function() {
     const w = opts.main ? CARD_W + 16 : CARD_W, h = CARD_H;
     const x0 = x - w / 2, y0 = y - h / 2;
     const cls = nodeCls(opts);
-    // 'tcp' = alive via its web port; 'arp' = alive but silent (answers
-    // only ARP — blocks ping, no web admin on standard ports)
+    // 'tcp' = alive via its web port; 'probe' = alive but silent, proven
+    // fresh each cycle by a closed-port RST; 'arp' = alive but silent,
+    // only the lingering ARP cache vouches for it (firewall ate the probe)
     const statusTxt = opts.status === 'up'
-      ? (opts.method === 'tcp' ? 'Online · web' : opts.method === 'arp' ? 'Online · silent' : 'Online')
+      ? (opts.method === 'tcp' ? 'Online · web'
+         : (opts.method === 'probe' || opts.method === 'arp') ? 'Online · silent' : 'Online')
       : 'Offline';
     const pctv = opts.uptime_pct;
     const barW = w - 28;
@@ -2708,19 +2748,26 @@ safely('house map', function() {
     </g>`;
   }
   // how the router was reached on its last check — this doubles as the
-  // plain-language decoder for "Online · silent" (it literally says "arp
-  // cache": the router only shows up in the ARP table, whose evidence
-  // refreshes with the device sweep, not with the 15s router loop)
-  function methodCmd(m) { return m === 'tcp' ? 'tcp 80/443' : m === 'arp' ? 'arp cache' : 'ping'; }
-  // silent (ARP-cache-only) routers get their own muted green so the map
-  // distinguishes "answers me" from "merely present in the ARP table"
+  // plain-language decoder for "Online · silent": "rst probe" = proven
+  // alive this cycle by a closed-port refusal; "arp state" (Windows) =
+  // the neighbor cache confirmed an ARP answer this cycle; "arp cache"
+  // (mac/linux) = only the lingering table, device-sweep freshness
+  function methodCmd(m) {
+    return m === 'tcp' ? 'tcp 80/443' : m === 'probe' ? 'rst probe'
+         : m === 'arp' ? (((DATA.checks || {}).arp_cmd) || 'arp cache') : 'ping';
+  }
+  // silent routers (RST-probe or ARP-cache tier) get their own muted
+  // green so the map distinguishes "answers ping" from "merely alive"
   function nodeCls(opts) {
     if (opts.main) return 'node-main';
     if (opts.status !== 'up') return 'node-down';
-    return opts.method === 'arp' ? 'node-silent' : 'node-up';
+    return (opts.method === 'arp' || opts.method === 'probe') ? 'node-silent' : 'node-up';
   }
   function footEff(opts) {
-    if (opts.method === 'arp') return checkEff('devices');  // evidence cadence, see above
+    // arp-tier on mac/linux: evidence only refreshes with the device
+    // sweep; on Windows the state read is per-cycle, so fall through to
+    // the router cadence like every other method
+    if (opts.method === 'arp' && ((DATA.checks || {}).arp_cmd) !== 'arp state') return checkEff('devices');
     if (opts.main) return checkEff('ping');                 // gateway rides the ping thread
     if (opts.measured) return { freq: opts.measured, approx: true };
     return { freq: ((DATA.checks || {}).freq || {}).router || 15, approx: false };
@@ -2794,7 +2841,38 @@ safely('house map', function() {
 
   // ---- the internet itself: a cloud outside the house, wired to the
   // main router. House green + cloud red = it's the ISP, not your Wi-Fi.
-  if (gw) {
+  // With an ISP box configured the chain is drawn honestly in two hops —
+  // internet → wall box → main router — instead of pretending the fiber
+  // plugs straight into the user's own router.
+  const drawWan = (d, up, slow) => {
+    svg += `<g class="linkgrp ${up ? 'up' : 'down'}">`;
+    svg += `<path class="link-glow" d="${d}"/><path class="link-core" d="${d}"/>`;
+    if (up && !REDUCE_MOTION) {
+      svg += `<circle class="packet" r="3" opacity="0.9"><animateMotion dur="${slow || 2.6}s" repeatCount="indefinite" path="${d}"/></circle>`;
+      svg += `<circle class="packet" r="2.4" opacity="0.7"><animateMotion dur="${slow || 2.6}s" begin="-1.3s" repeatCount="indefinite" path="${d}"/></circle>`;
+    }
+    svg += `</g>`;
+  };
+  if (gw && ISP) {
+    const nodeRight = NET.x + 62;
+    let fiberD;
+    if (!compact) {
+      // buried run from the street node, riser up the OUTSIDE of the wall
+      // into the box bottom
+      fiberD = `M ${nodeRight} ${NET.y} L ${HX0 - 34} ${NET.y} Q ${HX0} ${NET.y} ${HX0} ${NET.y - 34} L ${HX0} ${ISP.y + 24}`;
+    } else {
+      // straight rise from the node top into the box bottom
+      fiberD = `M ${NET.x} ${NET.y - 30} L ${NET.x} ${ISP.y + 24}`;
+    }
+    // segment 1 (street → ISP box) carries internet reachability;
+    // segment 2 (ISP box → main router) carries the box's own liveness —
+    // exactly the split the STC-box monitoring exists to make visible
+    drawWan(fiberD, netUp);
+    const boxEdgeX = compact ? ISP.x : ISP.x + 55;
+    const boxEdgeY = compact ? ISP.y - 24 : ISP.y;
+    const d2 = `M ${boxEdgeX} ${boxEdgeY} Q ${(boxEdgeX + MAIN.x) / 2} ${(boxEdgeY + MAIN.y) / 2 - 26} ${MAIN.x} ${MAIN.y}`;
+    drawWan(d2, ispBox.status === 'up');
+  } else if (gw) {
     // Fiber: a buried run at cable depth from the street node, then a
     // riser straight up through the house to the main router.
     const nodeRight = NET.x + 62;
@@ -2808,13 +2886,7 @@ safely('house map', function() {
       // main router unusually low (e.g. in the basement) — connect directly
       wanD = `M ${nodeRight} ${NET.y} Q ${(nodeRight + MAIN.x) / 2} ${NET.y} ${MAIN.x} ${MAIN.y + 17}`;
     }
-    svg += `<g class="linkgrp ${netUp ? 'up' : 'down'}">`;
-    svg += `<path class="link-glow" d="${wanD}"/><path class="link-core" d="${wanD}"/>`;
-    if (netUp && !REDUCE_MOTION) {
-      svg += `<circle class="packet" r="3" opacity="0.9"><animateMotion dur="2.6s" repeatCount="indefinite" path="${wanD}"/></circle>`;
-      svg += `<circle class="packet" r="2.4" opacity="0.7"><animateMotion dur="2.6s" begin="-1.3s" repeatCount="indefinite" path="${wanD}"/></circle>`;
-    }
-    svg += `</g>`;
+    drawWan(wanD, netUp);
   }
   const lastSpeed = (DATA.speed_series || []).slice(-1)[0];
   const CHK = DATA.checks || {};
@@ -2841,7 +2913,7 @@ safely('house map', function() {
   // wi-fi coverage bubbles behind every node — an offline AP reads as a
   // pulsing hole in the coverage, not just one bad pill
   placed.forEach(p => {
-    const cov = p.status === 'up' ? (p.method === 'arp' ? 'silent' : 'up') : 'down';
+    const cov = p.status === 'up' ? ((p.method === 'arp' || p.method === 'probe') ? 'silent' : 'up') : 'down';
     svg += `<circle class="cover ${cov}" cx="${p.x}" cy="${p.y}" r="${compact ? 42 : 62}"/>`;
   });
   if (gw) {
@@ -2890,6 +2962,20 @@ safely('house map', function() {
                    last_check: gw.last_check };
     svg += pill(MAIN.x, MAIN.y, opts, 'hc-main');
     hcs.push(hovercard(MAIN, opts, 'hc-main'));
+  }
+  if (ISP) {
+    // the wall box: utility-meter styling — a squared box (not a pill),
+    // mounted where the fiber meets the house
+    const w = compact ? 96 : 110, h = 48;
+    const x0 = ISP.x - w / 2, y0 = ISP.y - h / 2;
+    const nm = ispBox.name.length > 14 ? ispBox.name.slice(0, 13) + '…' : ispBox.name;
+    svg += `<g class="pillgrp ${nodeCls(ispBox)}" data-hc="hc-isp">
+      <rect class="pill-box" x="${x0}" y="${y0}" width="${w}" height="${h}" rx="8"/>
+      <circle class="status-dot-svg" cx="${x0 + 14}" cy="${ISP.y - 8}" r="4"/>
+      <text class="pill-name" x="${x0 + 24}" y="${ISP.y - 4}">${escapeHtml(nm)}</text>
+      <text class="isp-sub" x="${x0 + 14}" y="${ISP.y + 14}">ISP box</text>
+    </g>`;
+    hcs.push(hovercard(ISP, ispBox, 'hc-isp'));
   }
   svg += hcs.join('');
 

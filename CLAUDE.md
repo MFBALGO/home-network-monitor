@@ -107,8 +107,11 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   localStorage). One giant triple-quoted HTML template in `build_html()`,
   data injected as inline JSON via `.replace()` placeholders; all
   rendering is client-side JS from `const DATA`. Section order:
-  diagnosis banner → stat cards → house map → latency/speed charts →
-  outages → devices. The banner is a JS-side 8-rule table (stale page /
+  diagnosis banner → "command deck" (house map front-and-center with the
+  7 stat cards flanking it left/right in a 3-column grid ≥1200px —
+  `grid-auto-flow: row dense` or the right column starts below the left
+  one; map first then auto-fit cards below 1200) → per-router chart →
+  latency/speed charts → outages → devices. The banner is a JS-side 8-rule table (stale page /
   monitor paused / gateway down / ISP down / DNS / AP down / degraded /
   all-clear, first match wins, mirroring monitor.py's causal
   precedence). Also generates `report.html` (ISP evidence report:

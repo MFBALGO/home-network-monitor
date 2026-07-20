@@ -1025,7 +1025,25 @@ def build_html(data):
     font-family: var(--font-mono); text-decoration:none; transition: color .12s ease; }
   #settingsLink:hover { color: var(--accent); }
 
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 14px; margin-bottom: 32px; }
+  /* the "command deck": house map front and center, stat cards flanking
+     it left/right on wide screens. Below 1200px it degrades to map first,
+     then cards in the old auto-fit grid (source order = map first). */
+  .deck { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 14px; }
+  .deck-map { grid-column: 1 / -1; }
+  /* flex-column cards so the cadence footer pins to the bottom when the
+     side columns stretch to match the map's height */
+  .deck .card { display: flex; flex-direction: column; }
+  .deck .card .check-foot { margin-top: auto; padding-top: 7px; }
+  @media (min-width: 1200px) {
+    /* dense: without it the auto-placement cursor, having filled the left
+       column to row 4, would start the right column at row 4 too */
+    .deck { grid-template-columns: minmax(230px, 300px) minmax(0, 1fr) minmax(230px, 300px);
+      grid-auto-flow: row dense; }
+    .deck-map { grid-column: 2; grid-row: 1 / span 4; }
+    .deck-l { grid-column: 1; }
+    .deck-r { grid-column: 3; }
+    .deck-tall { grid-row: span 2; }  /* right column has 3 cards to the left's 4 */
+  }
   .card { position:relative; background: linear-gradient(180deg, var(--surface-2), var(--surface-1) 58%);
     border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px 15px; box-shadow: var(--shadow); }
   .card::before, .card::after { content:""; position:absolute; width:13px; height:13px; pointer-events:none; opacity:.55; }
@@ -1035,11 +1053,9 @@ def build_html(data):
     font-weight: 700; font-family: var(--font-mono); }
   .card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
   .card-head h3 { margin:0; }
-  @media (min-width: 940px) { .card-hero { grid-column: span 2; } }
-  /* wide screens: auto-fit would cut 6+ narrow columns and leave a ragged
-     4-empty-cell second row (hero spans 2, so 7 cards fill exactly 8
-     slots) — a fixed 4-up grid gives two full rows instead */
-  @media (min-width: 1280px) { .grid { grid-template-columns: repeat(4, 1fr); } }
+  /* upper bound matters: in the ≥1200px deck the hero lives in a single
+     side column — a 2-column span there would overlap the map */
+  @media (min-width: 940px) and (max-width: 1199px) { .card-hero { grid-column: span 2; } }
   .stat-row { display:flex; align-items:flex-end; justify-content:space-between; gap: 10px; }
   .stat-value { font-size: 29px; font-weight: 600; letter-spacing: -.01em; line-height:1;
     font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -1126,8 +1142,8 @@ def build_html(data):
   @media (max-width: 480px) {
     /* two-up stat cards: a single 990px column of cards buried the whole
        dashboard below a screen and a half of scrolling */
-    .grid { grid-template-columns: 1fr 1fr; gap: 10px; }
-    .card-hero { grid-column: span 2; }
+    .deck { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .deck-map, .card-hero { grid-column: span 2; }
     .stat-value { font-size: 24px; }
     table { font-size: 12px; }
     th, td { padding: 8px 4px; }
@@ -1377,70 +1393,69 @@ def build_html(data):
 
   <div id="diagBanner" class="diag-banner" style="display:none"></div>
 
-  <div class="grid">
-    <div class="card card-hero">
-      <h3>Current status</h3>
-      <div class="stat-row">
-        <div>
-          <div id="statusPill"></div>
-          <div class="stat-sub" id="currentLatency"></div>
-        </div>
-        <canvas class="sparkline" id="sparkline" width="150" height="44"></canvas>
-      </div>
-      <div class="check-foot" id="cfStatus"></div>
-    </div>
-    <div class="card">
-      <div class="card-head"><h3>Uptime · 24h</h3><span class="rating" id="rateUptime24"></span></div>
-      <div class="stat-row">
-        <div class="stat-value" id="uptime24h">—</div>
-        <div class="delta" id="uptimeDelta"></div>
-      </div>
-      <div class="stat-sub" id="loss24h"></div>
-      <div class="check-foot" id="cfUptime24"></div>
-    </div>
-    <div class="card">
-      <div class="card-head"><h3>Uptime · 7d</h3><span class="rating" id="rateUptime7"></span></div>
-      <div class="stat-value" id="uptime7d">—</div>
-      <div class="stat-sub" id="loss7d"></div>
-      <div class="check-foot" id="cfUptime7"></div>
-    </div>
-    <div class="card">
-      <div class="card-head"><h3>Avg latency · 24h</h3><span class="rating" id="rateLatency"></span></div>
-      <div class="stat-row">
-        <div class="stat-value" id="avgLatency24h">—</div>
-        <div class="delta" id="latencyDelta"></div>
-      </div>
-      <div class="stat-sub">to 1.1.1.1 / 8.8.8.8 / 9.9.9.9</div>
-      <div class="check-foot" id="cfLatency"></div>
-    </div>
-    <div class="card">
-      <div class="card-head"><h3>DNS · 24h</h3><span class="rating" id="rateDns"></span></div>
-      <div class="stat-value" id="dnsAvg">—</div>
-      <div class="stat-sub" id="dnsSub">name-lookup speed</div>
-      <div class="check-foot" id="cfDns"></div>
-    </div>
-    <div class="card">
-      <div class="card-head"><h3>Jitter · 24h</h3><span class="rating" id="rateJitter"></span></div>
-      <div class="stat-value" id="jitter24h">—</div>
-      <div class="stat-sub">latency stability — lower is steadier (calls/gaming)</div>
-      <div class="check-foot" id="cfJitter"></div>
-    </div>
-    <div class="card">
-      <h3>Public IP</h3>
-      <div class="stat-value" id="publicIp" style="font-size:19px;">—</div>
-      <div class="stat-sub" id="publicIpStable"></div>
-      <div class="check-foot" id="cfPublicIp"></div>
-    </div>
-  </div>
-
   <section>
     <div class="section-head">
       <h2>Routers &amp; access points</h2>
       <span class="section-note">from routers.json</span>
     </div>
-    <div class="chart-card panel-hud">
-      <div id="houseMapWrap"></div>
-      <div id="houseMapNote" class="section-note" style="display:none; text-align:center; margin-top:6px;"></div>
+    <div class="deck">
+      <div class="chart-card panel-hud deck-map">
+        <div id="houseMapWrap"></div>
+        <div id="houseMapNote" class="section-note" style="display:none; text-align:center; margin-top:6px;"></div>
+      </div>
+      <div class="card card-hero deck-l">
+        <h3>Current status</h3>
+        <div class="stat-row">
+          <div>
+            <div id="statusPill"></div>
+            <div class="stat-sub" id="currentLatency"></div>
+          </div>
+          <canvas class="sparkline" id="sparkline" width="150" height="44"></canvas>
+        </div>
+        <div class="check-foot" id="cfStatus"></div>
+      </div>
+      <div class="card deck-l">
+        <div class="card-head"><h3>Uptime · 24h</h3><span class="rating" id="rateUptime24"></span></div>
+        <div class="stat-row">
+          <div class="stat-value" id="uptime24h">—</div>
+          <div class="delta" id="uptimeDelta"></div>
+        </div>
+        <div class="stat-sub" id="loss24h"></div>
+        <div class="check-foot" id="cfUptime24"></div>
+      </div>
+      <div class="card deck-l">
+        <div class="card-head"><h3>Uptime · 7d</h3><span class="rating" id="rateUptime7"></span></div>
+        <div class="stat-value" id="uptime7d">—</div>
+        <div class="stat-sub" id="loss7d"></div>
+        <div class="check-foot" id="cfUptime7"></div>
+      </div>
+      <div class="card deck-l">
+        <div class="card-head"><h3>Avg latency · 24h</h3><span class="rating" id="rateLatency"></span></div>
+        <div class="stat-row">
+          <div class="stat-value" id="avgLatency24h">—</div>
+          <div class="delta" id="latencyDelta"></div>
+        </div>
+        <div class="stat-sub">to 1.1.1.1 / 8.8.8.8 / 9.9.9.9</div>
+        <div class="check-foot" id="cfLatency"></div>
+      </div>
+      <div class="card deck-r">
+        <div class="card-head"><h3>DNS · 24h</h3><span class="rating" id="rateDns"></span></div>
+        <div class="stat-value" id="dnsAvg">—</div>
+        <div class="stat-sub" id="dnsSub">name-lookup speed</div>
+        <div class="check-foot" id="cfDns"></div>
+      </div>
+      <div class="card deck-r">
+        <div class="card-head"><h3>Jitter · 24h</h3><span class="rating" id="rateJitter"></span></div>
+        <div class="stat-value" id="jitter24h">—</div>
+        <div class="stat-sub">latency stability — lower is steadier (calls/gaming)</div>
+        <div class="check-foot" id="cfJitter"></div>
+      </div>
+      <div class="card deck-r deck-tall">
+        <h3>Public IP</h3>
+        <div class="stat-value" id="publicIp" style="font-size:19px;">—</div>
+        <div class="stat-sub" id="publicIpStable"></div>
+        <div class="check-foot" id="cfPublicIp"></div>
+      </div>
     </div>
     <div class="chart-card">
       <div class="chart-label">Per-router latency (ms)</div>

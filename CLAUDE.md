@@ -71,12 +71,21 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
 - `monitor.py` — always-on collector, 11 daemon threads (all intervals
   below are the defaults — config.json `intervals` overrides them, hot-
   reloaded): ping (gateway +
-  1.1.1.1/8.8.8.8/9.9.9.9 every 15s), wifi (5m; BSSID/band + roam
+  1.1.1.1/8.8.8.8/9.9.9.9 every 15s — BURSTS of 3 per target via
+  ping_burst; pings.sent/received give real per-packet loss, which
+  feeds the degradation window and the dashboard loss stats; failed
+  runs shorter than the outage threshold land in `blips`, ≥4 blips/hour
+  opens a kind='instability' event, closed after a blip-free hour),
+  wifi (5m; BSSID/band + roam
   events + hourly neighbor scan into `wifi_scan`), device scan (5m),
   speedtest (30m, Ookla CLI; also captures ping.jitter,
   download/upload.latency.iqm = bufferbloat, packetLoss), public IP
   (10m), router checks (15s per router), DNS health (60s; failing
-  domains named in the event note), retention (daily, prunes >90d),
+  domains named in the event note; each cycle ALSO queries the gateway
+  + 1.1.1.1 + 8.8.8.8 directly via hand-rolled UDP `dns_query_direct`
+  — dns_checks.resolver tags 'system'/'gateway'/IP, only 'system' rows
+  drive events and the chart), retention (daily, prunes >90d incl.
+  blips),
   command poller (2s; executes web-UI commands from
   `data/commands.json`, writes `data/test_status.json` — two one-way
   files, ONE writer each, that's the whole web→monitor IPC), alert
@@ -86,7 +95,12 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   traceroute double-NAT check into `topology_checks` — verdict from hop
   2's address class, NOT hop counting: ISPs run 10.x internally, only a
   192.168.x second hop is confidently a second home router; 100.64/10 =
-  CGNAT, not user-fixable).
+  CGNAT, not user-fixable). Flight recorder: when a gateway/internet/dns
+  outage or degraded event OPENS, start_evidence_capture spawns a
+  one-shot thread that snapshots traceroute + per-resolver DNS + gateway
+  burst + router liveness + ARP into events.evidence (JSON, 16KB cap,
+  60s throttle — concurrent events share one snapshot; the "where did
+  the path die" data that's unrecoverable after recovery).
   - Cross-platform via IS_MACOS / IS_WINDOWS branches: Windows uses
     `ping -n` (+ "TTL=" guard because Windows ping exits 0 even for
     "unreachable"; locale-tolerant ms regex), `arp -a` (dash-MAC table),
@@ -150,7 +164,15 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   height auto-grows to fit, no windows, fiber node below the house) —
   chosen at render time, so a rotate applies on the next reload; outages
   log with SVG 7-day incident timeline + filters (8 events shown,
-  "older" expand scrolls inside a capped `.list-scroll` box); Chart.js
+  "older" expand scrolls inside a capped `.list-scroll` box; blips
+  drawn as amber ticks on the timeline's bottom edge + a "Blips · 7d"
+  summary chip; events with a flight-recorder snapshot get an
+  "evidence" toggle expanding a full-width row — DNS-per-resolver,
+  router liveness, traceroute; NB the JS lives in a Python string, so
+  backslash escapes must be doubled — an unescaped \n in the template
+  killed the whole page's script once); DNS card sub-line shows the
+  direct per-resolver verdict (router vs 1.1.1.1 vs 8.8.8.8, details
+  in the tooltip); Chart.js
   charts (vendored) with threshold reference lines, a
   synced 24h/7d toggle, and the speed chart pinned to 0..plan+100 so the
   plan lines stay visible; devices table with friendly names from
@@ -194,9 +216,11 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   `data/update_check.json`, opt-out `"update_check": false`).
 - `diagnose.py` — builds `netmon-diagnostics-*.zip` (report + logs tail
   + configs) for remote troubleshooting; `build_bundle()` is importable.
-- SQLite tables: `pings`, `router_pings`, `devices`, `dns_checks`,
-  `events` (kinds: outage/degraded/ip_change/new_device/wifi_roam),
-  `public_ip`, `speedtests`, `wifi`, `wifi_scan`, `topology_checks`.
+- SQLite tables: `pings` (+sent/received burst counts), `router_pings`,
+  `devices`, `dns_checks` (+resolver), `events` (kinds: outage/degraded/
+  ip_change/new_device/wifi_roam/instability; +evidence JSON), `blips`
+  (micro-outages shorter than the outage threshold), `public_ip`,
+  `speedtests`, `wifi`, `wifi_scan`, `topology_checks`.
   Schema changes go in BOTH guarded-ALTER migration lists (monitor.py
   init_db AND dashboard.py's defensive mirror).
 - Config files (all optional, user-editable JSON in this folder; the

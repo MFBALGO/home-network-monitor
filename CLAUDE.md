@@ -192,8 +192,9 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   synced 24h/7d toggle, and the speed chart pinned to 0..plan+100 so the
   plan lines stay visible; devices table with friendly names from
   devices.json (online rows first, away rows collapsed behind a toggle;
-  MAC in the name's tooltip, not a column — phone tables must fit
-  without side-scroll since scrollbars are invisible),
+  MAC as a muted mono sub-line under the device name — NOT a column,
+  which was the widest cell and forced phone side-scroll; phone tables
+  must fit without side-scroll since scrollbars are invisible),
   `hide_ip_prefixes` drops matching devices. Chart colors
   are baked at build time → charts fully re-render on theme change. Page
   scrollbars are hidden globally but scrolling still works — beware

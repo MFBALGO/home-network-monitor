@@ -1245,7 +1245,12 @@ def build_html(data):
     .device-name b { font-weight: 600; }
     .device-name span { overflow-wrap: anywhere; }
     tr.event-row td.mono { overflow-wrap: anywhere; }
-    .device-name > span:last-child { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    /* clamp only the NAME line on phones — the MAC sub-line below it
+       must stay visible, so the clamp moved off the container */
+    .dev-id > span:first-child { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    /* .device-name prefix: outranks the base .dev-mac rule, which is
+       declared LATER in this sheet and would otherwise win the tie */
+    .device-name .dev-mac { font-size: 9.5px; }
   }
   tbody tr { transition: background .12s ease; }
   tbody tr:hover { background: var(--surface-2); }
@@ -1332,6 +1337,8 @@ def build_html(data):
   .outage-clear .status-dot { box-shadow: 0 0 6px var(--glow-good); }
 
   .device-name { display:flex; align-items:center; gap:8px; }
+  .dev-id { display:flex; flex-direction:column; min-width:0; }
+  .dev-mac { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); letter-spacing: .02em; }
   .device-icon { width:26px; height:26px; border-radius:7px; background: var(--surface-2); border:1px solid var(--border);
     display:flex; align-items:center; justify-content:center; flex-shrink:0; color: var(--muted); }
   .mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); }
@@ -2537,11 +2544,12 @@ if (!DATA.devices || DATA.devices.length === 0) {
       ? '<span class="status-pill small status-up"><span class="status-dot"></span>Online</span>'
       : '<span class="status-pill small" style="background:var(--border-soft);color:var(--muted)"><span class="status-dot"></span>Away</span>';
     const seen = d.online ? 'now' : (d.last_seen ? timeSince(d.last_seen) + ' ago' : '—');
-    // MAC lives in the tooltip, not a column — nobody scans a MAC column,
-    // and it was the widest cell (forced side-scrolling on phones)
-    const mac = d.mac ? ` title="MAC ${escapeHtml(d.mac)}"` : '';
+    // MAC as a muted sub-line under the name — visible without adding a
+    // column (a MAC column was the widest cell and forced side-scrolling
+    // on phones, which is why it was banished to a tooltip for a while)
+    const macLine = d.mac ? `<span class="dev-mac">${escapeHtml(d.mac)}</span>` : '';
     return `<tr${hidden ? ' style="display:none" data-away="1"' : ''}>
-    <td><div class="device-name"${mac}><span class="device-icon">${deviceIcon}</span><span>${label}</span></div></td>
+    <td><div class="device-name"><span class="device-icon">${deviceIcon}</span><span class="dev-id"><span>${label}</span>${macLine}</span></div></td>
     <td class="mono">${escapeHtml(d.ip)}</td>
     <td>${pill}</td>
     <td>${seen}</td>

@@ -558,8 +558,6 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
       <button class="small" id="gAddFloor">+ Add floor on top</button>
       <button class="small" id="gAddBasement">+ Add basement</button>
     </div>
-    <label>Hide devices whose IP starts with (comma-separated, e.g. <span class="mono">192.168.100.</span>)</label>
-    <input type="text" id="gHide" placeholder="leave empty to show everything">
     <label>Internet plan speeds, Mbps (drawn on the speed chart — leave empty to skip)</label>
     <div class="row">
       <input type="number" id="gPlanDown" placeholder="download" min="1" style="width:130px">
@@ -765,7 +763,6 @@ async function load() {
   S.floorState.groundIndex = groundIndexFrom(S.floorState.floors, S.config.underground_floors);
   S.floorState.main = S.config.main_router_floor || null;
   renderFloors(S.floorState, 'gFloors');
-  document.getElementById('gHide').value = (S.config.hide_ip_prefixes || []).join(', ');
   document.getElementById('gPlanDown').value = S.config.plan_down_mbps || '';
   document.getElementById('gPlanUp').value = S.config.plan_up_mbps || '';
   document.getElementById('gUpdateCheck').checked = S.config.update_check !== false;
@@ -906,8 +903,9 @@ document.getElementById('gSave').onclick = async () => {
     cfg.underground_floors = all.slice(S.floorState.groundIndex).filter(Boolean);
     cfg.main_router_floor = fs.includes(S.floorState.main) ? S.floorState.main : fs[fs.length - 1];
   } else { delete cfg.floors; delete cfg.underground_floors; delete cfg.main_router_floor; }
-  const hide = document.getElementById('gHide').value.split(',').map(s => s.trim()).filter(Boolean);
-  if (hide.length) cfg.hide_ip_prefixes = hide; else delete cfg.hide_ip_prefixes;
+  // NB hide_ip_prefixes intentionally has NO UI field (it confused more
+  // than it clarified) — it still works when hand-set in config.json,
+  // and Object.assign above carries an existing value through untouched.
   const pd = parseFloat(document.getElementById('gPlanDown').value);
   const pu = parseFloat(document.getElementById('gPlanUp').value);
   if (pd > 0) cfg.plan_down_mbps = pd; else delete cfg.plan_down_mbps;

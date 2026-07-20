@@ -256,7 +256,10 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
     is missing/empty.
   - `devices.json` — {mac: friendly name}.
   - `config.json` — {title, floors[], underground_floors[],
-    main_router_floor} + optional `hide_ip_prefixes`, `thresholds`
+    main_router_floor} + optional `hide_ip_prefixes` (deliberately has
+    NO Settings-UI field — it confused users; hand-edit only, README
+    documents it; the Settings save carries an existing value through
+    untouched), `thresholds`
     (incl. `bufferbloat`), `plan_down_mbps`/`plan_up_mbps`, `alerts`
     (see config.example.json; email password is plaintext — app
     passwords only), `intervals` ({check: seconds} overriding

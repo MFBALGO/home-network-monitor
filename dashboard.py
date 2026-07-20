@@ -838,6 +838,8 @@ def build_html(data):
     --series-orange: #eb6834;
     --status-good: #0ca30c;
     --status-good-bg: rgba(12,163,12,0.10);
+    --status-silent: #518f68;   /* muted sage: up, but only via the ARP cache */
+    --glow-silent: rgba(81,143,104,0.22);
     --status-warning: #fab219;
     --status-warning-bg: rgba(250,178,25,0.15);
     --status-serious: #ec835a;
@@ -886,6 +888,8 @@ def build_html(data):
       --series-orange: #d95926;
       --status-good: #0ca30c;
       --status-good-bg: rgba(12,163,12,0.14);
+      --status-silent: #63a97e;   /* muted sage: up, but only via the ARP cache */
+      --glow-silent: rgba(99,169,126,0.28);
       --status-warning: #fab219;
       --status-warning-bg: rgba(250,178,25,0.12);
       --status-serious: #ec835a;
@@ -1277,9 +1281,12 @@ def build_html(data):
   .house-svg .datum-line { stroke: var(--baseline); stroke-width: 1.3; }
   .house-svg .datum-mark { fill: var(--muted); opacity: .8; }
   .house-svg .node-up { color: var(--status-good); }
+  /* alive but only via the ARP cache — same family, clearly quieter */
+  .house-svg .node-silent { color: var(--status-silent); }
   .house-svg .node-down { color: var(--status-critical); }
   .house-svg .node-main { color: var(--accent); }
   .house-svg g.node-up { filter: drop-shadow(0 0 7px var(--glow-good)); }
+  .house-svg g.node-silent { filter: drop-shadow(0 0 6px var(--glow-silent)); }
   .house-svg g.node-down { filter: drop-shadow(0 0 9px var(--glow-bad)); }
   .house-svg g.node-main { filter: drop-shadow(0 0 9px var(--glow-accent)); }
   .house-svg .card-box { fill: var(--surface-1); stroke: currentColor; stroke-width: 1.5; }
@@ -1326,6 +1333,7 @@ def build_html(data):
   /* wi-fi coverage bubbles behind each AP */
   .house-svg .cover { fill: currentColor; stroke: currentColor; stroke-opacity: .15; opacity: .06; }
   .house-svg .cover.up { color: var(--status-good); }
+  .house-svg .cover.silent { color: var(--status-silent); }
   .house-svg .cover.main { color: var(--accent); }
   .house-svg .cover.down { color: var(--status-critical); opacity: .12; animation: coverPulse 2.2s ease-in-out infinite; }
   @keyframes coverPulse { 50% { opacity: .26; } }
@@ -2480,7 +2488,7 @@ safely('house map', function() {
   function card(x, y, opts) {
     const w = opts.main ? CARD_W + 16 : CARD_W, h = CARD_H;
     const x0 = x - w / 2, y0 = y - h / 2;
-    const cls = opts.main ? 'node-main' : (opts.status === 'up' ? 'node-up' : 'node-down');
+    const cls = nodeCls(opts);
     // 'tcp' = alive via its web port; 'arp' = alive but silent (answers
     // only ARP — blocks ping, no web admin on standard ports)
     const statusTxt = opts.status === 'up'
@@ -2511,6 +2519,13 @@ safely('house map', function() {
   // cache": the router only shows up in the ARP table, whose evidence
   // refreshes with the device sweep, not with the 15s router loop)
   function methodCmd(m) { return m === 'tcp' ? 'tcp 80/443' : m === 'arp' ? 'arp cache' : 'ping'; }
+  // silent (ARP-cache-only) routers get their own muted green so the map
+  // distinguishes "answers me" from "merely present in the ARP table"
+  function nodeCls(opts) {
+    if (opts.main) return 'node-main';
+    if (opts.status !== 'up') return 'node-down';
+    return opts.method === 'arp' ? 'node-silent' : 'node-up';
+  }
   function footEff(opts) {
     if (opts.method === 'arp') return checkEff('devices');  // evidence cadence, see above
     if (opts.main) return checkEff('ping');                 // gateway rides the ping thread
@@ -2522,7 +2537,7 @@ safely('house map', function() {
     const label = pillLabel(opts.name);
     const w = pillW(opts.name, opts.main), h = (opts.main ? 30 : 26) + (compact ? 4 : 0);
     const x0 = x - w / 2, y0 = y - h / 2;
-    const cls = opts.main ? 'node-main' : (opts.status === 'up' ? 'node-up' : 'node-down');
+    const cls = nodeCls(opts);
     return `<g class="pillgrp ${cls}" data-hc="${hcId}">
       <rect class="pill-box" x="${x0}" y="${y0}" width="${w}" height="${h}" rx="${h / 2}"/>
       <circle class="status-dot-svg" cx="${x0 + 14}" cy="${y}" r="4"/>
@@ -2633,7 +2648,8 @@ safely('house map', function() {
   // wi-fi coverage bubbles behind every node — an offline AP reads as a
   // pulsing hole in the coverage, not just one bad pill
   placed.forEach(p => {
-    svg += `<circle class="cover ${p.status === 'up' ? 'up' : 'down'}" cx="${p.x}" cy="${p.y}" r="${compact ? 42 : 62}"/>`;
+    const cov = p.status === 'up' ? (p.method === 'arp' ? 'silent' : 'up') : 'down';
+    svg += `<circle class="cover ${cov}" cx="${p.x}" cy="${p.y}" r="${compact ? 42 : 62}"/>`;
   });
   if (gw) {
     svg += `<circle class="cover ${gw.status === 'up' ? 'main' : 'down'}" cx="${MAIN.x}" cy="${MAIN.y}" r="${compact ? 52 : 76}"/>`;

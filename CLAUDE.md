@@ -95,7 +95,9 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
     CREATE_NO_WINDOW on Windows.
   - Router liveness 3-tier: ping → TCP 80/443 → ARP (~20min down-lag).
     `method` column in `router_pings` records icmp/tcp/arp; dashboard
-    shows "Online (web)" for tcp, "Online (silent)" for arp.
+    shows "Online (web)" for tcp, "Online (silent)" for arp — silent
+    nodes render in a muted sage green (--status-silent) on the map,
+    distinct from the vivid --status-good of ping-answering routers.
   - Device scan: nmap `-sn` sweep when installed (checked every cycle),
     else built-in ping sweep, then `arp -an`/`arp -a` (NOT plain `arp -a`
     on mac — reverse-DNS blew the timeout: the old "0 devices" bug), then

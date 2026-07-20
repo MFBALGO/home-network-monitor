@@ -33,6 +33,7 @@ import re
 import shutil
 import socket
 import sqlite3
+import struct
 import subprocess
 import sys
 import threading
@@ -118,6 +119,16 @@ OUTAGE_FAILURE_THRESHOLD = 3    # consecutive failed checks before declaring an 
 DEGRADED_LATENCY_MS = 150       # avg latency above this over the rolling window = degraded
 DEGRADED_LOSS_PCT = 20          # packet loss % above this over the rolling window = degraded
 ROLLING_WINDOW = 20             # number of recent external pings considered for degradation
+PING_BURST_COUNT = 3            # pings per target per check (real per-check loss, see ping_burst)
+
+# Micro-outage ("blip") flap detection: failed runs shorter than
+# OUTAGE_FAILURE_THRESHOLD recover before an outage is declared, so they
+# used to vanish entirely — yet "drops for 20 seconds, several times an
+# hour" is precisely the intermittent-line signature ISPs ask about.
+# Each blip is logged to the blips table; this many within the window
+# raises a kind='instability' event (closed after a blip-free window).
+INSTABILITY_BLIP_COUNT = 4
+INSTABILITY_WINDOW_SEC = 3600
 
 IS_MACOS = platform.system() == "Darwin"
 IS_WINDOWS = platform.system() == "Windows"
@@ -264,6 +275,18 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_wifi_scan_ts ON wifi_scan(ts);
 
+        -- micro-outages: failed-ping runs that recovered BEFORE the outage
+        -- threshold. Individually invisible in the events log, but a burst
+        -- of them is the "line is flapping" signature ISPs actually act on.
+        CREATE TABLE IF NOT EXISTS blips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,            -- start of the failed run
+            end_ts TEXT NOT NULL,        -- first successful check after it
+            target_class TEXT NOT NULL,  -- 'gateway' or 'internet'
+            failed_checks INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_blips_ts ON blips(ts);
+
         -- daily traceroute-based double-NAT check (~1 row/day, kept forever)
         CREATE TABLE IF NOT EXISTS topology_checks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -293,6 +316,19 @@ def init_db():
         # which band; macOS redacts BSSID without location permission -> NULL
         "ALTER TABLE wifi ADD COLUMN bssid TEXT",
         "ALTER TABLE wifi ADD COLUMN band TEXT",
+        # Ping bursts: sent/received per check give REAL per-check packet
+        # loss instead of inferring loss from whole checks failing.
+        # NULL = old single-ping rows.
+        "ALTER TABLE pings ADD COLUMN sent INTEGER",
+        "ALTER TABLE pings ADD COLUMN received INTEGER",
+        # Which resolver answered: 'system' (the OS path every app uses),
+        # 'gateway' (the router's DNS proxy, queried directly), or a public
+        # resolver IP. NULL = old rows (treated as 'system').
+        "ALTER TABLE dns_checks ADD COLUMN resolver TEXT",
+        # Flight-recorder snapshot (JSON: traceroute, per-resolver DNS, ARP,
+        # router liveness) captured in the first seconds of an outage —
+        # the "where did the path die" evidence that's gone after recovery.
+        "ALTER TABLE events ADD COLUMN evidence TEXT",
     ):
         try:
             conn.execute(migration)
@@ -581,6 +617,45 @@ def ping_once(target, timeout_sec=2):
         return False, None
 
 
+def ping_burst(target, count=3, timeout_sec=2):
+    """Ping a host `count` times in one subprocess call. Returns
+    (received, sent, avg_latency_ms). One packet per check can't tell
+    "5% loss" from "perfect" — a burst measures real per-check loss, which
+    is what the degradation detector actually wants to know.
+
+    Parsing counts per-reply lines rather than trusting the summary line:
+    the summary is localized ("Packets"/"Paquets"/...), but a real echo
+    reply always carries TTL (Windows) / time= (unix), same trick as
+    ping_once. Windows quirk: "Destination host unreachable" replies come
+    from a router, exit 0, and have no TTL — counting TTL lines handles
+    that for free."""
+    try:
+        if IS_MACOS:
+            cmd = ["ping", "-c", str(count), "-t", str(timeout_sec), target]
+        elif IS_WINDOWS:
+            cmd = ["ping", "-n", str(count), "-w", str(int(timeout_sec * 1000)), target]
+        else:
+            cmd = ["ping", "-c", str(count), "-W", str(timeout_sec), target]
+        # worst case: every packet times out, plus interpacket gaps
+        result = subprocess.run(cmd, capture_output=True, text=True,
+                                timeout=count * (timeout_sec + 1) + 3, **SUBPROCESS_EXTRA)
+        out = result.stdout
+        if IS_WINDOWS:
+            received = out.lower().count("ttl=")
+            times = [float(m.replace(",", ".")) for m in
+                     re.findall(r"[=<]\s*(\d+(?:[.,]\d+)?)\s*ms", out)]
+        else:
+            received = len(re.findall(r"ttl=\d+", out, re.I))
+            times = [float(m) for m in re.findall(r"time[=<]([\d.]+)", out)]
+        # keep exactly one latency sample per received reply (Windows also
+        # prints Minimum/Maximum/Average lines that match the ms regex)
+        times = times[:received]
+        avg = round(sum(times) / len(times), 3) if times else None
+        return received, count, avg
+    except Exception:
+        return 0, count, None
+
+
 def tcp_check(ip, ports=ROUTER_TCP_PORTS, timeout_sec=1.5):
     """Fallback reachability probe for hosts that ignore ping: try a TCP
     connection to their web-admin ports. Returns (success, connect_ms).
@@ -650,15 +725,57 @@ def check_dns(domain):
         return False, None
 
 
-def dns_loop(conn):
+def dns_query_direct(server_ip, domain, timeout_sec=2):
+    """One A-record query sent straight to a specific resolver over UDP —
+    bypassing the OS resolver entirely (getaddrinfo can't target a server,
+    and its cache would make the timing a lie anyway). Hand-rolled packet
+    because stdlib has no DNS client: 12-byte header (RD set), one
+    question, A/IN. Success = matching id, RCODE 0, at least one answer.
+    Returns (success, latency_ms)."""
+    qid = int.from_bytes(os.urandom(2), "big")
+    header = struct.pack(">HHHHHH", qid, 0x0100, 1, 0, 0, 0)
+    try:
+        qname = b"".join(bytes([len(p)]) + p.encode("ascii") for p in domain.split("."))
+    except (UnicodeEncodeError, ValueError):
+        return False, None
+    query = header + qname + b"\x00" + struct.pack(">HH", 1, 1)  # QTYPE=A, QCLASS=IN
+    t0 = time.perf_counter()
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(timeout_sec)
+            s.sendto(query, (server_ip, 53))
+            data, _addr = s.recvfrom(512)
+        ms = round((time.perf_counter() - t0) * 1000, 1)
+        if len(data) < 12 or data[:2] != query[:2]:
+            return False, None
+        flags, = struct.unpack(">H", data[2:4])
+        ancount, = struct.unpack(">H", data[6:8])
+        return (flags & 0x000F) == 0 and ancount > 0, ms
+    except OSError:
+        return False, None
+
+
+def dns_loop(conn, gateway):
     """DNS is the classic 'internet feels broken but pings are fine'
     failure: 1.1.1.1 answers ping while name resolution is dead, so
     browsing breaks with no outage on the chart. Check resolution health
-    every minute and log an event when it's down."""
+    every minute and log an event when it's down.
+
+    Each cycle checks the SYSTEM resolver (the path every app actually
+    uses — this one drives outage events) plus each resolver in the
+    comparison set directly. The split is the diagnosis: system+gateway
+    failing while 1.1.1.1/8.8.8.8 answer = the router's DNS proxy is
+    wedged (reboot it); everything failing = upstream/line problem."""
     consecutive_fail = 0
     open_event_id = None
     failed_domains = []   # domains tried during the current failure streak
     i = 0
+    # Direct-comparison resolvers: the gateway (= the router's DNS proxy,
+    # which is what DHCP points most home clients at) and two majors that
+    # are also ping targets — so "pingable but not answering DNS" becomes
+    # a visible, distinct state.
+    direct_resolvers = ([("gateway", gateway)] if gateway else []) + \
+                       [("1.1.1.1", "1.1.1.1"), ("8.8.8.8", "8.8.8.8")]
     while True:
         domain = DNS_TEST_DOMAINS[i % len(DNS_TEST_DOMAINS)]
         i += 1
@@ -666,9 +783,16 @@ def dns_loop(conn):
         ts = now_iso()
         db_execute(
             conn,
-            "INSERT INTO dns_checks (ts, domain, success, latency_ms) VALUES (?,?,?,?)",
-            (ts, domain, int(ok), latency),
+            "INSERT INTO dns_checks (ts, domain, success, latency_ms, resolver) VALUES (?,?,?,?,?)",
+            (ts, domain, int(ok), latency, "system"),
         )
+        for label, server_ip in direct_resolvers:
+            d_ok, d_ms = dns_query_direct(server_ip, domain)
+            db_execute(
+                conn,
+                "INSERT INTO dns_checks (ts, domain, success, latency_ms, resolver) VALUES (?,?,?,?,?)",
+                (ts, domain, int(d_ok), d_ms, label),
+            )
         if ok:
             consecutive_fail = 0
             failed_domains = []
@@ -691,6 +815,7 @@ def dns_loop(conn):
                      f"DNS lookups failing (tried: {tried}) — websites won't load by name even if pings still work"),
                 )
                 open_event_id = cur.lastrowid
+                start_evidence_capture(conn, cur.lastrowid, gateway, "outage/dns")
         time.sleep(check_interval("dns"))
 
 
@@ -1121,46 +1246,108 @@ def ping_loop(conn, gateway):
     consecutive_external_fail = 0
     consecutive_gateway_fail = 0
     open_event = {"internet": None, "gateway": None}
-    recent_external = []  # list of (success, latency)
+    recent_external = []  # list of (success, best_latency, sent, received)
+    # blip run tracking: start ts of the current failed run per class, plus
+    # whether the gateway was also down during the internet run (if so the
+    # "internet blip" is really the gateway's fault — don't double-log it).
+    fail_run = {"gateway": None, "internet": None}   # class -> start ts
+    internet_run_had_gw_fail = False
+
+    def record_blip(target_class, start_ts, end_ts, n_checks):
+        """A failed run recovered before reaching the outage threshold:
+        log it, then see whether blips are now frequent enough to call the
+        line unstable (flapping)."""
+        db_execute(
+            conn,
+            "INSERT INTO blips (ts, end_ts, target_class, failed_checks) VALUES (?,?,?,?)",
+            (start_ts, end_ts, target_class, n_checks),
+        )
+        window_start = (datetime.now(timezone.utc)
+                        - timedelta(seconds=INSTABILITY_WINDOW_SEC)).isoformat()
+        rows = db_query(conn, "SELECT COUNT(*) FROM blips WHERE ts >= ?", (window_start,))
+        n_recent = rows[0][0] if rows else 0
+        if n_recent >= INSTABILITY_BLIP_COUNT and open_event.get("instability") is None:
+            note = (f"Connection flapping — {n_recent} brief drops within an hour, "
+                    f"each too short to register as an outage")
+            cur = db_execute(
+                conn,
+                "INSERT INTO events (start_ts, kind, scope, note) VALUES (?,?,?,?)",
+                (end_ts, "instability", target_class, note),
+            )
+            open_event["instability"] = cur.lastrowid
 
     while True:
         ts = now_iso()
 
         gw_ok, gw_latency = (False, None)
         if gateway:
-            gw_ok, gw_latency = ping_once(gateway)
+            gw_recv, gw_sent, gw_latency = ping_burst(gateway, PING_BURST_COUNT)
+            gw_ok = gw_recv > 0
             db_execute(
                 conn,
-                "INSERT INTO pings (ts, target, target_type, success, latency_ms) VALUES (?,?,?,?,?)",
-                (ts, gateway, "gateway", int(gw_ok), gw_latency),
+                "INSERT INTO pings (ts, target, target_type, success, latency_ms, sent, received) VALUES (?,?,?,?,?,?,?)",
+                (ts, gateway, "gateway", int(gw_ok), gw_latency, gw_sent, gw_recv),
             )
 
-        ext_results = []
+        ext_results = []   # (ok, avg_latency, sent, received) per target
         for target in EXTERNAL_TARGETS:
-            ok, latency = ping_once(target)
-            ext_results.append((ok, latency))
+            recv, sent, latency = ping_burst(target, PING_BURST_COUNT)
+            ok = recv > 0
+            ext_results.append((ok, latency, sent, recv))
             db_execute(
                 conn,
-                "INSERT INTO pings (ts, target, target_type, success, latency_ms) VALUES (?,?,?,?,?)",
-                (ts, target, "external", int(ok), latency),
+                "INSERT INTO pings (ts, target, target_type, success, latency_ms, sent, received) VALUES (?,?,?,?,?,?,?)",
+                (ts, target, "external", int(ok), latency, sent, recv),
             )
 
-        any_external_ok = any(ok for ok, _ in ext_results)
-        best_latency = min((l for ok, l in ext_results if ok and l is not None), default=None)
+        any_external_ok = any(ok for ok, _l, _s, _r in ext_results)
+        best_latency = min((l for ok, l, _s, _r in ext_results if ok and l is not None), default=None)
+        cycle_sent = sum(s for _o, _l, s, _r in ext_results)
+        cycle_recv = sum(r for _o, _l, _s, r in ext_results)
 
-        recent_external.append((any_external_ok, best_latency))
+        recent_external.append((any_external_ok, best_latency, cycle_sent, cycle_recv))
         recent_external = recent_external[-ROLLING_WINDOW:]
 
-        # --- Outage detection ---
+        # --- Outage detection (with blip tracking on the side) ---
+        # A "run" of failed checks either grows into an outage (>= threshold)
+        # or recovers early — in which case it becomes a blip. Runs that DID
+        # become outages are already in the events log; logging them as blips
+        # too would double-count.
         if gateway and not gw_ok:
+            if consecutive_gateway_fail == 0:
+                fail_run["gateway"] = ts
             consecutive_gateway_fail += 1
         else:
+            if consecutive_gateway_fail and consecutive_gateway_fail < OUTAGE_FAILURE_THRESHOLD:
+                record_blip("gateway", fail_run["gateway"], ts, consecutive_gateway_fail)
             consecutive_gateway_fail = 0
+            fail_run["gateway"] = None
 
         if not any_external_ok:
+            if consecutive_external_fail == 0:
+                fail_run["internet"] = ts
+                internet_run_had_gw_fail = False
+            if gateway and not gw_ok:
+                internet_run_had_gw_fail = True
             consecutive_external_fail += 1
         else:
+            if (consecutive_external_fail
+                    and consecutive_external_fail < OUTAGE_FAILURE_THRESHOLD
+                    and not internet_run_had_gw_fail):
+                # gateway was fine the whole run -> genuinely the line's fault
+                record_blip("internet", fail_run["internet"], ts, consecutive_external_fail)
             consecutive_external_fail = 0
+            fail_run["internet"] = None
+
+        # Instability closes after a full blip-free window: flapping that
+        # stopped an hour ago is over, even if no outage ever opened.
+        if open_event.get("instability") is not None:
+            window_start = (datetime.now(timezone.utc)
+                            - timedelta(seconds=INSTABILITY_WINDOW_SEC)).isoformat()
+            rows = db_query(conn, "SELECT COUNT(*) FROM blips WHERE ts >= ?", (window_start,))
+            if not rows or rows[0][0] == 0:
+                db_execute(conn, "UPDATE events SET end_ts=? WHERE id=?", (ts, open_event["instability"]))
+                open_event["instability"] = None
 
         # Gateway (local wifi/router) outage takes priority in diagnosis: if the
         # gateway itself is unreachable, that's almost certainly the cause of any
@@ -1173,6 +1360,7 @@ def ping_loop(conn, gateway):
                     (ts, "outage", "gateway", "Router/gateway unreachable — local Wi-Fi or router issue"),
                 )
                 open_event["gateway"] = cur.lastrowid
+                start_evidence_capture(conn, cur.lastrowid, gateway, "outage/gateway")
         elif open_event["gateway"] is not None:
             db_execute(conn, "UPDATE events SET end_ts=? WHERE id=?", (ts, open_event["gateway"]))
             open_event["gateway"] = None
@@ -1187,15 +1375,20 @@ def ping_loop(conn, gateway):
                     (ts, "outage", "internet", "Gateway reachable but internet targets unreachable — likely ISP outage"),
                 )
                 open_event["internet"] = cur.lastrowid
+                start_evidence_capture(conn, cur.lastrowid, gateway, "outage/internet")
         elif open_event["internet"] is not None:
             db_execute(conn, "UPDATE events SET end_ts=? WHERE id=?", (ts, open_event["internet"]))
             open_event["internet"] = None
 
         # --- Degradation detection (slow, not down) ---
         if len(recent_external) >= 5:
-            successes = [r for r in recent_external if r[0]]
-            loss_pct = 100.0 * (1 - len(successes) / len(recent_external))
-            latencies = [l for ok, l in recent_external if ok and l is not None]
+            # Real packet loss across the window (bursts made this honest:
+            # 1 lost packet in 9 is 11%, where whole-check granularity could
+            # only ever say 0% or 100%).
+            total_sent = sum(s for _o, _l, s, _r in recent_external)
+            total_recv = sum(r for _o, _l, _s, r in recent_external)
+            loss_pct = 100.0 * (1 - total_recv / total_sent) if total_sent else 0.0
+            latencies = [l for ok, l, _s, _r in recent_external if ok and l is not None]
             avg_latency = sum(latencies) / len(latencies) if latencies else None
 
             is_degraded = (loss_pct > DEGRADED_LOSS_PCT) or (avg_latency and avg_latency > DEGRADED_LATENCY_MS)
@@ -1211,6 +1404,7 @@ def ping_loop(conn, gateway):
                         (ts, "degraded", "internet", note),
                     )
                     open_event["degraded"] = cur.lastrowid
+                    start_evidence_capture(conn, cur.lastrowid, gateway, "degraded/internet")
             elif open_event.get("degraded") is not None:
                 db_execute(conn, "UPDATE events SET end_ts=? WHERE id=?", (ts, open_event["degraded"]))
                 open_event["degraded"] = None
@@ -1667,6 +1861,120 @@ def command_loop(conn):
 # Topology / double-NAT check
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Flight recorder: evidence snapshot at the moment an event opens
+# ---------------------------------------------------------------------------
+# "The internet died at 02:14" tells you WHEN; a traceroute taken AT 02:14
+# tells you WHERE the path stopped — and that information is unrecoverable
+# five minutes after the line comes back. Captured in a background thread
+# (a tracert on a dead line takes ~30s; the ping loop must not stall),
+# written into events.evidence as JSON when done.
+
+EVIDENCE_MAX_BYTES = 16384
+EVIDENCE_MIN_GAP_SEC = 60
+_evidence_gate = threading.Lock()
+_evidence_last_start = [0.0]   # monotonic; list so the thread can mutate it
+
+
+def start_evidence_capture(conn, event_id, gateway, trigger):
+    """Fire-and-forget evidence capture for a just-opened event. Throttled:
+    one failure usually opens several events at once (a dead gateway drags
+    DNS down with it) and one snapshot covers them all — parallel tracerts
+    fighting over a dead line would only slow each other into timeouts."""
+    with _evidence_gate:
+        now = time.monotonic()
+        if now - _evidence_last_start[0] < EVIDENCE_MIN_GAP_SEC:
+            db_execute(conn, "UPDATE events SET evidence=? WHERE id=?",
+                       (json.dumps({"skipped": "snapshot already captured for a concurrent event"}),
+                        event_id))
+            return
+        _evidence_last_start[0] = now
+    threading.Thread(target=_capture_evidence,
+                     args=(conn, event_id, gateway, trigger), daemon=True).start()
+
+
+def _capture_evidence(conn, event_id, gateway, trigger):
+    """The capture itself. Quick probes first (the network's state is
+    moving), the slow traceroute last. Every step is individually guarded:
+    partial evidence beats none, and this thread must never take the
+    monitor down with it."""
+    t_start = time.perf_counter()
+    ev = {"captured_ts": now_iso(), "trigger": trigger}
+    try:
+        # Per-resolver DNS: separates "router's DNS proxy wedged" from
+        # "upstream resolver down" from "everything dead".
+        dns = {}
+        ok, ms = check_dns("google.com")
+        dns["system"] = {"ok": bool(ok), "ms": ms}
+        for label, server in ([("gateway", gateway)] if gateway else []) + \
+                             [("1.1.1.1", "1.1.1.1"), ("8.8.8.8", "8.8.8.8")]:
+            ok, ms = dns_query_direct(server, "google.com")
+            dns[label] = {"ok": bool(ok), "ms": ms}
+        ev["dns"] = dns
+
+        # Gateway liveness at the failure moment.
+        if gateway:
+            recv, sent, ms = ping_burst(gateway, 3, timeout_sec=1)
+            ev["gateway_ping"] = {"received": recv, "sent": sent, "avg_ms": ms}
+
+        # Which configured routers/APs were alive — "everything but the
+        # internet answers" vs "half the LAN is dark" are different faults.
+        # Values: 'ping' / 'web' (= answered TCP but not ping) / 'no-reply'.
+        # ARP-only routers land on 'no-reply' even when up — the tag says
+        # "unverifiable in a hurry", deliberately NOT "down".
+        routers = {}
+        for r in load_routers()[:12]:
+            ok, _ms = ping_once(r["ip"], timeout_sec=1)
+            if not ok:
+                ok_tcp, _ = tcp_check(r["ip"], timeout_sec=1)
+                routers[r["name"]] = "web" if ok_tcp else "no-reply"
+            else:
+                routers[r["name"]] = "ping"
+        if routers:
+            ev["routers_alive"] = routers
+
+        # ARP table: proof of what was physically on the LAN.
+        try:
+            arp_cmd = ["arp", "-a"] if IS_WINDOWS else ["arp", "-an"]
+            out = subprocess.run(arp_cmd, capture_output=True, text=True,
+                                 timeout=10, **SUBPROCESS_EXTRA).stdout
+            ev["arp"] = out.strip()[:4000]
+        except Exception:
+            pass
+
+        # Traceroute last (slowest): where the path stopped. On a dead
+        # line every hop times out — that emptiness is itself evidence.
+        try:
+            if IS_WINDOWS:
+                cmd = ["tracert", "-d", "-h", "8", "-w", "800", "8.8.8.8"]
+            else:
+                cmd = ["traceroute", "-n", "-m", "8", "-w", "1", "-q", "1", "8.8.8.8"]
+            out = subprocess.run(cmd, capture_output=True, text=True,
+                                 timeout=90, **SUBPROCESS_EXTRA).stdout
+            hops = [ln.strip() for ln in out.splitlines() if re.match(r"^\s*\d{1,2}\s", ln)]
+            ev["traceroute"] = hops[:12]
+        except Exception as e:
+            ev["traceroute_error"] = repr(e)
+
+        ev["capture_secs"] = round(time.perf_counter() - t_start, 1)
+    except Exception as e:
+        ev["error"] = repr(e)
+
+    # Size cap: shrink then drop the ARP dump (the only big field) — never
+    # slice the JSON string itself, a truncated blob wouldn't parse.
+    blob = json.dumps(ev)
+    if len(blob) > EVIDENCE_MAX_BYTES:
+        ev["arp"] = (ev.get("arp") or "")[:1000]
+        blob = json.dumps(ev)
+    if len(blob) > EVIDENCE_MAX_BYTES:
+        ev.pop("arp", None)
+        blob = json.dumps(ev)
+    try:
+        db_execute(conn, "UPDATE events SET evidence=? WHERE id=?", (blob, event_id))
+    except Exception as e:
+        log_error(f"evidence write for event {event_id} failed: {e!r}")
+
+
 def check_double_nat(target="8.8.8.8"):
     """Count private hops on the way out. Two (or more) RFC1918 hops before
     the first public one = two routers are each doing NAT — the classic
@@ -1779,7 +2087,8 @@ ALERT_DEFAULTS = {
     "min_duration_sec": 60,     # blips shorter than this alert nothing
     "cooldown_minutes": 5,      # per-(kind,scope,router) repeat suppression
     "quiet_hours": None,        # {"start": "23:00", "end": "07:00"} local
-    "events": {"outage": True, "degraded": False, "new_device": True, "ip_change": False},
+    "events": {"outage": True, "degraded": False, "new_device": True, "ip_change": False,
+               "instability": False},
     "channels": {
         "toast": {"enabled": True},
         "webhook": {"enabled": False, "url": "", "format": "json"},
@@ -1930,6 +2239,8 @@ def _event_headline(row):
                     scope, f'Access point "{rn or "?"}" is down')
     if kind == "degraded":
         return "Connection is up but degraded (high latency or packet loss)"
+    if kind == "instability":
+        return row["note"] or "Connection is flapping — repeated brief drops"
     if kind == "new_device":
         return row["note"] or "A never-seen device joined the network"
     if kind == "ip_change":
@@ -2086,7 +2397,7 @@ def retention_loop(conn):
     ~23k rows/day (~8M rows/year) — without pruning the DB grows without
     bound and dashboard queries slowly degrade. Events and speedtests are
     small and kept forever."""
-    tables = ["pings", "router_pings", "wifi", "devices", "public_ip", "dns_checks", "wifi_scan"]
+    tables = ["pings", "router_pings", "wifi", "devices", "public_ip", "dns_checks", "wifi_scan", "blips"]
     while True:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).isoformat()
         for table in tables:
@@ -2114,7 +2425,7 @@ def main():
         threading.Thread(target=speedtest_loop, args=(conn,), daemon=True),
         threading.Thread(target=public_ip_loop, args=(conn,), daemon=True),
         threading.Thread(target=router_loop, args=(conn, routers), daemon=True),
-        threading.Thread(target=dns_loop, args=(conn,), daemon=True),
+        threading.Thread(target=dns_loop, args=(conn, gateway), daemon=True),
         threading.Thread(target=retention_loop, args=(conn,), daemon=True),
         threading.Thread(target=command_loop, args=(conn,), daemon=True),
         threading.Thread(target=alert_loop, args=(conn,), daemon=True),

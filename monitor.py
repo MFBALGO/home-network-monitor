@@ -66,6 +66,37 @@ SPEEDTEST_INTERVAL_SEC = 30 * 60      # speed test cadence
 PUBLIC_IP_CHECK_INTERVAL_SEC = 10 * 60  # public IP check cadence
 DNS_CHECK_INTERVAL_SEC = 60             # DNS resolution health check cadence
 
+# The constants above are the DEFAULTS; config.json may override any of
+# them via an "intervals" block ({"ping": 30, "speedtest": 3600, ...}),
+# editable from the Settings UI and hot-reloaded — each loop re-reads its
+# interval before sleeping, so a change applies after at most one old
+# cycle, no restart. Values are clamped to these bounds so a typo can't
+# hammer the LAN (too low) or effectively disable a check (too high).
+# NOTE: these are SLEEP times — the real cadence is sleep + work. With
+# several ARP-only routers the router loop spends ~15s in timeouts, so a
+# 15s setting yields ~30s between checks (the dashboard footers show the
+# measured cadence for exactly this reason).
+# settings_api.py validates against the same bounds, and dashboard.py
+# mirrors defaults+bounds for the cadence footers — update all three.
+INTERVAL_DEFAULTS = {
+    "ping": PING_INTERVAL_SEC,
+    "router": ROUTER_PING_INTERVAL_SEC,
+    "wifi": WIFI_SNAPSHOT_INTERVAL_SEC,
+    "devices": DEVICE_SCAN_INTERVAL_SEC,
+    "speedtest": SPEEDTEST_INTERVAL_SEC,
+    "public_ip": PUBLIC_IP_CHECK_INTERVAL_SEC,
+    "dns": DNS_CHECK_INTERVAL_SEC,
+}
+INTERVAL_BOUNDS = {         # seconds: (min, max)
+    "ping": (5, 300),
+    "router": (10, 600),
+    "wifi": (60, 3600),
+    "devices": (60, 3600),
+    "speedtest": (600, 24 * 3600),  # a test moves real data — don't spam
+    "public_ip": (120, 3600),
+    "dns": (15, 900),
+}
+
 # Domains used to test DNS resolution (rotated one per check). Large,
 # always-resolvable names — if these fail, DNS is broken for everything.
 DNS_TEST_DOMAINS = ["apple.com", "google.com", "cloudflare.com"]
@@ -660,7 +691,7 @@ def dns_loop(conn):
                      f"DNS lookups failing (tried: {tried}) — websites won't load by name even if pings still work"),
                 )
                 open_event_id = cur.lastrowid
-        time.sleep(DNS_CHECK_INTERVAL_SEC)
+        time.sleep(check_interval("dns"))
 
 
 # ---------------------------------------------------------------------------
@@ -1184,7 +1215,7 @@ def ping_loop(conn, gateway):
                 db_execute(conn, "UPDATE events SET end_ts=? WHERE id=?", (ts, open_event["degraded"]))
                 open_event["degraded"] = None
 
-        time.sleep(PING_INTERVAL_SEC)
+        time.sleep(check_interval("ping"))
 
 
 def wifi_loop(conn):
@@ -1197,8 +1228,8 @@ def wifi_loop(conn):
             last_bssid, last_ssid = rows[0][0], rows[0][1]
     except sqlite3.Error:
         pass
-    cycle = 0
-    scan_logged_empty = False
+    last_neighbor_scan = None  # monotonic; time-based so a user-configured
+    scan_logged_empty = False  # snapshot interval doesn't change scan cadence
     while True:
         snap = get_wifi_snapshot()
         if snap:
@@ -1224,9 +1255,11 @@ def wifi_loop(conn):
                 )
             if bssid:
                 last_bssid, last_ssid = bssid, snap.get("ssid")
-        # hourly neighbor scan (every 12th 5-minute cycle), only while the
-        # machine actually has Wi-Fi in play
-        if snap and cycle % 12 == 0:
+        # hourly neighbor scan, only while the machine actually has Wi-Fi
+        # in play (wall-clock, not cycle-counted — the snapshot interval
+        # is user-configurable now)
+        if snap and (last_neighbor_scan is None or time.monotonic() - last_neighbor_scan >= 3600):
+            last_neighbor_scan = time.monotonic()
             nets = scan_wifi_networks()
             if nets:
                 scan_logged_empty = False
@@ -1241,8 +1274,7 @@ def wifi_loop(conn):
                 scan_logged_empty = True
                 log("wifi neighbor scan returned nothing (on Windows 11 this "
                     "usually means Location permission is off for desktop apps)")
-        cycle += 1
-        time.sleep(WIFI_SNAPSHOT_INTERVAL_SEC)
+        time.sleep(check_interval("wifi"))
 
 
 def device_loop(conn):
@@ -1320,7 +1352,7 @@ def device_loop(conn):
                     log(note)
             known_macs.update(d["mac"] for d in unseen)
         first_cycle = False
-        time.sleep(DEVICE_SCAN_INTERVAL_SEC)
+        time.sleep(check_interval("devices"))
 
 
 def speedtest_loop(conn):
@@ -1339,7 +1371,7 @@ def speedtest_loop(conn):
                  result.get("jitter_ms"), result.get("loaded_latency_down_ms"),
                  result.get("loaded_latency_up_ms"), result.get("packet_loss_pct")),
             )
-        time.sleep(SPEEDTEST_INTERVAL_SEC)
+        time.sleep(check_interval("speedtest"))
 
 
 def public_ip_loop(conn):
@@ -1368,7 +1400,7 @@ def public_ip_loop(conn):
         if ip:
             last_ip = ip
 
-        time.sleep(PUBLIC_IP_CHECK_INTERVAL_SEC)
+        time.sleep(check_interval("public_ip"))
 
 
 def _routers_file_stamp():
@@ -1420,7 +1452,7 @@ def router_loop(conn, routers):
             log(f"routers.json changed — now monitoring: [{desc}]")
 
         if not routers:
-            time.sleep(ROUTER_PING_INTERVAL_SEC)
+            time.sleep(check_interval("router"))
             continue
 
         ts = now_iso()
@@ -1450,7 +1482,7 @@ def router_loop(conn, routers):
                     )
                     st["open_event_id"] = cur.lastrowid
 
-        time.sleep(ROUTER_PING_INTERVAL_SEC)
+        time.sleep(check_interval("router"))
 
 
 # ---------------------------------------------------------------------------
@@ -1489,6 +1521,28 @@ def _read_json(path):
             return json.load(f)
     except (OSError, ValueError):
         return None
+
+
+# Hot-reloaded check intervals: config.json's "intervals" block over
+# INTERVAL_DEFAULTS, clamped to INTERVAL_BOUNDS. Stamp-cached so the
+# per-loop calls cost an os.stat, not a JSON parse. Threads share the
+# cache without a lock — worst case under the GIL is a redundant reload.
+_intervals_cache = {"stamp": ("never",), "vals": dict(INTERVAL_DEFAULTS)}
+
+
+def check_interval(name):
+    stamp = _file_stamp(CONFIG_PATH)
+    if stamp != _intervals_cache["stamp"]:
+        vals = dict(INTERVAL_DEFAULTS)
+        raw = (_read_json(CONFIG_PATH) or {}).get("intervals")
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                if k in vals and isinstance(v, (int, float)) and not isinstance(v, bool):
+                    lo, hi = INTERVAL_BOUNDS[k]
+                    vals[k] = int(min(hi, max(lo, v)))
+        _intervals_cache["vals"] = vals
+        _intervals_cache["stamp"] = stamp
+    return _intervals_cache["vals"][name]
 
 
 def _write_json_atomic(path, obj):

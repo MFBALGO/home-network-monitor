@@ -68,7 +68,9 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
 
 ## Architecture / code map
 
-- `monitor.py` — always-on collector, 11 daemon threads: ping (gateway +
+- `monitor.py` — always-on collector, 11 daemon threads (all intervals
+  below are the defaults — config.json `intervals` overrides them, hot-
+  reloaded): ping (gateway +
   1.1.1.1/8.8.8.8/9.9.9.9 every 15s), wifi (5m; BSSID/band + roam
   events + hourly neighbor scan into `wifi_scan`), device scan (5m),
   speedtest (30m, Ookla CLI; also captures ping.jitter,
@@ -119,13 +121,18 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   legend lives in the badge's hover tooltip, not on the card face;
   cards go 2-up under 480px); check-cadence footers on every stat/chart
   card, router hover card, and the internet node (command · age ·
-  frequency, e.g. "ping · 6s ago · every 15s"; `[data-checkfoot]`
+  frequency, e.g. "ping · 6s ago · every ~30s"; `[data-checkfoot]`
   elements re-ticked every 10s client-side so ages stay honest between
-  60s regens, amber when a check runs >2× its cadence — frequencies are
-  hardcoded in the JS mirroring monitor.py's *_INTERVAL_SEC constants,
-  update both together; router footers show the live per-router method
-  from router_pings.method, which doubles as the "Online · silent"
-  decoder); an architectural SVG house
+  60s regens, amber when a check runs >2× its cadence. The frequency
+  shown is the MEASURED cadence — median gap in the data (marked ~) —
+  falling back to the configured interval, because real cadence = sleep
+  + work time: a 15s router setting yields ~30s when ARP-only routers
+  burn ping/TCP timeouts each cycle. Router footers show the live
+  per-router method from router_pings.method; "arp cache" footers show
+  the device-scan interval since that's what refreshes their evidence
+  — this doubles as the "Online · silent" decoder. dashboard.py holds
+  a defensive mirror of monitor.py's INTERVAL_DEFAULTS/INTERVAL_BOUNDS,
+  same rule as the schema lists: update together); an architectural SVG house
   map — section-drawing style (flat roof slab, street-level datum line
   with elevation marker, hatched earth below), an "Internet" status node
   buried as a fiber line that rises into the main router (live latency +
@@ -201,7 +208,12 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
     main_router_floor} + optional `hide_ip_prefixes`, `thresholds`
     (incl. `bufferbloat`), `plan_down_mbps`/`plan_up_mbps`, `alerts`
     (see config.example.json; email password is plaintext — app
-    passwords only).
+    passwords only), `intervals` ({check: seconds} overriding
+    monitor.py's INTERVAL_DEFAULTS — keys ping/router/dns/wifi/devices/
+    speedtest/public_ip; hot-reloaded per loop pass via the stamp-cached
+    check_interval(), clamped to INTERVAL_BOUNDS, edited from the
+    Settings General tab; bounds are mirrored in settings_api's
+    validator and dashboard.py — update all three together).
 - `setup.sh` / `setup.ps1` install services, vendor Chart.js (committed
   in `vendor/`, re-downloaded via CDN fallback chain if missing), Ookla
   speedtest CLI (NOT homebrew/pip speedtest-cli), optional nmap.

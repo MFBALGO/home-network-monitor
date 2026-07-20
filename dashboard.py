@@ -57,6 +57,49 @@ LOOKBACK_HOURS = 24 * 7  # pull a week of data; the page itself lets you toggle 
 # rather than being silently invisible. Pings normally land every 15s.
 MONITOR_GAP_MIN = 5
 
+# Defensive mirror of monitor.py's INTERVAL_DEFAULTS / INTERVAL_BOUNDS
+# (same no-imports rule as the schema migration lists — update together).
+# Used for the cadence footers: the CONFIGURED interval is the fallback
+# and the stale baseline; what the footers prefer to display is the
+# MEASURED cadence from the data itself, because real cadence = sleep +
+# work time (e.g. a 15s router setting yields ~30s with ARP fallbacks).
+INTERVAL_DEFAULTS = {
+    "ping": 15, "router": 15, "wifi": 300, "devices": 300,
+    "speedtest": 1800, "public_ip": 600, "dns": 60,
+}
+INTERVAL_BOUNDS = {
+    "ping": (5, 300), "router": (10, 600), "wifi": (60, 3600),
+    "devices": (60, 3600), "speedtest": (600, 24 * 3600),
+    "public_ip": (120, 3600), "dns": (15, 900),
+}
+
+
+def configured_intervals(site_config):
+    vals = dict(INTERVAL_DEFAULTS)
+    raw = site_config.get("intervals")
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            if k in vals and isinstance(v, (int, float)) and not isinstance(v, bool):
+                lo, hi = INTERVAL_BOUNDS[k]
+                vals[k] = int(min(hi, max(lo, v)))
+    return vals
+
+
+def median_gap(ts_list, max_gaps=30):
+    """Median seconds between consecutive timestamps over the most recent
+    max_gaps gaps — a check's measured cadence. None when there isn't
+    enough history to be meaningful."""
+    parsed = []
+    for t in ts_list[-(max_gaps + 1):]:
+        try:
+            parsed.append(datetime.fromisoformat(t).timestamp())
+        except ValueError:
+            pass
+    gaps = sorted(b - a for a, b in zip(parsed, parsed[1:]) if b > a)
+    if len(gaps) < 2:
+        return None
+    return round(gaps[len(gaps) // 2], 1)
+
 
 def load_json_config(path, default):
     """routers.json / devices.json are optional user-edited files — a
@@ -501,6 +544,7 @@ def main():
             "latency": latest_r["latency_ms"],
             "method": latest_r.get("method"),
             "last_check": latest_r["ts"],
+            "measured": median_gap([p["ts"] for p in rows_for_router]),
             "uptime_pct": stats24["uptime_pct"],
             "avg_latency": stats24["avg_latency"],
         })
@@ -739,6 +783,17 @@ def main():
             # nmap every cycle; same PATH here, so this matches in practice)
             "device_cmd": "nmap sweep + arp" if shutil.which("nmap") else "ping sweep + arp",
             "wifi_cmd": "netsh wlan" if sys.platform == "win32" else "system_profiler",
+            # configured cadence (config.json "intervals" over defaults) vs
+            # what the data actually shows — the footers prefer measured
+            "freq": configured_intervals(site_config),
+            "measured": {
+                "ping": median_gap([p["ts"] for p in gateway_pings]),
+                "dns": median_gap([c["ts"] for c in dns_checks]),
+                "speed": median_gap([s["ts"] for s in speedtests]),
+                "wifi": median_gap([w["ts"] for w in wifi]),
+                "public_ip": median_gap([r["ts"] for r in public_ip_rows]),
+                "devices": median_gap([d["t"] for d in device_count_series]),
+            },
         },
     }
 
@@ -1613,22 +1668,32 @@ function agoShort(secs) {
   if (secs < 86400) return Math.round(secs / 3600) + 'h';
   return Math.round(secs / 86400) + 'd';
 }
-function freqShort(s) { return s < 60 ? s + 's' : s < 3600 ? (s / 60) + 'm' : (s / 3600) + 'h'; }
-function setCheckFoot(id, cmd, ts, freqSec) {
+function freqShort(s) {
+  // friendly rounding for measured (non-round) cadences: 30.2 -> "30s",
+  // 92 -> "1.5m", 1810 -> "30m"
+  if (s < 120) return Math.round(s / 5) * 5 + 's';
+  if (s < 3600) { const m = Math.round(s / 30) / 2; return (m % 1 ? m.toFixed(1) : m) + 'm'; }
+  const h = Math.round(s / 1800) / 2; return (h % 1 ? h.toFixed(1) : h) + 'h';
+}
+function setCheckFoot(id, cmd, ts, freqSec, approx) {
   const el = document.getElementById(id);
-  if (!el) return;
+  if (!el || !freqSec) return;
   el.dataset.checkfoot = '1';
   el.dataset.cmd = cmd;
   el.dataset.freq = freqSec;
+  if (approx) el.dataset.approx = '1'; else delete el.dataset.approx;
   if (ts) el.dataset.ts = ts; else delete el.dataset.ts;
 }
 function tickCheckFoots() {
   document.querySelectorAll('[data-checkfoot]').forEach(el => {
     const freq = +el.dataset.freq;
-    // fmt: long = "ping · 6s ago · every 15s" (HTML cards),
-    //      mid  = "ping · 6s ago · 15s"       (hover cards — 176px wide),
-    //      min  = "ping · 6s · 15s"           (internet node — 124px wide)
+    // fmt: long = "ping · 6s ago · every ~30s" (HTML cards),
+    //      mid  = "ping · 6s ago · ~30s"       (hover cards — 176px wide),
+    //      min  = "ping · 6s · ~30s"           (internet node — 124px wide)
     const fmt = el.dataset.fmt || 'long';
+    // "~" marks a MEASURED cadence (median gap in the actual data); a bare
+    // value is the configured interval (no data to measure yet)
+    const tilde = el.dataset.approx ? '~' : '';
     let mid = 'no data yet', stale = false;
     if (el.dataset.ts) {
       const secs = (Date.now() - new Date(el.dataset.ts).getTime()) / 1000;
@@ -1638,28 +1703,43 @@ function tickCheckFoots() {
       stale = secs > freq * 2 + 150;
     }
     el.textContent = el.dataset.cmd + ' · ' + mid + ' · '
-      + (fmt === 'long' ? 'every ' : '') + freqShort(freq);
+      + (fmt === 'long' ? 'every ' : '') + tilde + freqShort(freq);
     el.classList.toggle('stale', stale);
   });
 }
+// measured cadence when the data supports it, configured interval as the
+// fallback — exposed globally because the house map's SVG footers (built
+// later, rebuilt on rerender) need the same numbers
+function checkEff(key) {
+  const C = DATA.checks || {};
+  const m = (C.measured || {})[key], f = (C.freq || {})[key];
+  return m ? { freq: m, approx: true } : { freq: f, approx: false };
+}
 safely('check footers', function() {
   const C = DATA.checks || {};
-  setCheckFoot('cfStatus',       'ping', C.ping, 15);
-  setCheckFoot('cfUptime24',     'ping', C.ping, 15);
-  setCheckFoot('cfUptime7',      'ping', C.ping, 15);
-  setCheckFoot('cfLatency',      'ping', C.ping, 15);
-  setCheckFoot('cfJitter',       'ping', C.ping, 15);
-  setCheckFoot('cfLatencyChart', 'ping', C.ping, 15);
-  setCheckFoot('cfLossChart',    'ping', C.ping, 15);
-  setCheckFoot('cfDns',          'dns lookup', C.dns, 60);
-  setCheckFoot('cfPublicIp',     'https query', C.public_ip, 600);
-  setCheckFoot('cfSpeed',        'ookla speedtest cli', C.speed, 1800);
-  setCheckFoot('cfBufferbloat',  'ookla speedtest cli', C.speed, 1800);
-  setCheckFoot('cfWifi',         C.wifi_cmd || 'wi-fi snapshot', C.wifi, 300);
-  setCheckFoot('cfDevices',      C.device_cmd || 'device scan', C.devices, 300);
-  // per-router chart rides the router thread; freshest router check wins
-  const rLast = (DATA.router_summary || []).map(r => r.last_check).filter(Boolean).sort().pop();
-  setCheckFoot('cfRouters', 'ping / tcp / arp', rLast, 15);
+  const ping = checkEff('ping'), dns = checkEff('dns'), spd = checkEff('speed'),
+        wifi = checkEff('wifi'), pip = checkEff('public_ip'), dev = checkEff('devices');
+  setCheckFoot('cfStatus',       'ping', C.ping, ping.freq, ping.approx);
+  setCheckFoot('cfUptime24',     'ping', C.ping, ping.freq, ping.approx);
+  setCheckFoot('cfUptime7',      'ping', C.ping, ping.freq, ping.approx);
+  setCheckFoot('cfLatency',      'ping', C.ping, ping.freq, ping.approx);
+  setCheckFoot('cfJitter',       'ping', C.ping, ping.freq, ping.approx);
+  setCheckFoot('cfLatencyChart', 'ping', C.ping, ping.freq, ping.approx);
+  setCheckFoot('cfLossChart',    'ping', C.ping, ping.freq, ping.approx);
+  setCheckFoot('cfDns',          'dns lookup', C.dns, dns.freq, dns.approx);
+  setCheckFoot('cfPublicIp',     'https query', C.public_ip, pip.freq, pip.approx);
+  setCheckFoot('cfSpeed',        'ookla speedtest cli', C.speed, spd.freq, spd.approx);
+  setCheckFoot('cfBufferbloat',  'ookla speedtest cli', C.speed, spd.freq, spd.approx);
+  setCheckFoot('cfWifi',         C.wifi_cmd || 'wi-fi snapshot', C.wifi, wifi.freq, wifi.approx);
+  setCheckFoot('cfDevices',      C.device_cmd || 'device scan', C.devices, dev.freq, dev.approx);
+  // per-router chart rides the router thread; freshest check + median of
+  // the per-router measured cadences (they move together — one loop)
+  const rs = DATA.router_summary || [];
+  const rLast = rs.map(r => r.last_check).filter(Boolean).sort().pop();
+  const rMeas = rs.map(r => r.measured).filter(Boolean).sort((a, b) => a - b);
+  const rEff = rMeas.length ? { freq: rMeas[Math.floor(rMeas.length / 2)], approx: true }
+                            : { freq: ((C.freq || {}).router) || 15, approx: false };
+  setCheckFoot('cfRouters', 'ping / tcp / arp', rLast, rEff.freq, rEff.approx);
   tickCheckFoots();
   setInterval(tickCheckFoots, 10000);
 });
@@ -2151,10 +2231,12 @@ safely('devices note', function() {
     const online = (DATA.devices || []).filter(d => d.online).length;
     const total = (DATA.devices || []).length;
     const scanCmd = (DATA.checks && DATA.checks.device_cmd) || 'device scan';
+    const scanEff = checkEff('devices');
+    const scanFreq = (scanEff.approx ? '~' : '') + freqShort(scanEff.freq);
     let note = online + ' online · ' + total + ' seen this week · '
-      + scanCmd + ' · scanned ' + timeSince(DATA.last_device_scan_ts) + ' ago · every 5m';
-    if (ageMin > 15) {
-      note += ' — stale! scans should run every 5 min; check the monitor service';
+      + scanCmd + ' · scanned ' + timeSince(DATA.last_device_scan_ts) + ' ago · every ' + scanFreq;
+    if (ageMin > Math.max(15, scanEff.freq * 3 / 60)) {
+      note += ' — stale! scans should run every ' + scanFreq + '; check the monitor service';
       noteEl.style.color = 'var(--status-critical)';
       noteEl.style.fontWeight = '700';
     }
@@ -2369,12 +2451,20 @@ safely('house map', function() {
       <text class="card-stats" x="${x0 + 14}" y="${y0 + 80}">24h uptime ${fmtPct(pctv)}</text>
       <line class="card-div" x1="${x0 + 14}" y1="${y0 + 87}" x2="${x0 + w - 14}" y2="${y0 + 87}"/>
       <text class="card-foot" x="${x0 + 14}" y="${y0 + 99}" data-checkfoot="1" data-fmt="mid"
-        data-cmd="${methodCmd(opts.method)}" data-freq="15"${opts.last_check ? ` data-ts="${opts.last_check}"` : ''}></text>
+        data-cmd="${methodCmd(opts.method)}" data-freq="${footEff(opts).freq}"${footEff(opts).approx ? ' data-approx="1"' : ''}${opts.last_check ? ` data-ts="${opts.last_check}"` : ''}></text>
     </g>`;
   }
   // how the router was reached on its last check — this doubles as the
-  // plain-language decoder for "Online · silent" (it literally says "arp")
-  function methodCmd(m) { return m === 'tcp' ? 'tcp 80/443' : m === 'arp' ? 'arp' : 'ping'; }
+  // plain-language decoder for "Online · silent" (it literally says "arp
+  // cache": the router only shows up in the ARP table, whose evidence
+  // refreshes with the device sweep, not with the 15s router loop)
+  function methodCmd(m) { return m === 'tcp' ? 'tcp 80/443' : m === 'arp' ? 'arp cache' : 'ping'; }
+  function footEff(opts) {
+    if (opts.method === 'arp') return checkEff('devices');  // evidence cadence, see above
+    if (opts.main) return checkEff('ping');                 // gateway rides the ping thread
+    if (opts.measured) return { freq: opts.measured, approx: true };
+    return { freq: ((DATA.checks || {}).freq || {}).router || 15, approx: false };
+  }
 
   function pill(x, y, opts, hcId) {
     const label = pillLabel(opts.name);
@@ -2481,10 +2571,11 @@ safely('house map', function() {
   }
   // cadence lines: the latency above is 15s-fresh but the speed figures can
   // be up to 30min old — worth saying so right on the node
+  const netPing = checkEff('ping'), netSpd = checkEff('speed');
   svg += `<text class="net-foot" x="${NET.x - 46}" y="${NET.y + 36}" data-checkfoot="1" data-fmt="min"
-    data-cmd="ping" data-freq="15"${CHK.ping ? ` data-ts="${CHK.ping}"` : ''}></text>`;
+    data-cmd="ping" data-freq="${netPing.freq}"${netPing.approx ? ' data-approx="1"' : ''}${CHK.ping ? ` data-ts="${CHK.ping}"` : ''}></text>`;
   svg += `<text class="net-foot" x="${NET.x - 46}" y="${NET.y + 48}" data-checkfoot="1" data-fmt="min"
-    data-cmd="speedtest" data-freq="1800"${CHK.speed ? ` data-ts="${CHK.speed}"` : ''}></text>`;
+    data-cmd="speedtest" data-freq="${netSpd.freq}"${netSpd.approx ? ' data-approx="1"' : ''}${CHK.speed ? ` data-ts="${CHK.speed}"` : ''}></text>`;
   svg += `</g>`;
 
   // wi-fi coverage bubbles behind every node — an offline AP reads as a

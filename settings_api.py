@@ -164,6 +164,29 @@ def validate_config(cfg):
     if cfg.get("update_check") is not None and not isinstance(cfg.get("update_check"), bool):
         errors.append(_err("config", "update_check", "must be true or false"))
 
+    intervals = cfg.get("intervals")
+    if intervals is not None:
+        # bounds mirror monitor.py's INTERVAL_BOUNDS (no-imports rule —
+        # update together). The monitor clamps out-of-range values anyway;
+        # rejecting here just gives the user honest feedback.
+        iv_bounds = {"ping": (5, 300), "router": (10, 600), "wifi": (60, 3600),
+                     "devices": (60, 3600), "speedtest": (600, 24 * 3600),
+                     "public_ip": (120, 3600), "dns": (15, 900)}
+        if not isinstance(intervals, dict):
+            errors.append(_err("config", "intervals", "must be an object of {check: seconds}"))
+        else:
+            for k, v in intervals.items():
+                if k not in iv_bounds:
+                    warnings.append(_err("config", f"intervals.{k}", "unknown check - kept as-is"))
+                elif not isinstance(v, (int, float)) or isinstance(v, bool) or not iv_bounds[k][0] <= v <= iv_bounds[k][1]:
+                    lo, hi = iv_bounds[k]
+                    errors.append(_err("config", f"intervals.{k}", f"must be seconds between {lo} and {hi}"))
+            st = intervals.get("speedtest")
+            if isinstance(st, (int, float)) and not isinstance(st, bool) and st < 900:
+                warnings.append(_err("config", "intervals.speedtest",
+                                     "speed tests move real data - running more often than every "
+                                     "15 min can eat into data caps"))
+
     alerts = cfg.get("alerts")
     if alerts is not None:
         if not isinstance(alerts, dict):
@@ -216,7 +239,7 @@ def validate_config(cfg):
 
     known = {"title", "floors", "underground_floors", "main_router_floor",
              "hide_ip_prefixes", "thresholds", "plan_down_mbps", "plan_up_mbps",
-             "update_check", "alerts"}
+             "update_check", "alerts", "intervals"}
     for key in cfg:
         if key not in known:
             warnings.append(_err("config", key, "unknown setting - kept as-is"))

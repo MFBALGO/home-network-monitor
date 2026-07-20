@@ -119,6 +119,7 @@ _SHARED_HEAD = """<!DOCTYPE html>
   .floor-main { white-space: nowrap; }
   .floor-main.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
   .thresh-grid { display: grid; grid-template-columns: 110px 1fr 1fr; gap: 8px 12px; align-items: center; }
+  .iv-grid { display: grid; grid-template-columns: minmax(180px, 1fr) 150px; gap: 8px 12px; align-items: center; }
   .thresh-grid .hdr { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; }
 </style>
 </head><body><div class="wrap">
@@ -577,6 +578,16 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
       <span class="hdr">Metric</span><span class="hdr">Good (up to)</span><span class="hdr">Fair (up to)</span>
     </div>
   </div>
+  <div class="card">
+    <h2 style="margin-top:0">Check frequency</h2>
+    <div class="sub" style="margin-bottom:10px">How often the monitor runs each check. Saving
+    applies within one cycle — no restart. The dashboard's card footers show the <b>measured</b>
+    cadence (marked ~), which can run slower than the setting while checks wait on timeouts —
+    e.g. routers that only answer via ARP add a few seconds of every cycle.
+    Speed tests download/upload real data: more often than every 15 minutes can eat into data
+    caps and briefly loads the line each run.</div>
+    <div class="iv-grid" id="gIntervals"></div>
+  </div>
   <div class="msg" id="gMsg"></div>
   <div class="row" style="justify-content:flex-end"><button class="primary" id="gSave">Save general settings</button></div>
 </div>
@@ -701,6 +712,19 @@ const THRESH_METRICS = [
   ['uptime', 'Uptime %', 99.9, 99],
   ['wifi', 'Wi-Fi dBm', -60, -70],
 ];
+// [key, label, default seconds, preset choices] — defaults and the
+// allowed range mirror monitor.py's INTERVAL_DEFAULTS/INTERVAL_BOUNDS
+// (validated server-side in settings_api.validate_config).
+const INTERVAL_CHECKS = [
+  ['ping',      'Internet ping (uptime, latency, jitter)', 15,   [5, 10, 15, 30, 60, 120, 300]],
+  ['router',    'Router / access point checks',            15,   [10, 15, 30, 60, 120, 300]],
+  ['dns',       'DNS lookup',                              60,   [15, 30, 60, 120, 300, 900]],
+  ['wifi',      'Wi-Fi signal snapshot',                   300,  [60, 120, 300, 600, 1800, 3600]],
+  ['devices',   'Device scan',                             300,  [60, 120, 300, 600, 1800, 3600]],
+  ['speedtest', 'Speed test',                              1800, [900, 1800, 3600, 10800, 21600, 43200, 86400]],
+  ['public_ip', 'Public IP check',                         600,  [120, 300, 600, 1800, 3600]],
+];
+function fmtIv(s) { return s < 60 ? s + 's' : s < 3600 ? (s / 60) + ' min' : (s / 3600) + ' h'; }
 const S = { config: {}, routers: [], devices: {} };
 S.floorState = { floors: [], groundIndex: 0, main: null, onchange: refreshRouterFloorSelects };
 
@@ -741,6 +765,21 @@ async function load() {
       '<span>' + lbl + '</span>' +
       '<input type="number" step="any" id="th-' + key + '-good" placeholder="' + defGood + '" value="' + (th[key] && th[key].good != null ? th[key].good : '') + '">' +
       '<input type="number" step="any" id="th-' + key + '-fair" placeholder="' + defFair + '" value="' + (th[key] && th[key].fair != null ? th[key].fair : '') + '">');
+  }
+
+  const ivGrid = document.getElementById('gIntervals');
+  const iv = S.config.intervals || {};
+  for (const [key, lbl, def, choices] of INTERVAL_CHECKS) {
+    const cur = iv[key];
+    let opts = '<option value="">default (' + fmtIv(def) + ')</option>';
+    // a hand-edited config.json value outside the presets still shows up
+    const vals = choices.slice();
+    if (cur != null && !vals.includes(cur)) vals.push(cur), vals.sort((a, b) => a - b);
+    for (const v of vals) {
+      opts += '<option value="' + v + '"' + (cur === v ? ' selected' : '') + '>' + fmtIv(v) + '</option>';
+    }
+    ivGrid.insertAdjacentHTML('beforeend',
+      '<span>' + lbl + '</span><select id="iv-' + key + '">' + opts + '</select>');
   }
 
   renderRouters();
@@ -871,11 +910,18 @@ document.getElementById('gSave').onclick = async () => {
     if (Object.keys(entry).length) th[key] = entry;
   }
   if (Object.keys(th).length) cfg.thresholds = th; else delete cfg.thresholds;
+  const iv = {};
+  for (const [key] of INTERVAL_CHECKS) {
+    const v = parseInt(document.getElementById('iv-' + key).value, 10);
+    if (!isNaN(v)) iv[key] = v;   // empty = use the default, stored as absent
+  }
+  if (Object.keys(iv).length) cfg.intervals = iv; else delete cfg.intervals;
 
   const {status, data} = await api('/api/config', {config: cfg});
   if (status === 200) {
     S.config = cfg;
-    showMsg(msg, 'ok', 'Saved. The dashboard picks this up on its next refresh (~1 min).',
+    showMsg(msg, 'ok', 'Saved. The dashboard picks this up on its next refresh (~1 min); '
+      + 'check frequencies apply within one old cycle of each check.',
       (data.warnings || []).map(fmtIssue));
   } else {
     showMsg(msg, 'error', 'Not saved — please fix:', (data && data.errors || []).map(fmtIssue));

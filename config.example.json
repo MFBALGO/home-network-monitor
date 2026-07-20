@@ -5,6 +5,10 @@
   "main_router_floor": "Ground Floor",
   "plan_down_mbps": 500,
   "plan_up_mbps": 200,
+  "intervals": {
+    "ping": 15, "router": 15, "dns": 60,
+    "wifi": 300, "devices": 300, "speedtest": 1800, "public_ip": 600
+  },
   "alerts": {
     "enabled": false,
     "min_duration_sec": 60,

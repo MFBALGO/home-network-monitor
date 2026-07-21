@@ -264,8 +264,10 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
     (incl. `bufferbloat` and `plan_pct` {good, fair}% — the Speed card
     rating AND the report's below-plan bar), `plan_down_mbps`/
     `plan_up_mbps`, `monitor_location` (which router/AP the monitor PC
-    hangs off; labels the Speed card/chart/report with "via X" so a slow
-    reading isn't blamed on the ISP when it's an in-house path),
+    hangs off — any router incl. the ISP box, or "Main Router"; labels
+    the Speed card/chart/report with "via X" AND moves the map's speed
+    readout from the Internet cloud onto that node's hover card, so a
+    slow reading isn't blamed on the ISP when it's an in-house path),
     `detection` ({outage_fails, degraded_latency_ms, degraded_loss_pct}
     — the monitor's EVENT triggers, hot-reloaded via detection(), bounds
     in DETECTION_BOUNDS mirrored in settings_api; display `thresholds`

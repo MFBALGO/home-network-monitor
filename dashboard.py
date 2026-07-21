@@ -2847,12 +2847,17 @@ safely('house map', function() {
     </g>`;
   }
   // Hover card position: above the pill when there's room, else below.
+  // The whole card is scaled up around its center: at the 1000-unit
+  // desktop viewBox the raw card text landed around 8-9 real pixels —
+  // technically dense, practically squinting. Scaling the group keeps
+  // every proportion and lets card() keep its unit-space layout.
+  const CARD_SCALE = compact ? 1.15 : 1.3;
   function hovercard(p, opts, hcId) {
-    const h = cardH(opts);
-    const above = p.y - 14 - h > TOP - 30;
-    const cy = above ? p.y - 27 - h / 2 : p.y + 27 + h / 2;
-    const cx = Math.min(Math.max(p.x, CARD_W / 2 + 8), W - CARD_W / 2 - 8);
-    return `<g class="hovercard" id="${hcId}">${card(cx, cy, opts)}</g>`;
+    const hk = cardH(opts) * CARD_SCALE, wk = (CARD_W + (opts.main ? 16 : 0)) * CARD_SCALE;
+    const above = p.y - 14 - hk > TOP - 30;
+    const cy = above ? p.y - 20 - hk / 2 : p.y + 20 + hk / 2;
+    const cx = Math.min(Math.max(p.x, wk / 2 + 8), W - wk / 2 - 8);
+    return `<g class="hovercard" id="${hcId}"><g transform="translate(${cx} ${cy}) scale(${CARD_SCALE}) translate(${-cx} ${-cy})">${card(cx, cy, opts)}</g></g>`;
   }
 
   let svg = `<svg class="house-svg${compact ? ' compact' : ''}" viewBox="0 0 ${W} ${totalH}" role="img" aria-label="Map of the internet connection and routers by floor">`;

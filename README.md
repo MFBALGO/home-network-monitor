@@ -275,6 +275,16 @@ ways to find them:
   other web-admin devices, not just routers — use the title/Server column
   to tell them apart (a router's login page usually names the brand).
 
+One entry may carry `"role": "isp"` to mark your ISP's modem/ONT (the
+Settings page's *Routers* tab has a dedicated "Internet box" section for
+it). It's monitored like any other router, but the house map draws it as
+a wall-mounted box where the fiber enters — internet → ISP box → your
+router — so you can see *which* leg of the connection died. If the ISP
+box **is** your main router (a modem-router combo, no separate router of
+your own), you can still add it: the dashboard notices its IP is the
+network gateway and merges it into the Main Router node instead of
+showing the same device twice.
+
 The monitor picks up edits to `routers.json` by itself within ~15 seconds
 — no restart needed. The dashboard will start showing a **Routers &
 access points** table (with each one's live status, 24h uptime, and

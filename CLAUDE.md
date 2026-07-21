@@ -254,7 +254,22 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
     the fiber enters — chain internet → ISP box → main router, with the
     first segment colored by internet reachability and the second by
     the box's own liveness — instead of a floor pill; it's excluded
-    from floor derivation and gets its own diagnosis-banner wording. When the
+    from floor derivation and gets its own diagnosis-banner wording.
+    COMBO-BOX MERGE: any routers.json entry whose IP is the default
+    gateway (usually the role:"isp" box when the ISP modem IS the house
+    router) is deduped, not shown twice — monitor.py's router_loop
+    skips pinging it (drop_gateway_dupes; the gateway ping thread
+    already covers it, else every outage logs as scope='gateway' AND
+    scope='router' with double alerts), dashboard.py drops it from
+    router_summary (matching on the CONFIGURED IP, so the ≤7d
+    router_pings tail from before the skip can't resurrect it) and
+    sets gateway.isp_name when it was the role:"isp" entry — the map
+    then runs the fiber straight into the Main Router pill, shows the
+    box's name on that pill's IP line, and the banner's gateway-down
+    rule swaps to ISP-flavored wording ("that's a call to the ISP")
+    since "not your ISP" would be exactly wrong there. The settings
+    validator warns (not errors) when an entered IP is the gateway.
+    When the
     file exists it is AUTHORITATIVE for the dashboard's router list —
     deleted routers must not resurrect from router_pings history (they
     used to); the history-derived fallback only applies when the file

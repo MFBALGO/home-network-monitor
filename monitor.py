@@ -1784,7 +1784,26 @@ def _routers_file_stamp():
         return None
 
 
-def router_loop(conn, routers):
+def drop_gateway_dupes(routers, gateway):
+    """Combo-box installs: a routers.json entry — typically the role='isp'
+    Internet box when the ISP modem IS the house router — can have the
+    default gateway's IP. That device is already monitored by the ping
+    thread as the gateway, at ping cadence with bursts; monitoring it here
+    too would record every outage twice (scope='gateway' AND
+    scope='router'), fire duplicate alerts, and make the dashboard draw
+    one device as two map nodes. Skip it — the dashboard merges its name
+    onto the Main Router node instead."""
+    kept = []
+    for r in routers:
+        if gateway and r["ip"] == gateway:
+            log(f"router '{r['name']}' ({r['ip']}) is the default gateway — "
+                "already covered by the gateway ping thread, skipping duplicate monitoring")
+        else:
+            kept.append(r)
+    return kept
+
+
+def router_loop(conn, routers, gateway=None):
     """Ping each configured router/access point independently, and track
     outages per-router the same way the main gateway is tracked — so a dead
     node in one room shows up as "Kitchen AP down" rather than just a vague
@@ -1793,6 +1812,7 @@ def router_loop(conn, routers):
     routers.json is hot-reloaded (same idea as devices.json in device_loop):
     when the file changes — e.g. saved from the settings UI — the new list
     takes effect within one 15s cycle, no restart needed."""
+    routers = drop_gateway_dupes(routers, gateway)
     state = {r["name"]: {"consecutive_fail": 0, "open_event_id": None} for r in routers}
     stamp = _routers_file_stamp()
 
@@ -1800,7 +1820,7 @@ def router_loop(conn, routers):
         new_stamp = _routers_file_stamp()
         if new_stamp != stamp:
             stamp = new_stamp
-            new_routers = load_routers()
+            new_routers = drop_gateway_dupes(load_routers(), gateway)
             new_names = {r["name"] for r in new_routers}
             # A router that was removed while it had an open outage event
             # would otherwise show as "Ongoing" on the dashboard forever —
@@ -2655,7 +2675,7 @@ def main():
         threading.Thread(target=device_loop, args=(conn,), daemon=True),
         threading.Thread(target=speedtest_loop, args=(conn,), daemon=True),
         threading.Thread(target=public_ip_loop, args=(conn,), daemon=True),
-        threading.Thread(target=router_loop, args=(conn, routers), daemon=True),
+        threading.Thread(target=router_loop, args=(conn, routers, gateway), daemon=True),
         threading.Thread(target=dns_loop, args=(conn, gateway), daemon=True),
         threading.Thread(target=retention_loop, args=(conn,), daemon=True),
         threading.Thread(target=command_loop, args=(conn,), daemon=True),

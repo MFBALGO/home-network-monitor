@@ -583,6 +583,29 @@ def main():
     # events in the outage log are unaffected — that's the record.
     if router_meta:
         router_names = [n for n in router_names if n in router_meta]
+    # Combo-box installs: a routers.json entry — typically the role='isp'
+    # Internet box — can BE the default gateway (the ISP modem-router
+    # doubling as the house router). The ping thread already monitors that
+    # device as the Main Router, so keeping it here would draw one device
+    # twice on the map (wall box + main pill, with a WAN link from the
+    # device to itself) and duplicate its chart line. Drop it and carry
+    # the ISP box's name on the gateway node instead ("isp_name" — the JS
+    # shows it on the Main Router card and the diagnosis banner swaps to
+    # ISP-flavored wording). monitor.py's router_loop skips pinging such
+    # entries for the same reason; router_pings rows for them are just the
+    # pre-skip history tail. Matched on the CONFIGURED IP, not the last
+    # ping row's — the config is current truth once the monitor stops
+    # refreshing those rows.
+    if gateway_info:
+        merged = [(item.get("name") or "").strip() for item in router_config
+                  if (item.get("name") or "").strip()
+                  and str(item.get("ip") or "").strip() == gateway_info["ip"]]
+        if merged:
+            router_names = [n for n in router_names if n not in merged]
+            isp_named = next((n for n in merged
+                              if router_meta.get(n, {}).get("role") == "isp"), None)
+            if isp_named:
+                gateway_info["isp_name"] = isp_named
     router_summary = []
     for name in router_names:
         rows_for_router = [p for p in router_pings if p["name"] == name]
@@ -2163,12 +2186,20 @@ safely('diagnosis banner', function() {
       head: 'Monitoring is paused — nothing is being measured.',
       action: 'Wake the monitor PC or check the NetMon Monitor task; the network itself may be fine.' });
   }
-  // 3. Gateway (main router) down → local problem, not the ISP.
+  // 3. Gateway (main router) down → local problem, not the ISP. Except on
+  //    combo-box installs (the gateway IS the ISP box — gateway.isp_name
+  //    is set by the Python-side merge): there "not your ISP" would be
+  //    exactly wrong, since the dead device is the ISP's own hardware.
+  const gwIsp = DATA.gateway && DATA.gateway.isp_name;
   const gwOut = byScope('gateway')[0];
   if (gwOut || (DATA.gateway && DATA.gateway.status === 'down')) {
     matched.push({ cls: 'diag-crit',
-      head: 'Your main router isn’t responding — this is a problem in the house, not with your ISP.',
-      action: 'Power-cycle the main router (unplug 10 seconds, plug back in). Wi-Fi and internet will drop for ~2 minutes while it restarts.',
+      head: gwIsp
+        ? 'The ISP’s box ("' + gwIsp + '") — which is also your main router — isn’t responding.'
+        : 'Your main router isn’t responding — this is a problem in the house, not with your ISP.',
+      action: gwIsp
+        ? 'Power-cycle it (unplug 10 seconds, plug back in). Wi-Fi and internet will drop for ~2 minutes while it restarts — and if it doesn’t come back, that’s a call to the ISP: the box is their hardware.'
+        : 'Power-cycle the main router (unplug 10 seconds, plug back in). Wi-Fi and internet will drop for ~2 minutes while it restarts.',
       chip: gwOut ? 'down for ' + durTxt(gwOut) : null });
   }
   // 4. Internet down while the gateway is fine → ISP.
@@ -2646,7 +2677,10 @@ safely('house map', function() {
   // The ISP box (role:'isp' in routers.json) is not an AP on a floor —
   // topologically it sits BETWEEN the internet and the main router, so it
   // renders as a utility box on the house wall where the fiber enters,
-  // never as a floor pill.
+  // never as a floor pill. Combo-box installs (the box IS the gateway)
+  // never reach here: the Python side drops that row from router_summary
+  // and sets gateway.isp_name instead, so the fiber runs straight into
+  // the Main Router pill rather than drawing one device as two nodes.
   const ispBox = (DATA.router_summary || []).find(r => r.role === 'isp');
   const routers = (DATA.router_summary || []).filter(r => r.role !== 'isp');
   const gw = DATA.gateway;
@@ -2793,7 +2827,7 @@ safely('house map', function() {
   const MONLOC = DATA.monitor_location;
   const lastSpeed = (DATA.speed_series || []).slice(-1)[0];
   const speedHost = MONLOC
-    ? (MONLOC === 'Main Router' && gw ? 'main'
+    ? (gw && (MONLOC === 'Main Router' || MONLOC === gw.isp_name) ? 'main'
        : (ispBox && ispBox.name === MONLOC) ? 'isp'
        : placed.some(p => p.name === MONLOC) ? 'router' : null)
     : null;
@@ -3061,7 +3095,12 @@ safely('house map', function() {
     hcs.push(hovercard(p, { ...p, showSpeed: speedHost === 'router' && p.name === MONLOC }, 'hc-' + i));
   });
   if (gw) {
-    const opts = { main: true, name: 'Main Router', ip: gw.ip,
+    // Combo-box merge: gw.isp_name is the user's name for the ISP box the
+    // Python side folded into this node — ride it on the IP line so the
+    // box they configured is still visibly accounted for.
+    const boxNm = gw.isp_name
+      ? (gw.isp_name.length > 14 ? gw.isp_name.slice(0, 13) + '…' : gw.isp_name) : null;
+    const opts = { main: true, name: 'Main Router', ip: gw.ip + (boxNm ? ' · ' + boxNm : ''),
                    status: gw.status, uptime_pct: gw.uptime_pct, avg_latency: gw.avg_latency,
                    last_check: gw.last_check, showSpeed: speedHost === 'main' };
     svg += pill(MAIN.x, MAIN.y, opts, 'hc-main');

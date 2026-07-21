@@ -310,6 +310,7 @@ def validate_routers(routers, floors=None):
     floor_set = set(floors) if isinstance(floors, list) else set()
 
     seen_names, seen_ips = set(), set()
+    gw_ip = _gateway_ip_cached()
     isp_count = 0
     for i, r in enumerate(routers):
         if not isinstance(r, dict):
@@ -332,6 +333,15 @@ def validate_routers(routers, floors=None):
             if str(parsed) in seen_ips:
                 warnings.append(_err("routers", f"[{i}].ip", f"duplicate IP {parsed} - monitored twice"))
             seen_ips.add(str(parsed))
+            # Combo-box installs: this entry IS the default gateway, which
+            # the monitor already tracks as the Main Router. Valid config
+            # (the user's mental model — "that box on the wall" — is
+            # right), but it gets merged, not monitored twice.
+            if gw_ip and str(parsed) == gw_ip:
+                warnings.append(_err("routers", f"[{i}].ip",
+                                     f"{parsed} is your network gateway - it is already monitored "
+                                     "as the Main Router, so this entry will be merged into the "
+                                     "Main Router node on the map instead of shown separately"))
         except ValueError:
             errors.append(_err("routers", f"[{i}].ip", "not a valid IPv4 address"))
 
@@ -392,6 +402,21 @@ def _gateway_ip():
         return monitor.get_default_gateway()
     except Exception:
         return None
+
+
+# validate_routers wants the gateway too (to flag combo-box entries), and
+# it runs on every settings save/validate — but get_default_gateway spawns
+# an OS route-table subprocess. Cache the answer briefly instead of paying
+# that on every validation round-trip; gateways change rarely enough that
+# a few minutes of staleness only delays a *warning*.
+_gw_cache = {"t": 0.0, "ip": None}
+
+
+def _gateway_ip_cached(ttl_sec=300):
+    if time.time() - _gw_cache["t"] > ttl_sec:
+        _gw_cache["ip"] = _gateway_ip()
+        _gw_cache["t"] = time.time()
+    return _gw_cache["ip"]
 
 
 def _decorate(results, gateway_ip):

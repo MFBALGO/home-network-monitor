@@ -6,6 +6,9 @@
   "plan_down_mbps": 500,
   "plan_up_mbps": 200,
   "monitor_location": "Main Router",
+  "custom_targets": [
+    {"name": "Example game server", "host": "example.com"}
+  ],
   "detection": {
     "outage_fails": 3, "degraded_latency_ms": 150, "degraded_loss_pct": 20
   },

@@ -81,10 +81,14 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   speedtest (30m, Ookla CLI; also captures ping.jitter,
   download/upload.latency.iqm = bufferbloat, packetLoss), public IP
   (10m), router checks (15s per router), DNS health (60s; failing
-  domains named in the event note; each cycle ALSO queries the gateway
+  domains named in the event note; www.speedtest.net is IN the rotation
+  deliberately — instruments the Ookla CLI's "Couldn't resolve host
+  name" failure class; each cycle ALSO queries the gateway
   + 1.1.1.1 + 8.8.8.8 directly via hand-rolled UDP `dns_query_direct`
   — dns_checks.resolver tags 'system'/'gateway'/IP, only 'system' rows
-  drive events and the chart), retention (daily, prunes >90d incl.
+  drive events and the chart), speedtest failures RETRY ONCE after 60s
+  (only the final outcome hits the DB — transients go to the log, not
+  the chart), retention (daily, prunes >90d incl.
   blips),
   command poller (2s; executes web-UI commands from
   `data/commands.json`, writes `data/test_status.json` — two one-way
@@ -272,6 +276,14 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
     — the monitor's EVENT triggers, hot-reloaded via detection(), bounds
     in DETECTION_BOUNDS mirrored in settings_api; display `thresholds`
     only color badges, `detection` decides what becomes an event),
+    `custom_targets` ([{name, host}] max 5, Settings → General "Extra
+    ping targets"; ping-burst per ping cycle into pings with
+    target_type='custom' KEYED BY NAME (rename host, keep history);
+    per-target scope='target' outage events (router_name = target name)
+    SUPPRESSED while the internet itself is down; own chart card "Your
+    targets" (hidden when none) + "Targets" filter in the outage log;
+    NOT counted in downtime/uptime — a dead game server isn't the
+    line's fault),
     `alerts`
     (see config.example.json; email password is plaintext — app
     passwords only), `intervals` ({check: seconds} overriding

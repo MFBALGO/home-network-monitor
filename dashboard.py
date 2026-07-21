@@ -695,10 +695,22 @@ def main():
         k = bucket_key(p["ts"])
         router_buckets.setdefault((p["name"], k), []).append(p["latency_ms"])
 
+    # per-custom-target latency buckets (config custom_targets; pings rows
+    # carry target_type='custom' keyed by the target NAME)
+    custom_rows = [p for p in pings if p["target_type"] == "custom"]
+    target_buckets = {}
+    target_names = []
+    for p in custom_rows:
+        if p["target"] not in target_names:
+            target_names.append(p["target"])
+        if p["success"] and p["latency_ms"] is not None:
+            target_buckets.setdefault((p["target"], bucket_key(p["ts"])), []).append(p["latency_ms"])
+
     # Build a *complete* 5-min bucket axis over the whole span, including
     # empty buckets as None — so monitoring gaps show as visible breaks in
     # the charts instead of the line quietly connecting across them.
-    all_keys = set(buckets.keys()) | {k for (_n, k) in router_buckets} | set(dns_buckets.keys())
+    all_keys = (set(buckets.keys()) | {k for (_n, k) in router_buckets}
+                | {k for (_n, k) in target_buckets} | set(dns_buckets.keys()))
     full_keys = []
     if all_keys:
         cur = datetime.fromisoformat(min(all_keys))
@@ -737,6 +749,17 @@ def main():
                 for k in full_keys
             ]
             for r in router_summary
+        },
+    }
+    targets_chart = {
+        "buckets": full_keys,
+        "series": {
+            name: [
+                (round(sum(target_buckets[(name, k)]) / len(target_buckets[(name, k)]), 1)
+                 if (name, k) in target_buckets else None)
+                for k in full_keys
+            ]
+            for name in target_names
         },
     }
 
@@ -845,6 +868,7 @@ def main():
         "dns_24h": dns_24h,
         "device_count_series": device_count_series,
         "routers_chart": routers_chart,
+        "targets_chart": targets_chart,
         "speed_series": [{"t": s["ts"], "down": s["download_mbps"], "up": s["upload_mbps"], "ping": s["ping_ms"],
                           "jitter": s.get("jitter_ms"), "lat_down": s.get("loaded_latency_down_ms"),
                           "lat_up": s.get("loaded_latency_up_ms"), "ploss": s.get("packet_loss_pct")}
@@ -1601,6 +1625,11 @@ def build_html(data):
       <div id="routersChartEmpty" class="empty" style="display:none">No router ping history yet.</div>
       <div class="check-foot" id="cfRouters"></div>
     </div>
+    <div class="chart-card" id="targetsCard" style="display:none">
+      <div class="chart-label">Your targets — latency (ms)<span class="chart-sublabel">custom destinations from Settings; each gets its own outage events</span></div>
+      <div class="chart-box"><canvas id="targetsChart"></canvas></div>
+      <div class="check-foot" id="cfTargets"></div>
+    </div>
   </section>
 
   <section>
@@ -1960,6 +1989,7 @@ safely('check footers', function() {
   const rEff = rMeas.length ? { freq: rMeas[Math.floor(rMeas.length / 2)], approx: true }
                             : { freq: ((C.freq || {}).router) || 15, approx: false };
   setCheckFoot('cfRouters', 'ping / tcp / arp', rLast, rEff.freq, rEff.approx);
+  setCheckFoot('cfTargets', 'ping burst', C.ping, ping.freq, ping.approx);  // rides the ping thread
   tickCheckFoots();
   setInterval(tickCheckFoots, 10000);
 });
@@ -2292,12 +2322,14 @@ safely('outages log', function() {
   // classify every event once: category, display label, colors, geometry
   const TL_COLOR = { outage: 'var(--status-critical)', dns: 'var(--status-serious)',
     slow: 'var(--status-warning)', device: 'var(--status-good)', ip: 'var(--series-blue)',
-    paused: 'var(--muted)', wifi: 'var(--series-blue)', flap: 'var(--status-serious)' };
+    paused: 'var(--muted)', wifi: 'var(--series-blue)', flap: 'var(--status-serious)',
+    tgt: 'var(--series-blue)' };
   function classify(e) {
     let cat, label, badgeClass, rowClass, point = false;
     if (e.kind === 'outage' && e.scope === 'gateway') { cat='outage'; label='Gateway down'; badgeClass='badge-gateway'; rowClass='event-gateway'; }
     else if (e.kind === 'outage' && e.scope === 'router') { cat='outage'; label=(e.router_name||'Router')+' down'; badgeClass='badge-gateway'; rowClass='event-gateway'; }
     else if (e.kind === 'outage' && e.scope === 'dns') { cat='dns'; label='DNS failure'; badgeClass='badge-dns'; rowClass='event-dns'; }
+    else if (e.kind === 'outage' && e.scope === 'target') { cat='tgt'; label=(e.router_name||'Target')+' unreachable'; badgeClass='badge-dns'; rowClass='event-dns'; }
     else if (e.kind === 'outage') { cat='outage'; label='Internet down'; badgeClass='badge-internet'; rowClass='event-internet'; }
     else if (e.kind === 'degraded') { cat='slow'; label='Slow / degraded'; badgeClass='badge-degraded'; rowClass='event-degraded'; }
     else if (e.kind === 'instability') { cat='flap'; label='Flapping'; badgeClass='badge-degraded'; rowClass='event-degraded'; }
@@ -2412,8 +2444,8 @@ safely('outages log', function() {
     `<span class="tlk"><i style="background:${c}"></i>${n}</span>`).join('');
 
   // ---- filter chips ----
-  const CAT_NAMES = { outage: 'Outages', dns: 'DNS', slow: 'Slow', flap: 'Flapping', device: 'Devices', ip: 'IP changes', wifi: 'Wi-Fi roams', paused: 'Paused' };
-  const CAT_ORDER = ['outage', 'dns', 'slow', 'flap', 'device', 'ip', 'wifi', 'paused'];
+  const CAT_NAMES = { outage: 'Outages', dns: 'DNS', tgt: 'Targets', slow: 'Slow', flap: 'Flapping', device: 'Devices', ip: 'IP changes', wifi: 'Wi-Fi roams', paused: 'Paused' };
+  const CAT_ORDER = ['outage', 'dns', 'tgt', 'slow', 'flap', 'device', 'ip', 'wifi', 'paused'];
   const counts = {};
   allEvents.forEach(e => { counts[e.cat] = (counts[e.cat] || 0) + 1; });
   const present = CAT_ORDER.filter(c => counts[c]);
@@ -3332,6 +3364,42 @@ function renderRoutersChart() {
   });
 }
 
+// ---------- custom-target latency chart (only when targets exist) ----------
+function renderTargetsChart() {
+  const tc = DATA.targets_chart;
+  const names = tc ? Object.keys(tc.series) : [];
+  const card = document.getElementById('targetsCard');
+  if (!tc || !tc.buckets.length || names.length === 0) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const cutoff = Date.now() - currentRangeHours * 3600 * 1000;
+  const keep = tc.buckets.map(t => new Date(t).getTime() >= cutoff);
+  const labels = tc.buckets.filter((_, i) => keep[i]).map(t => new Date(t));
+  const datasets = names.map((name, i) => {
+    const col = catColor(i + 3);   // offset so targets don't mirror the first routers' colors
+    return {
+      label: name,
+      data: tc.series[name].filter((_, j) => keep[j]),
+      borderColor: col, backgroundColor: col,
+      borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 4, tension: 0.2, spanGaps: false,
+    };
+  });
+  if (chartInstances.targets) chartInstances.targets.destroy();
+  chartInstances.targets = new Chart(document.getElementById('targetsChart'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: { x: timeScale(), y: yScale('ms') },
+      plugins: {
+        legend: legendOpts(true),
+        tooltip: { ...tooltipBase(), callbacks: { label: (c) => c.dataset.label + ': ' + (c.parsed.y == null ? 'no data' : c.parsed.y + ' ms') } },
+      },
+    },
+  });
+}
+
 // One shared 24h/7d range drives every time-series chart. The same toggle
 // appears in several section headers; clicking any of them updates them all
 // and re-renders every range-aware chart in sync.
@@ -3346,6 +3414,7 @@ function applyRange(hours) {
     renderLatencyChart();
     renderLossChart();
     renderRoutersChart();
+    renderTargetsChart();
     renderSpeedChart();
     renderWifiChart();
     renderLoadedLatencyChart();
@@ -3571,6 +3640,7 @@ function rerenderCharts() {
   safely('latency chart', renderLatencyChart);
   safely('loss chart', renderLossChart);
   safely('router latency chart', renderRoutersChart);
+  safely('custom targets chart', renderTargetsChart);
   safely('speed test chart', renderSpeedChart);
   safely('wifi chart', renderWifiChart);
   safely('loaded latency chart', renderLoadedLatencyChart);

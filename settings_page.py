@@ -592,6 +592,18 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
     </div>
   </div>
   <div class="card">
+    <h2 style="margin-top:0">Extra ping targets</h2>
+    <div class="sub" style="margin-bottom:10px">Destinations <b>you</b> care about — a game
+    server, your work VPN, a relative's router. The built-in checks use big anycast services
+    (the easiest hosts on the internet to reach), so "internet fine but my game is unplayable"
+    is invisible without asking the actual destination. Each target gets its own chart line and
+    its own outage events ("unreachable while the internet is fine"). Up to 5.</div>
+    <table id="tgTable"><tr><th>Name</th><th>Host or IP</th><th></th></tr></table>
+    <div class="row" style="margin-top:10px">
+      <button class="small" id="tgAdd">+ Add target</button>
+    </div>
+  </div>
+  <div class="card">
     <h2 style="margin-top:0">Check frequency</h2>
     <div class="sub" style="margin-bottom:10px">How often the monitor runs each check. Saving
     applies within one cycle — no restart. The dashboard's card footers show the <b>measured</b>
@@ -798,6 +810,10 @@ async function load() {
   document.getElementById('dtLat').value = dt.degraded_latency_ms != null ? dt.degraded_latency_ms : '';
   document.getElementById('dtLoss').value = dt.degraded_loss_pct != null ? dt.degraded_loss_pct : '';
 
+  const tgT = document.getElementById('tgTable');
+  tgT.innerHTML = '<tr><th>Name</th><th>Host or IP</th><th></th></tr>' +
+    (S.config.custom_targets || []).map(targetRow).join('');
+
   const grid = document.getElementById('gThresh');
   const th = S.config.thresholds || {};
   for (const [key, lbl, defGood, defFair] of THRESH_METRICS) {
@@ -953,6 +969,14 @@ document.getElementById('gSave').onclick = async () => {
   if (!isNaN(dtLat)) dt.degraded_latency_ms = dtLat;
   if (!isNaN(dtLoss)) dt.degraded_loss_pct = dtLoss;
   if (Object.keys(dt).length) cfg.detection = dt; else delete cfg.detection;
+  const tgs = [];
+  for (const tr of document.querySelectorAll('#tgTable tr')) {
+    const n = tr.querySelector('.tg-name');
+    if (!n) continue;
+    const name = n.value.trim(), host = tr.querySelector('.tg-host').value.trim();
+    if (name || host) tgs.push({name: name, host: host});
+  }
+  if (tgs.length) cfg.custom_targets = tgs; else delete cfg.custom_targets;
   const th = {};
   for (const [key] of THRESH_METRICS) {
     const good = parseFloat(document.getElementById('th-' + key + '-good').value);
@@ -979,6 +1003,21 @@ document.getElementById('gSave').onclick = async () => {
   } else {
     showMsg(msg, 'error', 'Not saved — please fix:', (data && data.errors || []).map(fmtIssue));
   }
+};
+
+// ---- custom ping targets (General tab) ----
+function targetRow(t) {
+  return '<tr>' +
+    '<td><input type="text" class="tg-name" maxlength="40" value="' + esc(t.name || '') + '" placeholder="e.g. Game server"></td>' +
+    '<td><input type="text" class="tg-host mono" value="' + esc(t.host || '') + '" placeholder="host or IP"></td>' +
+    '<td><button class="small danger tg-del">&#10005;</button></td></tr>';
+}
+document.getElementById('tgTable').onclick = (e) => {
+  if (e.target.classList.contains('tg-del')) e.target.closest('tr').remove();
+};
+document.getElementById('tgAdd').onclick = () => {
+  if (document.querySelectorAll('#tgTable .tg-name').length >= 5) return;
+  document.getElementById('tgTable').insertAdjacentHTML('beforeend', targetRow({name: '', host: ''}));
 };
 
 // ---- routers ----

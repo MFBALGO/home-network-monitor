@@ -180,6 +180,36 @@ def validate_config(cfg):
     if mon_loc is not None and (not isinstance(mon_loc, str) or not mon_loc.strip() or len(mon_loc) > 80):
         errors.append(_err("config", "monitor_location", "must be a router name (or removed)"))
 
+    # user-defined ping targets: [{name, host}], capped, hosts must look
+    # like a hostname or IP (the monitor shells out to ping with them)
+    targets = cfg.get("custom_targets")
+    if targets is not None:
+        if not isinstance(targets, list):
+            errors.append(_err("config", "custom_targets", "must be a list of {name, host}"))
+        elif len(targets) > 5:
+            errors.append(_err("config", "custom_targets", "at most 5 targets"))
+        else:
+            tg_seen = set()
+            host_re = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.\-]{0,251}[A-Za-z0-9])?$")
+            for i, t in enumerate(targets):
+                if not isinstance(t, dict):
+                    errors.append(_err("config", f"custom_targets[{i}]", "each entry must be an object"))
+                    continue
+                name = t.get("name")
+                if not isinstance(name, str) or not name.strip() or len(name) > 40:
+                    errors.append(_err("config", f"custom_targets[{i}].name", "must be non-empty text, at most 40 characters"))
+                elif name.strip() in tg_seen:
+                    errors.append(_err("config", f"custom_targets[{i}].name", f"duplicate name '{name.strip()}'"))
+                else:
+                    tg_seen.add(name.strip())
+                host = t.get("host")
+                if not isinstance(host, str) or not host_re.fullmatch(host.strip()):
+                    errors.append(_err("config", f"custom_targets[{i}].host",
+                                       "must be a hostname or IP (letters, digits, dots, dashes)"))
+                for k in t:
+                    if k not in ("name", "host"):
+                        warnings.append(_err("config", f"custom_targets[{i}].{k}", "unknown field - kept as-is"))
+
     if cfg.get("update_check") is not None and not isinstance(cfg.get("update_check"), bool):
         errors.append(_err("config", "update_check", "must be true or false"))
 
@@ -258,7 +288,8 @@ def validate_config(cfg):
 
     known = {"title", "floors", "underground_floors", "main_router_floor",
              "hide_ip_prefixes", "thresholds", "plan_down_mbps", "plan_up_mbps",
-             "update_check", "alerts", "intervals", "detection", "monitor_location"}
+             "update_check", "alerts", "intervals", "detection", "monitor_location",
+             "custom_targets"}
     for key in cfg:
         if key not in known:
             warnings.append(_err("config", key, "unknown setting - kept as-is"))

@@ -261,7 +261,16 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
     NO Settings-UI field — it confused users; hand-edit only, README
     documents it; the Settings save carries an existing value through
     untouched), `thresholds`
-    (incl. `bufferbloat`), `plan_down_mbps`/`plan_up_mbps`, `alerts`
+    (incl. `bufferbloat` and `plan_pct` {good, fair}% — the Speed card
+    rating AND the report's below-plan bar), `plan_down_mbps`/
+    `plan_up_mbps`, `monitor_location` (which router/AP the monitor PC
+    hangs off; labels the Speed card/chart/report with "via X" so a slow
+    reading isn't blamed on the ISP when it's an in-house path),
+    `detection` ({outage_fails, degraded_latency_ms, degraded_loss_pct}
+    — the monitor's EVENT triggers, hot-reloaded via detection(), bounds
+    in DETECTION_BOUNDS mirrored in settings_api; display `thresholds`
+    only color badges, `detection` decides what becomes an event),
+    `alerts`
     (see config.example.json; email password is plaintext — app
     passwords only), `intervals` ({check: seconds} overriding
     monitor.py's INTERVAL_DEFAULTS — keys ping/router/dns/wifi/devices/

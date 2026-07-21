@@ -126,6 +126,26 @@ OUTAGE_FAILURE_THRESHOLD = 3    # consecutive failed checks before declaring an 
 DEGRADED_LATENCY_MS = 150       # avg latency above this over the rolling window = degraded
 DEGRADED_LOSS_PCT = 20          # packet loss % above this over the rolling window = degraded
 ROLLING_WINDOW = 20             # number of recent external pings considered for degradation
+
+# The three trigger constants above are DEFAULTS — config.json may carry a
+# "detection" block ({"outage_fails": 3, "degraded_latency_ms": 150,
+# "degraded_loss_pct": 20}, editable from Settings → General) that
+# overrides them, hot-reloaded via detection() below. Display ratings
+# (dashboard "thresholds") and event triggers used to be separate worlds:
+# a household could rate 100ms as HIGH on the cards while no degraded
+# event fired until 150ms, and nothing explained the disagreement.
+# Bounds keep a typo from making detection hair-trigger or comatose;
+# settings_api's validator mirrors them — update both together.
+DETECTION_DEFAULTS = {
+    "outage_fails": OUTAGE_FAILURE_THRESHOLD,
+    "degraded_latency_ms": DEGRADED_LATENCY_MS,
+    "degraded_loss_pct": DEGRADED_LOSS_PCT,
+}
+DETECTION_BOUNDS = {            # (min, max)
+    "outage_fails": (2, 10),
+    "degraded_latency_ms": (50, 1000),
+    "degraded_loss_pct": (5, 80),
+}
 PING_BURST_COUNT = 3            # pings per target per check (real per-check loss, see ping_burst)
 
 # Micro-outage ("blip") flap detection: failed runs shorter than
@@ -892,7 +912,7 @@ def dns_loop(conn, gateway):
             consecutive_fail += 1
             if domain not in failed_domains:
                 failed_domains.append(domain)
-            if consecutive_fail >= OUTAGE_FAILURE_THRESHOLD and open_event_id is None:
+            if consecutive_fail >= detection("outage_fails") and open_event_id is None:
                 # Name the domains that failed: "it wasn't just one weird
                 # site" is the difference between a DNS outage and a CDN blip
                 # when reading the log later.
@@ -1367,6 +1387,8 @@ def ping_loop(conn, gateway):
 
     while True:
         ts = now_iso()
+        # trigger thresholds re-read each pass (hot-reloaded from config)
+        fails_needed = detection("outage_fails")
 
         gw_ok, gw_latency = (False, None)
         if gateway:
@@ -1407,7 +1429,7 @@ def ping_loop(conn, gateway):
                 fail_run["gateway"] = ts
             consecutive_gateway_fail += 1
         else:
-            if consecutive_gateway_fail and consecutive_gateway_fail < OUTAGE_FAILURE_THRESHOLD:
+            if consecutive_gateway_fail and consecutive_gateway_fail < fails_needed:
                 record_blip("gateway", fail_run["gateway"], ts, consecutive_gateway_fail)
             consecutive_gateway_fail = 0
             fail_run["gateway"] = None
@@ -1421,7 +1443,7 @@ def ping_loop(conn, gateway):
             consecutive_external_fail += 1
         else:
             if (consecutive_external_fail
-                    and consecutive_external_fail < OUTAGE_FAILURE_THRESHOLD
+                    and consecutive_external_fail < fails_needed
                     and not internet_run_had_gw_fail):
                 # gateway was fine the whole run -> genuinely the line's fault
                 record_blip("internet", fail_run["internet"], ts, consecutive_external_fail)
@@ -1441,7 +1463,7 @@ def ping_loop(conn, gateway):
         # Gateway (local wifi/router) outage takes priority in diagnosis: if the
         # gateway itself is unreachable, that's almost certainly the cause of any
         # external failures too.
-        if gateway and consecutive_gateway_fail >= OUTAGE_FAILURE_THRESHOLD:
+        if gateway and consecutive_gateway_fail >= fails_needed:
             if open_event["gateway"] is None:
                 cur = db_execute(
                     conn,
@@ -1454,10 +1476,10 @@ def ping_loop(conn, gateway):
             db_execute(conn, "UPDATE events SET end_ts=? WHERE id=?", (ts, open_event["gateway"]))
             open_event["gateway"] = None
 
-        if consecutive_external_fail >= OUTAGE_FAILURE_THRESHOLD:
+        if consecutive_external_fail >= fails_needed:
             # Only log an "internet" outage if the gateway is fine (otherwise it's
             # a gateway outage, already captured above).
-            if open_event["internet"] is None and consecutive_gateway_fail < OUTAGE_FAILURE_THRESHOLD:
+            if open_event["internet"] is None and consecutive_gateway_fail < fails_needed:
                 cur = db_execute(
                     conn,
                     "INSERT INTO events (start_ts, kind, scope, note) VALUES (?,?,?,?)",
@@ -1480,7 +1502,8 @@ def ping_loop(conn, gateway):
             latencies = [l for ok, l, _s, _r in recent_external if ok and l is not None]
             avg_latency = sum(latencies) / len(latencies) if latencies else None
 
-            is_degraded = (loss_pct > DEGRADED_LOSS_PCT) or (avg_latency and avg_latency > DEGRADED_LATENCY_MS)
+            is_degraded = (loss_pct > detection("degraded_loss_pct")
+                           or (avg_latency and avg_latency > detection("degraded_latency_ms")))
             # Don't double-count a degradation event during an active outage.
             active_outage = open_event["internet"] is not None or open_event["gateway"] is not None
 
@@ -1756,7 +1779,7 @@ def router_loop(conn, routers):
                     st["open_event_id"] = None
             else:
                 st["consecutive_fail"] += 1
-                if st["consecutive_fail"] >= OUTAGE_FAILURE_THRESHOLD and st["open_event_id"] is None:
+                if st["consecutive_fail"] >= detection("outage_fails") and st["open_event_id"] is None:
                     note = f"{name} ({ip}) unreachable"
                     cur = db_execute(
                         conn,
@@ -1826,6 +1849,26 @@ def check_interval(name):
         _intervals_cache["vals"] = vals
         _intervals_cache["stamp"] = stamp
     return _intervals_cache["vals"][name]
+
+
+# Hot-reloaded event-trigger thresholds, same stamp-cache idiom as
+# check_interval above (one os.stat per call, JSON parse only on change).
+_detection_cache = {"stamp": ("never",), "vals": dict(DETECTION_DEFAULTS)}
+
+
+def detection(name):
+    stamp = _file_stamp(CONFIG_PATH)
+    if stamp != _detection_cache["stamp"]:
+        vals = dict(DETECTION_DEFAULTS)
+        raw = (_read_json(CONFIG_PATH) or {}).get("detection")
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                if k in vals and isinstance(v, (int, float)) and not isinstance(v, bool):
+                    lo, hi = DETECTION_BOUNDS[k]
+                    vals[k] = type(DETECTION_DEFAULTS[k])(min(hi, max(lo, v)))
+        _detection_cache["vals"] = vals
+        _detection_cache["stamp"] = stamp
+    return _detection_cache["vals"][name]
 
 
 def _write_json_atomic(path, obj):

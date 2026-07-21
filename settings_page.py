@@ -563,6 +563,10 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
       <input type="number" id="gPlanDown" placeholder="download" min="1" style="width:130px">
       <input type="number" id="gPlanUp" placeholder="upload" min="1" style="width:130px">
     </div>
+    <label>Where this monitor runs — the router/AP the monitor PC is connected to.
+    Speed tests and latency measure <b>that path</b>, so the dashboard labels them with it
+    (a weak reading may be an in-house link, not the ISP).</label>
+    <select id="gMonLoc" style="max-width:280px"><option value="">(not set)</option></select>
     <label style="display:flex;align-items:center;gap:8px;margin-top:14px">
       <input type="checkbox" id="gUpdateCheck" checked>
       Check GitHub once a day for new versions (the only non-monitoring network call this tool makes)
@@ -574,6 +578,17 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
     reference lines. Leave a box empty for the built-in default (shown greyed).</div>
     <div class="thresh-grid" id="gThresh">
       <span class="hdr">Metric</span><span class="hdr">Good (up to)</span><span class="hdr">Fair (up to)</span>
+    </div>
+  </div>
+  <div class="card">
+    <h2 style="margin-top:0">Event triggers</h2>
+    <div class="sub" style="margin-bottom:10px">When the monitor declares real <b>events</b>
+    (outages, degraded spells) — the thresholds above only color the badges, these decide what
+    lands in the outage log and fires alerts. Leave empty for the defaults (shown greyed).</div>
+    <div class="row" style="flex-wrap:wrap; gap:14px">
+      <label style="margin:0">Outage after <input type="number" id="dtFails" placeholder="3" min="2" max="10" style="width:70px; margin:0 4px"> failed checks in a row</label>
+      <label style="margin:0">Degraded when latency &gt; <input type="number" id="dtLat" placeholder="150" min="50" max="1000" style="width:80px; margin:0 4px"> ms</label>
+      <label style="margin:0">or packet loss &gt; <input type="number" id="dtLoss" placeholder="20" min="5" max="80" style="width:70px; margin:0 4px"> %</label>
     </div>
   </div>
   <div class="card">
@@ -719,6 +734,7 @@ const THRESH_METRICS = [
   ['jitter', 'Jitter ms', 10, 30],
   ['dns', 'DNS ms', 40, 100],
   ['loss', 'Loss %', 1, 2.5],
+  ['plan_pct', 'Speed, % of plan', 90, 80],
   ['uptime', 'Uptime %', 99.9, 99],
   ['wifi', 'Wi-Fi dBm', -60, -70],
 ];
@@ -766,6 +782,21 @@ async function load() {
   document.getElementById('gPlanDown').value = S.config.plan_down_mbps || '';
   document.getElementById('gPlanUp').value = S.config.plan_up_mbps || '';
   document.getElementById('gUpdateCheck').checked = S.config.update_check !== false;
+
+  // monitor location: Main Router + every non-ISP router (the ISP box is
+  // upstream of the house — the PC can't meaningfully hang off it)
+  const locSel = document.getElementById('gMonLoc');
+  const locCur = S.config.monitor_location || '';
+  const locNames = ['Main Router'].concat(
+    S.routers.filter(r => r.role !== 'isp').map(r => r.name).filter(Boolean));
+  if (locCur && !locNames.includes(locCur)) locNames.push(locCur);
+  locSel.innerHTML = '<option value="">(not set)</option>' + locNames.map(n =>
+    '<option' + (n === locCur ? ' selected' : '') + '>' + esc(n) + '</option>').join('');
+
+  const dt = S.config.detection || {};
+  document.getElementById('dtFails').value = dt.outage_fails != null ? dt.outage_fails : '';
+  document.getElementById('dtLat').value = dt.degraded_latency_ms != null ? dt.degraded_latency_ms : '';
+  document.getElementById('dtLoss').value = dt.degraded_loss_pct != null ? dt.degraded_loss_pct : '';
 
   const grid = document.getElementById('gThresh');
   const th = S.config.thresholds || {};
@@ -912,6 +943,16 @@ document.getElementById('gSave').onclick = async () => {
   if (pu > 0) cfg.plan_up_mbps = pu; else delete cfg.plan_up_mbps;
   if (document.getElementById('gUpdateCheck').checked) delete cfg.update_check;
   else cfg.update_check = false;
+  const monLoc = document.getElementById('gMonLoc').value;
+  if (monLoc) cfg.monitor_location = monLoc; else delete cfg.monitor_location;
+  const dt = {};
+  const dtFails = parseInt(document.getElementById('dtFails').value, 10);
+  const dtLat = parseFloat(document.getElementById('dtLat').value);
+  const dtLoss = parseFloat(document.getElementById('dtLoss').value);
+  if (!isNaN(dtFails)) dt.outage_fails = dtFails;
+  if (!isNaN(dtLat)) dt.degraded_latency_ms = dtLat;
+  if (!isNaN(dtLoss)) dt.degraded_loss_pct = dtLoss;
+  if (Object.keys(dt).length) cfg.detection = dt; else delete cfg.detection;
   const th = {};
   for (const [key] of THRESH_METRICS) {
     const good = parseFloat(document.getElementById('th-' + key + '-good').value);

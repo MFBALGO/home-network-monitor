@@ -161,6 +161,25 @@ def validate_config(cfg):
         if v is not None and (not isinstance(v, (int, float)) or v <= 0):
             errors.append(_err("config", key, "must be a positive number (or removed)"))
 
+    # event-trigger overrides — bounds mirror monitor.py's DETECTION_BOUNDS
+    detection = cfg.get("detection")
+    if detection is not None:
+        if not isinstance(detection, dict):
+            errors.append(_err("config", "detection", "must be an object"))
+        else:
+            det_bounds = {"outage_fails": (2, 10), "degraded_latency_ms": (50, 1000),
+                          "degraded_loss_pct": (5, 80)}
+            for k, v in detection.items():
+                if k not in det_bounds:
+                    warnings.append(_err("config", f"detection.{k}", "unknown trigger - kept as-is"))
+                elif not isinstance(v, (int, float)) or isinstance(v, bool) or not det_bounds[k][0] <= v <= det_bounds[k][1]:
+                    lo, hi = det_bounds[k]
+                    errors.append(_err("config", f"detection.{k}", f"must be a number between {lo} and {hi}"))
+
+    mon_loc = cfg.get("monitor_location")
+    if mon_loc is not None and (not isinstance(mon_loc, str) or not mon_loc.strip() or len(mon_loc) > 80):
+        errors.append(_err("config", "monitor_location", "must be a router name (or removed)"))
+
     if cfg.get("update_check") is not None and not isinstance(cfg.get("update_check"), bool):
         errors.append(_err("config", "update_check", "must be true or false"))
 
@@ -239,7 +258,7 @@ def validate_config(cfg):
 
     known = {"title", "floors", "underground_floors", "main_router_floor",
              "hide_ip_prefixes", "thresholds", "plan_down_mbps", "plan_up_mbps",
-             "update_check", "alerts", "intervals"}
+             "update_check", "alerts", "intervals", "detection", "monitor_location"}
     for key in cfg:
         if key not in known:
             warnings.append(_err("config", key, "unknown setting - kept as-is"))

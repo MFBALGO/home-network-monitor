@@ -833,6 +833,10 @@ def main():
         # dashboard JS; anything omitted here just uses those.
         "thresholds": site_config.get("thresholds") if isinstance(site_config.get("thresholds"), dict) else {},
         "plan": {"down_mbps": site_config.get("plan_down_mbps"), "up_mbps": site_config.get("plan_up_mbps")},
+        # which router/AP the monitor PC hangs off (config.json
+        # "monitor_location", set in Settings → General): speed tests and
+        # latency measure THAT path, and the dashboard should say so
+        "monitor_location": (site_config.get("monitor_location") or "").strip() or None,
         "latency_series": latency_series,
         "loss_series": loss_series,
         "jitter_series": jitter_series,
@@ -1343,6 +1347,8 @@ def build_html(data):
 
   .device-name { display:flex; align-items:center; gap:8px; }
   .dev-id { display:flex; flex-direction:column; min-width:0; }
+  .chart-sublabel { font-family: var(--font-mono); font-size: 10px; color: var(--muted);
+    font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 10px; }
   .dev-mac { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); letter-spacing: .02em; }
   .device-icon { width:26px; height:26px; border-radius:7px; background: var(--surface-2); border:1px solid var(--border);
     display:flex; align-items:center; justify-content:center; flex-shrink:0; color: var(--muted); }
@@ -1628,7 +1634,7 @@ def build_html(data):
       </div>
     </div>
     <div class="chart-card">
-      <div class="chart-label">Speed test (Mbps)</div>
+      <div class="chart-label">Speed test (Mbps)<span id="speedVantage" class="chart-sublabel"></span></div>
       <div class="chart-box"><canvas id="speedChart"></canvas></div>
       <div id="speedEmpty" class="empty" style="display:none">No speed test data yet — install a speed test tool (see README) and it will appear here automatically.</div>
       <div id="speedFailNote" class="stat-sub" style="display:none"></div>
@@ -1796,25 +1802,30 @@ document.getElementById('loss7d').textContent = DATA.stats_7d.loss_pct != null ?
 setStat('avgLatency24h', DATA.stats_24h.avg_latency, 'ms');
 setStat('dnsAvg', DATA.dns_24h ? DATA.dns_24h.avg : null, 'ms');
 safely('speed card', function() {
-  // last successful speed test; the sub-line rates it against the plan
-  // (amber under 80% — same below-plan cutoff as the ISP evidence report)
+  // last successful speed test; the sub-line rates it against the plan.
+  // Cutoffs come from thresholds.plan_pct (defaults 90/80) — the same
+  // numbers the ISP evidence report uses for its below-plan list.
   const s = (DATA.speed_series || []).slice(-1)[0];
   const el = document.getElementById('speedLast'), sub = document.getElementById('speedLastSub');
+  // where the monitor measures FROM: a speed number without its vantage
+  // point invites blaming the ISP for a bad in-house cable (been there)
+  const via = DATA.monitor_location ? ' · via ' + escapeHtml(DATA.monitor_location) : '';
   if (!s || s.down == null) { sub.textContent = 'no speed test yet'; return; }
   el.innerHTML = Math.round(s.down) + '<span class="unit">&#8595;</span> '
     + (s.up != null ? Math.round(s.up) : '—') + '<span class="unit">&#8593;</span>';
   const plan = DATA.plan || {};
   if (plan.down_mbps) {
+    const PP = Object.assign({ good: 90, fair: 80 }, (DATA.thresholds || {}).plan_pct || {});
     const pct = Math.round(100 * s.down / plan.down_mbps);
-    sub.textContent = pct + '% of the ' + plan.down_mbps + ' Mbps plan';
+    sub.innerHTML = pct + '% of the ' + plan.down_mbps + ' Mbps plan' + via;
     const rEl = document.getElementById('rateSpeed');
-    const lvl = pct >= 90 ? 0 : pct >= 80 ? 1 : 2;
+    const lvl = pct >= PP.good ? 0 : pct >= PP.fair ? 1 : 2;
     rEl.className = 'rating show ' + ['good', 'fair', 'poor'][lvl];
     rEl.textContent = ['GOOD', 'FAIR', 'LOW'][lvl];
-    rEl.title = 'vs your plan: 90%+ good, 80%+ fair';
+    rEl.title = 'vs your plan: ' + PP.good + '%+ good, ' + PP.fair + '%+ fair';
     if (lvl === 2) sub.style.color = 'var(--status-warning)';
   } else {
-    sub.textContent = 'Mbps down / up';
+    sub.innerHTML = 'Mbps down / up' + via;
   }
 });
 if (DATA.dns_24h && DATA.dns_24h.checks) {
@@ -1915,6 +1926,14 @@ function checkEff(key) {
   if (m && (!f || m >= f)) return { freq: m, approx: true };
   return { freq: f || m, approx: false };
 }
+safely('speed vantage', function() {
+  // the chart-level version of the card's "via X" note — where the
+  // monitor PC measures from (config.json monitor_location)
+  if (DATA.monitor_location) {
+    document.getElementById('speedVantage').textContent =
+      'measured from the monitor PC via ' + DATA.monitor_location;
+  }
+});
 safely('check footers', function() {
   const C = DATA.checks || {};
   const ping = checkEff('ping'), dns = checkEff('dns'), spd = checkEff('speed'),
@@ -3672,6 +3691,11 @@ def generate_report(conn, site_config):
         "version": __version__,
         "window_days": REPORT_WINDOW_DAYS,
         "plan": {"down_mbps": site_config.get("plan_down_mbps"), "up_mbps": site_config.get("plan_up_mbps")},
+        # below-plan cutoff (% of advertised) — thresholds.plan_pct.fair,
+        # same knob as the dashboard's Speed card rating
+        "plan_pct_fair": (((site_config.get("thresholds") or {}).get("plan_pct") or {}).get("fair")
+                          if isinstance(site_config.get("thresholds"), dict) else None) or 80,
+        "monitor_location": (site_config.get("monitor_location") or "").strip() or None,
         "events": events,
         "speedtests": speedtests,
         "measured_hours": {m["month"]: m["hours"] for m in measured},
@@ -3861,10 +3885,15 @@ function render(days) {
       '<div class="muted">Set your plan speed in Settings (plan_down_mbps) to flag speed tests that under-deliver.</div>';
   } else {
     const tests = R.speedtests.filter(t => Date.parse(t.ts) >= cut);
-    // 80% of advertised: a common informal bar for "not delivering the plan"
-    const below = tests.filter(t => t.download_mbps < 0.8 * plan).sort((a, b) => a.download_mbps - b.download_mbps);
+    // below-plan bar: thresholds.plan_pct.fair (default 80% of advertised,
+    // a common informal bar for "not delivering the plan")
+    const cutPct = R.plan_pct_fair || 80;
+    const below = tests.filter(t => t.download_mbps < (cutPct / 100) * plan).sort((a, b) => a.download_mbps - b.download_mbps);
+    const vantage = R.monitor_location
+      ? ' Tests run from the monitor PC via ' + R.monitor_location + ' — they measure that path, not the ISP line directly.'
+      : '';
     const head = tests.length
-      ? below.length + ' of ' + tests.length + ' tests (' + Math.round(100 * below.length / tests.length) + '%) measured under 80% of the ' + plan + ' Mbps plan.'
+      ? below.length + ' of ' + tests.length + ' tests (' + Math.round(100 * below.length / tests.length) + '%) measured under ' + cutPct + '% of the ' + plan + ' Mbps plan.' + vantage
       : 'No speed tests in this window.';
     let html = '<div style="margin-bottom:8px;">' + esc(head) + '</div>';
     if (below.length) {

@@ -100,7 +100,15 @@ INTERVAL_BOUNDS = {         # seconds: (min, max)
 
 # Domains used to test DNS resolution (rotated one per check). Large,
 # always-resolvable names — if these fail, DNS is broken for everything.
-DNS_TEST_DOMAINS = ["apple.com", "google.com", "cloudflare.com"]
+# www.speedtest.net is deliberately in the rotation: the Ookla CLI's own
+# config-host lookup is the most common speed-test failure ("Couldn't
+# resolve host name"), so when a test fails there's a same-minute DNS
+# data point for exactly that name.
+DNS_TEST_DOMAINS = ["apple.com", "google.com", "cloudflare.com", "www.speedtest.net"]
+
+# Cap on user-defined ping targets (config.json "custom_targets") — each
+# one costs a ping burst per ping cycle.
+MAX_CUSTOM_TARGETS = 5
 
 # Ports tried when a router doesn't answer ping — most routers serve their
 # admin page on 80/443 even when they're configured to ignore ICMP.
@@ -1361,6 +1369,7 @@ def ping_loop(conn, gateway):
     # "internet blip" is really the gateway's fault — don't double-log it).
     fail_run = {"gateway": None, "internet": None}   # class -> start ts
     internet_run_had_gw_fail = False
+    custom_state = {}   # target name -> {"fails": n, "open_id": event id}
 
     def record_blip(target_class, start_ts, end_ts, n_checks):
         """A failed run recovered before reaching the outage threshold:
@@ -1521,6 +1530,51 @@ def ping_loop(conn, gateway):
                 db_execute(conn, "UPDATE events SET end_ts=? WHERE id=?", (ts, open_event["degraded"]))
                 open_event["degraded"] = None
 
+        # --- user-defined custom targets (config.json custom_targets) ---
+        # Pinged every cycle, stored under target_type='custom' keyed by the
+        # target NAME (rename the host, keep the history). A target failing
+        # while the INTERNET is fine opens its own scope='target' outage
+        # event — "their end or the route there", not the house — so this
+        # runs AFTER outage detection, when consecutive_external_fail is
+        # current for the suppression check. Targets deleted from config
+        # get their open events closed, mirroring the router hot reload.
+        targets = custom_targets()
+        active_names = set()
+        for t in targets:
+            active_names.add(t["name"])
+            st = custom_state.setdefault(t["name"], {"fails": 0, "open_id": None})
+            recv, sent, latency = ping_burst(t["host"], PING_BURST_COUNT)
+            ok = recv > 0
+            db_execute(
+                conn,
+                "INSERT INTO pings (ts, target, target_type, success, latency_ms, sent, received) VALUES (?,?,?,?,?,?,?)",
+                (ts, t["name"], "custom", int(ok), latency, sent, recv),
+            )
+            if ok:
+                st["fails"] = 0
+                if st["open_id"] is not None:
+                    db_execute(conn, "UPDATE events SET end_ts=? WHERE id=?", (ts, st["open_id"]))
+                    st["open_id"] = None
+            else:
+                st["fails"] += 1
+                if (st["fails"] >= fails_needed and st["open_id"] is None
+                        and consecutive_external_fail < fails_needed):
+                    cur = db_execute(
+                        conn,
+                        "INSERT INTO events (start_ts, kind, scope, note, router_name) VALUES (?,?,?,?,?)",
+                        (ts, "outage", "target",
+                         f'"{t["name"]}" ({t["host"]}) is unreachable while the internet is fine — '
+                         "the problem is at their end or on the route there",
+                         t["name"]),
+                    )
+                    st["open_id"] = cur.lastrowid
+        for name in list(custom_state):
+            if name not in active_names:
+                if custom_state[name]["open_id"] is not None:
+                    db_execute(conn, "UPDATE events SET end_ts=? WHERE id=?",
+                               (ts, custom_state[name]["open_id"]))
+                custom_state.pop(name)
+
         time.sleep(check_interval("ping"))
 
 
@@ -1664,6 +1718,15 @@ def device_loop(conn):
 def speedtest_loop(conn):
     while True:
         result = run_speedtest()
+        if "error" in result and "download_mbps" not in result:
+            # Retry once after a minute: transient hiccups (the Ookla CLI's
+            # own config-host DNS lookup is the repeat offender on this
+            # class of failure) used to burn the whole 30-min slot and
+            # paint a red × on the chart. Only the final outcome is
+            # recorded — the transient goes to the log, not the DB.
+            log(f"speed test failed ({str(result['error'])[:120]}) — retrying once in 60s")
+            time.sleep(60)
+            result = run_speedtest()
         ts = now_iso()
         if "error" in result and "download_mbps" not in result:
             db_execute(conn, "INSERT INTO speedtests (ts, error) VALUES (?,?)", (ts, result["error"]))
@@ -1869,6 +1932,37 @@ def detection(name):
         _detection_cache["vals"] = vals
         _detection_cache["stamp"] = stamp
     return _detection_cache["vals"][name]
+
+
+# Hot-reloaded user-defined ping targets, same stamp-cache idiom again.
+_targets_cache = {"stamp": ("never",), "vals": []}
+
+
+def custom_targets():
+    """config.json "custom_targets": [{name, host}] — the user's OWN
+    destinations (a game server, the work VPN, grandma's router), pinged
+    alongside the anycast set. The anycast targets are the easiest hosts
+    on the internet to reach; "internet fine but Valorant unplayable" is
+    invisible without asking the actual destination. Invalid entries are
+    dropped, names deduped, list capped at MAX_CUSTOM_TARGETS."""
+    stamp = _file_stamp(CONFIG_PATH)
+    if stamp != _targets_cache["stamp"]:
+        vals, seen = [], set()
+        raw = (_read_json(CONFIG_PATH) or {}).get("custom_targets")
+        if isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                host = str(item.get("host") or "").strip()
+                if name and host and name not in seen:
+                    seen.add(name)
+                    vals.append({"name": name, "host": host})
+                if len(vals) >= MAX_CUSTOM_TARGETS:
+                    break
+        _targets_cache["vals"] = vals
+        _targets_cache["stamp"] = stamp
+    return _targets_cache["vals"]
 
 
 def _write_json_atomic(path, obj):
@@ -2371,7 +2465,8 @@ def _event_headline(row):
     if kind == "outage":
         return {"gateway": "Main router is unreachable — local problem, not the ISP",
                 "internet": "Internet is DOWN (router is fine — ISP side)",
-                "dns": "DNS is failing — websites won't load by name"}.get(
+                "dns": "DNS is failing — websites won't load by name",
+                "target": f'"{rn or "?"}" is unreachable (your custom target — their end, not your line)'}.get(
                     scope, f'Access point "{rn or "?"}" is down')
     if kind == "degraded":
         return "Connection is up but degraded (high latency or packet loss)"

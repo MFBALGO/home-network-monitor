@@ -783,12 +783,12 @@ async function load() {
   document.getElementById('gPlanUp').value = S.config.plan_up_mbps || '';
   document.getElementById('gUpdateCheck').checked = S.config.update_check !== false;
 
-  // monitor location: Main Router + every non-ISP router (the ISP box is
-  // upstream of the house — the PC can't meaningfully hang off it)
+  // monitor location: Main Router + every router INCLUDING the ISP box —
+  // a PC plugged straight into the ISP box measures the raw line, which
+  // is the best possible evidence vantage
   const locSel = document.getElementById('gMonLoc');
   const locCur = S.config.monitor_location || '';
-  const locNames = ['Main Router'].concat(
-    S.routers.filter(r => r.role !== 'isp').map(r => r.name).filter(Boolean));
+  const locNames = ['Main Router'].concat(S.routers.map(r => r.name).filter(Boolean));
   if (locCur && !locNames.includes(locCur)) locNames.push(locCur);
   locSel.innerHTML = '<option value="">(not set)</option>' + locNames.map(n =>
     '<option' + (n === locCur ? ' selected' : '') + '>' + esc(n) + '</option>').join('');

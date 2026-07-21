@@ -2753,10 +2753,25 @@ safely('house map', function() {
   const fmtPct = v => v != null ? v + '%' : '—';
   const fmtMs = v => v != null ? v + ' ms' : '—';
 
+  // Where the monitor PC hangs (config monitor_location): that node's
+  // hover card carries the speed-test readout — the speed belongs to the
+  // path measured, not to the internet cloud. 'main'/'isp'/'router' says
+  // which drawn node hosts it; null = not configured / name not drawn
+  // (then the internet node keeps the speed line as before).
+  const MONLOC = DATA.monitor_location;
+  const lastSpeed = (DATA.speed_series || []).slice(-1)[0];
+  const speedHost = MONLOC
+    ? (MONLOC === 'Main Router' && gw ? 'main'
+       : (ispBox && ispBox.name === MONLOC) ? 'isp'
+       : placed.some(p => p.name === MONLOC) ? 'router' : null)
+    : null;
+
   // One info card per router: name+status, IP, latency, and a 24h-uptime
   // bar — the same details as the table, readable at a glance on the map.
+  // opts.showSpeed appends the monitor-vantage speed block (+30 tall).
+  const cardH = opts => CARD_H + (opts.showSpeed && lastSpeed && lastSpeed.down != null ? 30 : 0);
   function card(x, y, opts) {
-    const w = opts.main ? CARD_W + 16 : CARD_W, h = CARD_H;
+    const w = opts.main ? CARD_W + 16 : CARD_W, h = cardH(opts);
     const x0 = x - w / 2, y0 = y - h / 2;
     const cls = nodeCls(opts);
     // 'tcp' = alive via its web port; 'probe' = alive but silent, proven
@@ -2784,6 +2799,11 @@ safely('house map', function() {
       <line class="card-div" x1="${x0 + 14}" y1="${y0 + 87}" x2="${x0 + w - 14}" y2="${y0 + 87}"/>
       <text class="card-foot" x="${x0 + 14}" y="${y0 + 99}" data-checkfoot="1" data-fmt="mid"
         data-cmd="${methodCmd(opts.method)}" data-freq="${footEff(opts).freq}"${footEff(opts).approx ? ' data-approx="1"' : ''}${opts.last_check ? ` data-ts="${opts.last_check}"` : ''}></text>
+      ${opts.showSpeed && lastSpeed && lastSpeed.down != null ? `
+      <line class="card-div" x1="${x0 + 14}" y1="${y0 + 106}" x2="${x0 + w - 14}" y2="${y0 + 106}"/>
+      <text class="card-stats" x="${x0 + 14}" y="${y0 + 119}">&#8595;${Math.round(lastSpeed.down)} &#8593;${lastSpeed.up != null ? Math.round(lastSpeed.up) : '—'} Mbps · monitor PC</text>
+      <text class="card-foot" x="${x0 + 14}" y="${y0 + 131}" data-checkfoot="1" data-fmt="mid"
+        data-cmd="speedtest" data-freq="${checkEff('speed').freq}"${checkEff('speed').approx ? ' data-approx="1"' : ''}${(DATA.checks || {}).speed ? ` data-ts="${(DATA.checks || {}).speed}"` : ''}></text>` : ''}
     </g>`;
   }
   // how the router was reached on its last check — this doubles as the
@@ -2828,8 +2848,9 @@ safely('house map', function() {
   }
   // Hover card position: above the pill when there's room, else below.
   function hovercard(p, opts, hcId) {
-    const above = p.y - 14 - CARD_H > TOP - 30;
-    const cy = above ? p.y - 27 - CARD_H / 2 : p.y + 27 + CARD_H / 2;
+    const h = cardH(opts);
+    const above = p.y - 14 - h > TOP - 30;
+    const cy = above ? p.y - 27 - h / 2 : p.y + 27 + h / 2;
     const cx = Math.min(Math.max(p.x, CARD_W / 2 + 8), W - CARD_W / 2 - 8);
     return `<g class="hovercard" id="${hcId}">${card(cx, cy, opts)}</g>`;
   }
@@ -2930,7 +2951,6 @@ safely('house map', function() {
     }
     drawWan(wanD, netUp);
   }
-  const lastSpeed = (DATA.speed_series || []).slice(-1)[0];
   const CHK = DATA.checks || {};
   svg += `<g class="net-node ${netUp ? 'up' : 'down'}">`;
   svg += `<rect class="net-box" x="${NET.x - 62}" y="${NET.y - 30}" width="124" height="84" rx="10"/>`;
@@ -2938,7 +2958,10 @@ safely('house map', function() {
   svg += `<text class="net-label" x="${NET.x - 36}" y="${NET.y - 9}">Internet</text>`;
   svg += `<text class="net-stat" x="${NET.x - 46}" y="${NET.y + 8}">${
     netUp ? (DATA.current_latency != null ? Math.round(DATA.current_latency) + ' ms' : 'online') : 'OFFLINE'}</text>`;
-  if (netUp && lastSpeed && lastSpeed.down != null) {
+  // The speed readout lives on the monitor-location router's card when
+  // one is configured (the number describes THAT path, not "the
+  // internet") — the cloud only keeps it on location-less installs.
+  if (!speedHost && netUp && lastSpeed && lastSpeed.down != null) {
     svg += `<text class="net-stat" x="${NET.x - 46}" y="${NET.y + 22}" opacity="0.8">&#8595;${Math.round(lastSpeed.down)} &#8593;${Math.round(lastSpeed.up)} Mbps</text>`;
   } else if (!netUp) {
     svg += `<text class="net-stat" x="${NET.x - 46}" y="${NET.y + 22}">check the ISP</text>`;
@@ -2948,8 +2971,10 @@ safely('house map', function() {
   const netPing = checkEff('ping'), netSpd = checkEff('speed');
   svg += `<text class="net-foot" x="${NET.x - 46}" y="${NET.y + 36}" data-checkfoot="1" data-fmt="min"
     data-cmd="ping" data-freq="${netPing.freq}"${netPing.approx ? ' data-approx="1"' : ''}${CHK.ping ? ` data-ts="${CHK.ping}"` : ''}></text>`;
-  svg += `<text class="net-foot" x="${NET.x - 46}" y="${NET.y + 48}" data-checkfoot="1" data-fmt="min"
-    data-cmd="speedtest" data-freq="${netSpd.freq}"${netSpd.approx ? ' data-approx="1"' : ''}${CHK.speed ? ` data-ts="${CHK.speed}"` : ''}></text>`;
+  if (!speedHost) {
+    svg += `<text class="net-foot" x="${NET.x - 46}" y="${NET.y + 48}" data-checkfoot="1" data-fmt="min"
+      data-cmd="speedtest" data-freq="${netSpd.freq}"${netSpd.approx ? ' data-approx="1"' : ''}${CHK.speed ? ` data-ts="${CHK.speed}"` : ''}></text>`;
+  }
   svg += `</g>`;
 
   // wi-fi coverage bubbles behind every node — an offline AP reads as a
@@ -2996,12 +3021,12 @@ safely('house map', function() {
   const hcs = [];
   placed.forEach((p, i) => {
     svg += pill(p.x, p.y, p, 'hc-' + i);
-    hcs.push(hovercard(p, p, 'hc-' + i));
+    hcs.push(hovercard(p, { ...p, showSpeed: speedHost === 'router' && p.name === MONLOC }, 'hc-' + i));
   });
   if (gw) {
     const opts = { main: true, name: 'Main Router', ip: gw.ip,
                    status: gw.status, uptime_pct: gw.uptime_pct, avg_latency: gw.avg_latency,
-                   last_check: gw.last_check };
+                   last_check: gw.last_check, showSpeed: speedHost === 'main' };
     svg += pill(MAIN.x, MAIN.y, opts, 'hc-main');
     hcs.push(hovercard(MAIN, opts, 'hc-main'));
   }
@@ -3017,7 +3042,7 @@ safely('house map', function() {
       <text class="pill-name" x="${x0 + 24}" y="${ISP.y - 4}">${escapeHtml(nm)}</text>
       <text class="isp-sub" x="${x0 + 14}" y="${ISP.y + 14}">ISP box</text>
     </g>`;
-    hcs.push(hovercard(ISP, ispBox, 'hc-isp'));
+    hcs.push(hovercard(ISP, { ...ispBox, showSpeed: speedHost === 'isp' }, 'hc-isp'));
   }
   svg += hcs.join('');
 

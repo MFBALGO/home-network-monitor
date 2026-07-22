@@ -1320,16 +1320,13 @@ def build_html(data):
   .dev-cols { display:grid; grid-template-columns: 3fr 2fr; gap:12px; align-items:start; }
   .dev-cols.no-iot { grid-template-columns: 1fr; }
   @media (max-width: 940px) { .dev-cols { grid-template-columns: 1fr; } }
-  /* IoT devices: dense chip grid (one compact card per device) */
-  .iot-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); gap:8px; }
-  .iot-chip { background: var(--surface-2); border:1px solid var(--border-soft); border-radius:9px;
-    padding:8px 11px; min-width:0; }
-  .iot-chip-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-  .iot-chip-top .dev-id { min-width:0; }
-  .iot-chip-top b { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .iot-chip-top .status-pill.small { flex-shrink:0; }
-  .iot-chip-sub { font-family: var(--font-mono); font-size:10.5px; color:var(--muted); margin-top:4px;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* IoT devices: device-table-style rows grouped by type, the category
+     labels stacked down a left rail */
+  .iot-cat { display:flex; gap:12px; align-items:flex-start; }
+  .iot-cat + .iot-cat { margin-top:4px; border-top:1px solid var(--border-soft); padding-top:4px; }
+  .iot-cat-label { flex:0 0 76px; font-size:11px; font-weight:600; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.06em; padding-top:13px; }
+  .iot-cat-rows { flex:1; min-width:0; }
   #iotTableWrap { overflow-x: auto; }
 
   section { margin-bottom: 34px; scroll-margin-top: 58px; }
@@ -2957,21 +2954,28 @@ safely('iot devices', function() {
     if (d.online) return 'now';
     return d.last_seen ? timeSince(d.last_seen) + ' ago' : '—';
   }
-  // Dense chip grid (was a 4-column table with a full-width group-header
-  // row per type — it ate a screen of height for a handful of devices).
-  // One compact chip per device: status dot + name + type tag on top,
-  // latency/last-seen line below; MAC + IP live in the hover title.
-  const chip = d => {
+  // Rows styled like the all-devices table (his call — the two columns
+  // should read as one system), grouped by type with the category label
+  // in a LEFT rail, labels stacking down the card.
+  const TYPE_LABEL = { camera: 'Cameras', intercom: 'Intercoms', printer: 'Printers', light: 'Lights',
+                       plug: 'Plugs', speaker: 'Speakers', tv: 'TVs', other: 'Other' };
+  const row = d => {
     const watchTag = d.watch ? '' : '<span class="dev-type" title="Not actively watched — status comes from the periodic device scan. Tick Watch in Settings → Devices for live checks.">scan only</span>';
-    const typeTag = '<span class="dev-type">' + escapeHtml(d.type || 'other') + '</span>';
-    const title = escapeHtml(d.mac + (d.ip ? ' · ' + d.ip : ''));
-    return '<div class="iot-chip" title="' + title + '">'
-      + '<div class="iot-chip-top"><span class="dev-id"><span><b>' + escapeHtml(d.name) + '</b>' + typeTag + watchTag + '</span></span>' + pill(d) + '</div>'
-      + '<div class="iot-chip-sub">' + escapeHtml(d.ip || '—') + ' · ' + lastCol(d) + '</div>'
-      + '</div>';
+    const sub = '<span class="dev-mac">' + escapeHtml(d.mac + (d.ip ? ' · ' + d.ip : '')) + '</span>';
+    return '<tr><td><div class="device-name"><span class="device-icon">' + deviceIcon + '</span>'
+      + '<span class="dev-id"><span><b>' + escapeHtml(d.name) + '</b>' + watchTag + '</span>' + sub + '</span></div></td>'
+      + '<td>' + pill(d) + '</td>'
+      + '<td>' + lastCol(d) + '</td></tr>';
   };
-  document.getElementById('iotTableWrap').innerHTML =
-    '<div class="iot-grid">' + list.map(chip).join('') + '</div>';
+  const byType = {};
+  for (const d of list) {
+    const t = d.type || 'other';
+    (byType[t] = byType[t] || []).push(d);   // server order: type, watch, name
+  }
+  document.getElementById('iotTableWrap').innerHTML = Object.keys(byType).map(t =>
+    '<div class="iot-cat"><div class="iot-cat-label">' + escapeHtml(TYPE_LABEL[t] || t) + '</div>'
+    + '<div class="iot-cat-rows"><table><tbody>' + byType[t].map(row).join('') + '</tbody></table></div></div>'
+  ).join('');
 });
 
 // ---------- house map ----------

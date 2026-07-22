@@ -1346,22 +1346,19 @@ def build_html(data):
 
   .chart-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 18px;
     box-shadow: var(--shadow); overflow-x:auto; position:relative; }
-  /* hover readout: ONE fixed vertical panel at the viewport's right edge
-     (values stacked, never covering the plot being read) */
-  .chart-tip { position:fixed; right:12px; top:50%; transform:translateY(-50%); z-index:8;
-    display:none; flex-direction:column; gap:4px; min-width:150px; max-width:260px;
+  /* hover readout: tracks the cursor's x but sits BELOW the plot area
+     (never covering the lines being read); transiently overlays the
+     card footer, which is fine — it only exists while hovering */
+  .chart-tip { position:absolute; z-index:4; transform:translateX(-50%);
+    display:none; flex-direction:column; gap:4px; min-width:130px; max-width:250px;
     background: var(--surface-2); border:1px solid var(--border); border-radius:10px;
-    padding: 9px 12px; font-family: var(--font-mono); font-size:11.5px; color: var(--text-primary);
+    padding: 8px 11px; font-family: var(--font-mono); font-size:11.5px; color: var(--text-primary);
     pointer-events:none; box-shadow: var(--shadow); font-variant-numeric: tabular-nums; }
   .chart-tip.show { display:flex; }
   .chart-tip .tip-time { color: var(--text-secondary); font-weight:700; padding-bottom:4px;
     margin-bottom:2px; border-bottom:1px solid var(--border-soft); white-space:nowrap; }
   .chart-tip .tip-item { display:flex; align-items:center; gap:7px; white-space:nowrap; }
   .chart-tip .tip-item i { display:inline-block; width:9px; height:3px; border-radius:2px; flex-shrink:0; }
-  /* phones: bottom-right corner, out of the way of the hovering thumb */
-  @media (max-width: 640px) {
-    .chart-tip { top:auto; bottom:12px; transform:none; max-width:70vw; }
-  }
   .chart-card + .chart-card { margin-top: 12px; }
   /* two-up responsive grid: two charts per row on wide screens, one on phones */
   .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
@@ -3516,13 +3513,15 @@ function yScale(titleText, extra) {
 // apply); only the drawing moved out of the canvas.
 function externalTip(context) {
   const tooltip = context.tooltip;
-  // one shared viewport-fixed panel for every chart
-  let tip = window.__chartTipPanel;
+  const canvas = context.chart.canvas;
+  const cardEl = canvas && canvas.closest ? canvas.closest('.chart-card') : null;
+  if (!cardEl) return;
+  let tip = cardEl.__chartTip;
   if (!tip) {
     tip = document.createElement('div');
     tip.className = 'chart-tip';
-    document.body.appendChild(tip);
-    window.__chartTipPanel = tip;
+    cardEl.appendChild(tip);
+    cardEl.__chartTip = tip;
   }
   if (!tooltip || tooltip.opacity === 0) { tip.classList.remove('show'); return; }
   const title = (tooltip.title || []).join(' ');
@@ -3533,6 +3532,18 @@ function externalTip(context) {
   }).join('');
   tip.innerHTML = '<span class="tip-time">' + escapeHtml(title) + '</span>' + items;
   tip.classList.add('show');
+  // x follows the cursor (clamped inside the card); y pins to just under
+  // the plot box so the readout never covers the lines being read
+  const box = canvas.closest('.chart-box');
+  const cardR = cardEl.getBoundingClientRect ? cardEl.getBoundingClientRect() : null;
+  const boxR = box && box.getBoundingClientRect ? box.getBoundingClientRect() : null;
+  if (cardR && boxR) {
+    const half = (tip.offsetWidth || 150) / 2;
+    let x = (boxR.left - cardR.left) + (tooltip.caretX || 0);
+    x = Math.max(half + 6, Math.min(x, cardEl.clientWidth - half - 6));
+    tip.style.left = x + 'px';
+    tip.style.top = (boxR.bottom - cardR.top + 6) + 'px';
+  }
 }
 function tooltipBase() {
   return {

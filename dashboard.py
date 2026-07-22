@@ -1315,18 +1315,21 @@ def build_html(data):
   .dev-type { display:inline-block; margin-left:7px; padding:1px 6px; border-radius:5px; font-size:9.5px;
     font-weight:700; font-family: var(--font-mono); letter-spacing:.08em; text-transform:uppercase;
     color:var(--muted); background: var(--border-soft); vertical-align:1px; }
-  /* devices: all-devices table left, IoT chips right (stacked on phones;
-     left card takes the full row when no IoT devices are tagged) */
-  .dev-cols { display:grid; grid-template-columns: 3fr 2fr; gap:12px; align-items:start; }
+  /* devices: all-devices table left, IoT table right — EQUAL columns
+     (stacked on phones; left card takes the full row when no IoT
+     devices are tagged) */
+  .dev-cols { display:grid; grid-template-columns: 1fr 1fr; gap:12px; align-items:start; }
   .dev-cols.no-iot { grid-template-columns: 1fr; }
   @media (max-width: 940px) { .dev-cols { grid-template-columns: 1fr; } }
-  /* IoT devices: device-table-style rows grouped by type, the category
-     labels stacked down a left rail */
-  .iot-cat { display:flex; gap:12px; align-items:flex-start; }
-  .iot-cat + .iot-cat { margin-top:4px; border-top:1px solid var(--border-soft); padding-top:4px; }
-  .iot-cat-label { flex:0 0 76px; font-size:11px; font-weight:600; color:var(--muted);
-    text-transform:uppercase; letter-spacing:.06em; padding-top:13px; }
-  .iot-cat-rows { flex:1; min-width:0; }
+  /* MAC gets its own column on wide screens; on phones the column (and
+     the IoT IP column) collapse back into the sub-line under the name —
+     a MAC column once forced invisible side-scroll on 375px tables */
+  .col-mac { font-family: var(--font-mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+  @media (min-width: 641px) { .dev-id .dev-mac { display: none; } }
+  @media (max-width: 640px) { .col-mac, .col-ip-iot { display: none; } }
+  /* IoT type groups: the category cell spans its rows down the left */
+  .iot-type-cell { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase;
+    letter-spacing: .06em; vertical-align: top; padding-top: 13px; white-space: nowrap; width: 1%; }
   #iotTableWrap { overflow-x: auto; }
 
   section { margin-bottom: 34px; scroll-margin-top: 58px; }
@@ -2838,6 +2841,7 @@ function renderDevices(query) {
     if (d.first_seen && Date.parse(d.first_seen) >= NEW_CUTOFF) label += '<span class="dev-new">new</span>';
     return `<tr${hidden ? ' style="display:none" data-away="1"' : ''}>
     <td><div class="device-name"><span class="device-icon">${deviceIcon}</span><span class="dev-id"><span>${label}</span>${macLine}</span></div></td>
+    <td class="col-mac">${escapeHtml(d.mac || '')}</td>
     <td class="mono">${escapeHtml(d.ip)}</td>
     <td>${pill}</td>
     <td>${seen}</td>
@@ -2863,7 +2867,7 @@ function renderDevices(query) {
   const awayBtn = collapseAway
     ? `<div style="text-align:center; margin-top:10px;"><button id="awayToggle" class="ghost-btn">Show ${away.length} away device${away.length === 1 ? '' : 's'}</button></div>`
     : '';
-  devWrap.innerHTML = `<table><thead><tr><th>Device</th><th>IP</th><th>Status</th><th>Last seen</th></tr></thead><tbody>${rows}</tbody></table>${awayBtn}`;
+  devWrap.innerHTML = `<table><thead><tr><th>Device</th><th class="col-mac">MAC</th><th>IP</th><th>Status</th><th>Last seen</th></tr></thead><tbody>${rows}</tbody></table>${awayBtn}`;
   if (collapseAway) {
     let awayShown = false;
     document.getElementById('awayToggle').addEventListener('click', () => {
@@ -2945,37 +2949,45 @@ safely('iot devices', function() {
       ? '<span class="status-pill small status-up"><span class="status-dot"></span>Online</span>'
       : '<span class="status-pill small" style="background:var(--border-soft);color:var(--muted)"><span class="status-dot"></span>Away</span>';
   }
-  function lastCol(d) {
-    if (d.watch) {
-      if (!d.last_check) return 'waiting for first check';
-      const lat = d.latency != null ? Math.round(d.latency) + ' ms · ' : '';
-      return lat + timeSince(d.last_check) + ' ago';
-    }
+  function latCol(d) {
+    return (d.watch && d.latency != null) ? Math.round(d.latency) + ' ms' : '—';
+  }
+  function checkedCol(d) {
+    if (d.watch) return d.last_check ? timeSince(d.last_check) + ' ago' : 'waiting';
     if (d.online) return 'now';
     return d.last_seen ? timeSince(d.last_seen) + ' ago' : '—';
   }
-  // Rows styled like the all-devices table (his call — the two columns
-  // should read as one system), grouped by type with the category label
-  // in a LEFT rail, labels stacking down the card.
+  // Same table anatomy as the all-devices card (aligned columns, MAC in
+  // its own column) with Latency/Last-checked split out; the type label
+  // is a rowspan cell so the categories stack down the left edge.
   const TYPE_LABEL = { camera: 'Cameras', intercom: 'Intercoms', printer: 'Printers', light: 'Lights',
                        plug: 'Plugs', speaker: 'Speakers', tv: 'TVs', other: 'Other' };
   const row = d => {
     const watchTag = d.watch ? '' : '<span class="dev-type" title="Not actively watched — status comes from the periodic device scan. Tick Watch in Settings → Devices for live checks.">scan only</span>';
     const sub = '<span class="dev-mac">' + escapeHtml(d.mac + (d.ip ? ' · ' + d.ip : '')) + '</span>';
-    return '<tr><td><div class="device-name"><span class="device-icon">' + deviceIcon + '</span>'
+    return '<td><div class="device-name"><span class="device-icon">' + deviceIcon + '</span>'
       + '<span class="dev-id"><span><b>' + escapeHtml(d.name) + '</b>' + watchTag + '</span>' + sub + '</span></div></td>'
+      + '<td class="col-mac">' + escapeHtml(d.mac) + '</td>'
+      + '<td class="mono col-ip-iot">' + escapeHtml(d.ip || '—') + '</td>'
       + '<td>' + pill(d) + '</td>'
-      + '<td>' + lastCol(d) + '</td></tr>';
+      + '<td>' + latCol(d) + '</td>'
+      + '<td>' + checkedCol(d) + '</td>';
   };
   const byType = {};
   for (const d of list) {
     const t = d.type || 'other';
     (byType[t] = byType[t] || []).push(d);   // server order: type, watch, name
   }
-  document.getElementById('iotTableWrap').innerHTML = Object.keys(byType).map(t =>
-    '<div class="iot-cat"><div class="iot-cat-label">' + escapeHtml(TYPE_LABEL[t] || t) + '</div>'
-    + '<div class="iot-cat-rows"><table><tbody>' + byType[t].map(row).join('') + '</tbody></table></div></div>'
-  ).join('');
+  let html = '<table><thead><tr><th></th><th>Device</th><th class="col-mac">MAC</th><th class="col-ip-iot">IP</th><th>Status</th><th>Latency</th><th>Last checked</th></tr></thead><tbody>';
+  Object.keys(byType).forEach(t => {
+    byType[t].forEach((d, i) => {
+      html += '<tr>' + (i === 0
+        ? '<td class="iot-type-cell" rowspan="' + byType[t].length + '">' + escapeHtml(TYPE_LABEL[t] || t) + '</td>'
+        : '') + row(d) + '</tr>';
+    });
+  });
+  html += '</tbody></table>';
+  document.getElementById('iotTableWrap').innerHTML = html;
 });
 
 // ---------- house map ----------

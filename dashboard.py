@@ -1432,6 +1432,8 @@ def build_html(data):
   /* ---------- outages: summary chips + incident timeline + filters ---------- */
   .outage-summary { display:grid; grid-template-columns: repeat(auto-fit, minmax(148px,1fr)); gap:10px; margin-bottom:18px; }
   .osum { background: var(--surface-2); border:1px solid var(--border-soft); border-radius:10px; padding:11px 13px 12px; position:relative; overflow:hidden; }
+  .osum[data-cat] { cursor: pointer; transition: border-color .12s ease; }
+  .osum[data-cat]:hover { border-color: var(--accent-glow); }
   .osum::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background: var(--muted); opacity:.85; }
   .osum.good::before { background: var(--status-good); } .osum.warn::before { background: var(--status-warning); } .osum.bad::before { background: var(--status-critical); }
   .osum .k { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:600; }
@@ -1452,7 +1454,13 @@ def build_html(data):
   .timeline-svg .tl-now { stroke: var(--accent); stroke-width:1.5; stroke-dasharray:2 3; }
   .timeline-svg .tl-nowlab { fill: var(--accent); font-size:9px; font-weight:700; }
   .timeline-svg .tl-ev { filter: drop-shadow(0 0 3px currentColor); }
+  .timeline-svg [data-ev] { cursor: pointer; }
+  .timeline-svg [data-ev]:hover { opacity: 1; }
   .timeline-empty { padding:14px 2px; }
+  /* timeline click → the matching log row flashes so the eye lands on it */
+  tr.event-row.flash td { animation: rowFlash 2s ease-out; }
+  @keyframes rowFlash { 0% { background: var(--accent-soft); } 100% { background: transparent; } }
+  tr.event-row .rel { color: var(--muted); font-size: 11.5px; }
   /* flight-recorder evidence: toggle button in the detail cell + a
      collapsed full-width row rendering the snapshot */
   .ev-btn { font-family: var(--font-mono); font-size: 10px; padding: 1px 7px; margin-left: 7px;
@@ -2514,22 +2522,30 @@ safely('outages log', function() {
   Object.keys(tally).forEach(k => { if (tally[k] > worstN) { worst = k; worstN = tally[k]; } });
 
   const blips = DATA.blips || [];
+  // chips carry a log-filter category — clicking one activates the
+  // matching filter pill below (only when that pill exists)
   const chips = [
     { k: 'Outages · 7d', v: String(hardDown.length), s: hardDown.length ? 'reachability failures' : 'none — all clear',
-      cls: hardDown.length ? 'bad' : 'good' },
-    { k: 'Total downtime', v: fmtDur(downtime), s: 'summed outage time', cls: downtime > 0 ? 'bad' : 'good' },
-    { k: 'Longest outage', v: longest ? fmtDur(longest) : '—', s: 'single worst event', cls: longest ? 'warn' : 'good' },
+      cls: hardDown.length ? 'bad' : 'good', cat: 'outage' },
+    { k: 'Total downtime', v: fmtDur(downtime), s: 'summed outage time', cls: downtime > 0 ? 'bad' : 'good', cat: 'outage' },
+    { k: 'Longest outage', v: longest ? fmtDur(longest) : '—', s: 'single worst event', cls: longest ? 'warn' : 'good', cat: 'outage' },
     { k: 'Most affected', v: worst || '—', s: worst ? worstN + (worstN === 1 ? ' outage' : ' outages') : (slowCount ? slowCount + ' slow spells' : 'nothing'),
-      cls: worst ? 'warn' : 'good' },
+      cls: worst ? 'warn' : 'good', cat: worst === 'DNS' ? 'dns' : 'outage' },
     // micro-drops: recovered before the outage threshold, so they appear
     // nowhere else — yet frequent blips ARE the unstable-line signature
     { k: 'Blips · 7d', v: String(blips.length),
       s: blips.length ? (DATA.blips_24h || 0) + ' in last 24h — drops too brief to be outages' : 'no micro-drops either',
-      cls: blips.length ? 'warn' : 'good' },
+      cls: blips.length ? 'warn' : 'good', cat: 'flap' },
   ];
   document.getElementById('outageSummary').innerHTML = chips.map(c =>
-    `<div class="osum ${c.cls}"><div class="k">${c.k}</div><div class="v">${escapeHtml(c.v)}</div><div class="s">${escapeHtml(c.s)}</div></div>`
+    `<div class="osum ${c.cls}"${c.cat ? ` data-cat="${c.cat}" title="Click to filter the log"` : ''}><div class="k">${c.k}</div><div class="v">${escapeHtml(c.v)}</div><div class="s">${escapeHtml(c.s)}</div></div>`
   ).join('');
+  document.getElementById('outageSummary').addEventListener('click', (ev) => {
+    const chip = ev.target.closest('[data-cat]');
+    if (!chip) return;
+    const btn = filtersWrap.querySelector(`.ofilter[data-cat="${chip.dataset.cat}"]`);
+    if (btn) { btn.click(); btn.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  });
 
   // ---- incident timeline (SVG, last 7 days) ----
   const tlWrap = document.getElementById('outageTimeline');
@@ -2554,13 +2570,13 @@ safely('outages log', function() {
     const w = Math.max(3, x1 - x0);
     const title = `${e.label} · ${new Date(e.startMs).toLocaleString()} · ${e.ongoing ? 'ongoing' : fmtDur(e.durSecs)}`;
     const op = e.cat === 'paused' ? 0.5 : 0.92;
-    svg += `<rect class="tl-ev" x="${x0.toFixed(1)}" y="${TOP + 3}" width="${w.toFixed(1)}" height="${TRACK_H - 6}" rx="2" fill="${e.tlColor}" style="color:${e.tlColor}" opacity="${op}"><title>${escapeHtml(title)}</title></rect>`;
+    svg += `<rect class="tl-ev" data-ev="${e.startMs}|${e.cat}" x="${x0.toFixed(1)}" y="${TOP + 3}" width="${w.toFixed(1)}" height="${TRACK_H - 6}" rx="2" fill="${e.tlColor}" style="color:${e.tlColor}" opacity="${op}"><title>${escapeHtml(title)}</title></rect>`;
   });
   // point events (new device / IP change) as ticks
   winEvents.filter(e => e.point).forEach(e => {
     const x = xFor(e.startMs);
     const title = `${e.label} · ${new Date(e.startMs).toLocaleString()}`;
-    svg += `<g fill="${e.tlColor}" style="color:${e.tlColor}"><rect class="tl-ev" x="${(x - 1).toFixed(1)}" y="${TOP + 2}" width="2" height="${TRACK_H - 4}"/><circle class="tl-ev" cx="${x.toFixed(1)}" cy="${TOP - 1}" r="3"/><title>${escapeHtml(title)}</title></g>`;
+    svg += `<g fill="${e.tlColor}" style="color:${e.tlColor}" data-ev="${e.startMs}|${e.cat}"><rect class="tl-ev" x="${(x - 1).toFixed(1)}" y="${TOP + 2}" width="2" height="${TRACK_H - 4}"/><circle class="tl-ev" cx="${x.toFixed(1)}" cy="${TOP - 1}" r="3"/><title>${escapeHtml(title)}</title></g>`;
   });
   // blips: short amber ticks hugging the bottom edge of the track (point
   // events already own the top edge). One tick per micro-drop.
@@ -2571,6 +2587,31 @@ safely('outages log', function() {
   });
   // "now" marker
   svg += `<line class="tl-now" x1="${RIGHT}" y1="${TOP - 6}" x2="${RIGHT}" y2="${BOT + 4}"/>`;
+  // clicking a timeline event jumps to (and flashes) its row in the log
+  tlWrap.addEventListener('click', (ev) => {
+    const el = ev.target && ev.target.closest ? ev.target.closest('[data-ev]') : null;
+    if (!el) return;
+    jumpToEvent(el.getAttribute('data-ev'));
+  });
+  function jumpToEvent(key) {
+    const cat = key.split('|')[1];
+    // the row only exists under a filter that includes it
+    if (activeCat !== 'all' && activeCat !== cat) {
+      activeCat = 'all';
+      filtersWrap.querySelectorAll('.ofilter').forEach(b => b.classList.toggle('active', b.dataset.cat === 'all'));
+      renderList();
+    }
+    const row = outWrap.querySelector(`tr[data-ev="${key}"]`);
+    if (!row) return;
+    if (row.style.display === 'none') {
+      const t = document.getElementById('eventsToggle');
+      if (t) t.click();   // it's in the collapsed "older" set — expand
+    }
+    if (row.scrollIntoView) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.classList.remove('flash');
+    void row.offsetWidth;   // restart the animation on repeat clicks
+    row.classList.add('flash');
+  }
   svg += `<text class="tl-nowlab" x="${RIGHT}" y="${TOP - 9}" text-anchor="end">NOW</text>`;
   if (winEvents.length === 0) {
     svg += `<text x="500" y="${TOP + TRACK_H / 2 + 4}" text-anchor="middle" fill="var(--status-good)" font-size="12" font-family="var(--font-mono)">No incidents in the last 7 days</text>`;
@@ -2661,8 +2702,8 @@ safely('outages log', function() {
       const evRow = e.evidence ? `<tr class="ev-row" data-evrow="${idx}"${idx >= EVENTS_SHOWN ? ' data-extra="1"' : ''} style="display:none">
         <td colspan="4">${evidenceHtml(e.evidence)}</td>
       </tr>` : '';
-      return `<tr class="event-row ${e.rowClass}"${hidden}>
-        <td>${new Date(e.startMs).toLocaleString()}</td>
+      return `<tr class="event-row ${e.rowClass}" data-ev="${e.startMs}|${e.cat}"${hidden}>
+        <td>${new Date(e.startMs).toLocaleString()}<span class="rel"> · ${timeSince(e.startMs)} ago</span></td>
         <td>${badge}</td>
         <td>${dur}</td>
         <td class="mono">${escapeHtml(e.note)}${evBtn}</td>

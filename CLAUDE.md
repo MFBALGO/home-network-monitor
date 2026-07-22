@@ -251,9 +251,14 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   the devices section as the right column of `.dev-cols` (devices chart
   on top, all-devices table left 3fr / `#iotCard` right 2fr; right card
   hidden + `no-iot` full-width left when nothing is typed/watched;
-  stacked <940px; rows styled like the all-devices table, grouped by
-  type with the category labels stacked down a LEFT rail (`.iot-cat` /
-  `.iot-cat-label`); NB `.chart-card` is `overflow: visible` — an auto
+  stacked <940px; BOTH cards share one table anatomy — equal 1fr/1fr
+  widths, MAC in its own `.col-mac` column (on phones <640px the MAC
+  column and IoT's `.col-ip-iot` collapse back into the `.dev-mac`
+  sub-line — a MAC column once forced invisible side-scroll at 375px,
+  so both renderings exist and CSS picks per breakpoint); IoT columns
+  are Device/MAC/IP/Status/Latency/Last checked with the type label as
+  a rowspan `.iot-type-cell` stacking categories down the left edge;
+  NB `.chart-card` is `overflow: visible` — an auto
   overflow with hidden scrollbars made cards silently wheel-scrollable
   whenever the hover readout poked past an edge; wide content must
   scroll in its own wrapper, never on the card;

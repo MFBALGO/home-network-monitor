@@ -15,8 +15,8 @@ STAGE="$(mktemp -d)/network-monitor"
 mkdir -p "$STAGE"
 
 for f in monitor.py dashboard.py serve.py scan_routers.py version.py diagnose.py \
-         settings_api.py settings_page.py \
-         setup.sh uninstall.sh share.sh \
+         settings_api.py settings_page.py update.py \
+         setup.sh uninstall.sh share.sh update.sh update-windows.bat \
          setup.ps1 uninstall.ps1 setup-windows.bat uninstall-windows.bat \
          netmon.monitor.plist netmon.dashboard.plist netmon.web.plist README.md \
          routers.example.json devices.example.json config.example.json; do

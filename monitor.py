@@ -2939,6 +2939,15 @@ def main():
     router_desc = ", ".join(f"{r['name']}={r['ip']}" for r in routers) if routers else "none configured"
     log(f"network monitor starting. gateway={gateway} routers=[{router_desc}] db={DB_PATH}")
 
+    # When the updater installs a new version, exit(1) so Task Scheduler /
+    # launchd restarts us on the new code (see update.py for why nothing
+    # ever kills or re-execs a service in place).
+    try:
+        import update as _update
+        _update.install_restart_watcher(__version__, "the monitor", log)
+    except Exception:
+        pass  # partially-copied install without update.py - fine
+
     threads = [
         threading.Thread(target=ping_loop, args=(conn, gateway), daemon=True),
         threading.Thread(target=wifi_loop, args=(conn,), daemon=True),

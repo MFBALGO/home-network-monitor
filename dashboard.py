@@ -1340,6 +1340,13 @@ def build_html(data):
   .range-toggle button { border:none; background:transparent; color: var(--muted); font-size:12px; font-weight:600;
     padding: 5px 11px; border-radius: 6px; cursor:pointer; }
   .range-toggle button.active { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-glow); }
+  /* per-card tool cluster (mini range toggle + check-now) in the top-right
+     corner of a chart card; labels get right padding so they can't run
+     underneath it */
+  .card-tools { position:absolute; top:12px; right:14px; display:flex; gap:8px; align-items:center; z-index:2; }
+  .range-toggle.mini { padding:2px; gap:2px; background: var(--surface-2); }
+  .range-toggle.mini button { font-size:11px; padding:3px 8px; border-radius:5px; }
+  .chart-card.with-tools > .chart-label { padding-right: 130px; }
 
   .chart-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 18px;
     box-shadow: var(--shadow); overflow-x:auto; position:relative; }
@@ -1685,6 +1692,10 @@ def build_html(data):
         <button id="testNowBtn" title="Run a live connectivity check right now: 5 pings to the router + internet and a DNS lookup (~15 seconds)" style="display:none">Test now</button>
       </div>
       <span id="testNowResult" class="section-note" style="display:none"></span>
+      <div class="theme-toggle" id="globalRange" title="Set every chart's time range at once (each chart also has its own toggle)">
+        <button data-range="24">24h</button>
+        <button data-range="168">7d</button>
+      </div>
       <div class="theme-toggle" id="themeToggle">
         <button data-theme="light">Light</button>
         <button data-theme="dark">Dark</button>
@@ -1773,13 +1784,15 @@ def build_html(data):
         <div class="check-foot" id="cfPublicIp"></div>
       </div>
     </div>
-    <div class="chart-card" id="routersCard">
+    <div class="chart-card with-tools" id="routersCard">
+      <div class="card-tools"><span class="range-toggle mini" data-chart="routers"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
       <div class="chart-label">Per-router latency (ms)<span class="chart-focus" id="routerFocus" style="display:none" title="Click to show all routers again"></span></div>
       <div class="chart-box lg"><canvas id="routersChart"></canvas></div>
       <div id="routersChartEmpty" class="empty" style="display:none">No router ping history yet.</div>
       <div class="check-foot" id="cfRouters"></div>
     </div>
-    <div class="chart-card" id="targetsCard" style="display:none">
+    <div class="chart-card with-tools" id="targetsCard" style="display:none">
+      <div class="card-tools"><span class="range-toggle mini" data-chart="targets"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
       <div class="chart-label">Your targets — latency (ms)<span class="chart-sublabel">custom destinations from Settings; each gets its own outage events</span></div>
       <div class="chart-box"><canvas id="targetsChart"></canvas></div>
       <div class="check-foot" id="cfTargets"></div>
@@ -1789,18 +1802,16 @@ def build_html(data):
   <section id="sec-charts">
     <div class="section-head">
       <h2>Latency &amp; packet loss</h2>
-      <div class="range-toggle" data-rangetoggle>
-        <button data-range="24">24h</button>
-        <button data-range="168" class="active">7d</button>
-      </div>
     </div>
     <div class="chart-grid">
-      <div class="chart-card">
+      <div class="chart-card with-tools">
+        <div class="card-tools"><span class="range-toggle mini" data-chart="latency"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
         <div class="chart-label">Average latency (ms)</div>
         <div class="chart-box"><canvas id="latencyChart"></canvas></div>
         <div class="check-foot" id="cfLatencyChart"></div>
       </div>
-      <div class="chart-card">
+      <div class="chart-card with-tools">
+        <div class="card-tools"><span class="range-toggle mini" data-chart="loss"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
         <div class="chart-label">Packet loss (%)</div>
         <div class="chart-box sm"><canvas id="lossChart"></canvas></div>
         <div class="check-foot" id="cfLossChart"></div>
@@ -1811,12 +1822,9 @@ def build_html(data):
   <section>
     <div class="section-head">
       <h2>Speed test &amp; Wi-Fi</h2>
-      <div class="range-toggle" data-rangetoggle>
-        <button data-range="24">24h</button>
-        <button data-range="168" class="active">7d</button>
-      </div>
     </div>
-    <div class="chart-card">
+    <div class="chart-card with-tools">
+      <div class="card-tools"><span class="range-toggle mini" data-chart="speed"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
       <div class="chart-label">Speed test (Mbps)<span id="speedVantage" class="chart-sublabel"></span></div>
       <div class="chart-box"><canvas id="speedChart"></canvas></div>
       <div id="speedEmpty" class="empty" style="display:none">No speed test data yet — install a speed test tool (see README) and it will appear here automatically.</div>
@@ -1824,7 +1832,8 @@ def build_html(data):
       <div class="check-foot" id="cfSpeed"></div>
     </div>
     <div class="chart-grid">
-      <div class="chart-card">
+      <div class="chart-card with-tools">
+        <div class="card-tools"><span class="range-toggle mini" data-chart="loaded"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
         <div class="chart-label" style="display:flex; align-items:center; gap:8px;">Latency under load (ms)
           <span class="rating" id="rateBufferbloat"></span></div>
         <div class="chart-box sm"><canvas id="loadedLatencyChart"></canvas></div>
@@ -1886,13 +1895,10 @@ def build_html(data):
       <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
         <span class="section-note" id="devicesNote">most recent scan</span>
         <input type="search" id="devSearch" class="search-box" placeholder="Filter — name, IP, MAC" autocomplete="off" spellcheck="false">
-        <div class="range-toggle" data-rangetoggle title="Applies to the Devices-online chart; the table below always shows the latest scan">
-          <button data-range="24">24h</button>
-          <button data-range="168" class="active">7d</button>
-        </div>
       </div>
     </div>
-    <div class="chart-card">
+    <div class="chart-card with-tools">
+      <div class="card-tools"><span class="range-toggle mini" data-chart="devcount"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
       <div class="chart-label">Devices online over time</div>
       <div class="chart-box sm"><canvas id="devCountChart"></canvas></div>
       <div id="devCountEmpty" class="empty" style="display:none">No scan history yet.</div>
@@ -3525,8 +3531,8 @@ function monoFont() { return cssVar('--font-mono') || 'ui-monospace, Menlo, mono
 function catColor(i) { return cssVar('--cat-' + ((i % 8) + 1)) || '#3987e5'; }
 
 function baseTicks() { return { color: tickColor(), font: { family: monoFont(), size: 11 } }; }
-function timeScale() {
-  return { type: 'time', time: { unit: currentRangeHours <= 24 ? 'hour' : 'day' },
+function timeScale(hours) {
+  return { type: 'time', time: { unit: hours <= 24 ? 'hour' : 'day' },
     grid: { color: gridColor() }, border: { display: false }, ticks: baseTicks() };
 }
 function fixedTimeScale(unit) {
@@ -3630,12 +3636,18 @@ function refLines(lines) {
   };
 }
 
-let currentRangeHours = 168;
+// Each chart owns its 24h/7d range (mini toggle in the card corner); the
+// topbar's global toggle sets them all at once. Keys must match the
+// data-chart attrs in the markup AND the RANGE_CHARTS registry below.
+const chartRange = { latency: 168, loss: 168, routers: 168, targets: 168,
+                     speed: 168, loaded: 168, wifi: 168, devcount: 168 };
+function rangeFor(key) { return chartRange[key] || 168; }
 
 function renderLatencyChart() {
-  const series = filterByRange(DATA.latency_series, currentRangeHours);
-  const jitter = filterByRange(DATA.jitter_series || [], currentRangeHours);
-  const dns = filterByRange(DATA.dns_series || [], currentRangeHours);
+  const hours = rangeFor('latency');
+  const series = filterByRange(DATA.latency_series, hours);
+  const jitter = filterByRange(DATA.jitter_series || [], hours);
+  const dns = filterByRange(DATA.dns_series || [], hours);
   const blue = catColor(0), aqua = catColor(4), violet = catColor(6);
   const ctx = document.getElementById('latencyChart');
   if (chartInstances.latency) chartInstances.latency.destroy();
@@ -3675,7 +3687,7 @@ function renderLatencyChart() {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
-      scales: { x: timeScale(), y: yScale('ms') },
+      scales: { x: timeScale(hours), y: yScale('ms') },
       plugins: {
         legend: legendOpts(datasets.length > 1),
         tooltip: { ...tooltipBase(), callbacks: { label: (c) => c.dataset.label + ': ' + (c.parsed.y == null ? 'no data' : c.parsed.y + ' ms') } },
@@ -3685,7 +3697,8 @@ function renderLatencyChart() {
 }
 
 function renderLossChart() {
-  const series = filterByRange(DATA.loss_series, currentRangeHours);
+  const hours = rangeFor('loss');
+  const series = filterByRange(DATA.loss_series, hours);
   const orange = catColor(5);
   const ctx = document.getElementById('lossChart');
   if (chartInstances.loss) chartInstances.loss.destroy();
@@ -3717,7 +3730,7 @@ function renderLossChart() {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
-      scales: { x: timeScale(), y: yScale('%', { suggestedMax: 10 }) },
+      scales: { x: timeScale(hours), y: yScale('%', { suggestedMax: 10 }) },
       plugins: {
         legend: legendOpts(false),
         tooltip: { ...tooltipBase(), callbacks: { label: (c) => (c.parsed.y == null ? 'no data' : c.parsed.y + '% loss') } },
@@ -3736,7 +3749,8 @@ function renderRoutersChart() {
     document.getElementById('routersChartEmpty').style.display = 'block';
     return;
   }
-  const cutoff = Date.now() - currentRangeHours * 3600 * 1000;
+  const hours = rangeFor('routers');
+  const cutoff = Date.now() - hours * 3600 * 1000;
   const keep = rc.buckets.map(t => new Date(t).getTime() >= cutoff);
   const labels = rc.buckets.filter((_, i) => keep[i]).map(t => new Date(t));
   const datasets = names.map((name, i) => {
@@ -3761,7 +3775,7 @@ function renderRoutersChart() {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
-      scales: { x: timeScale(), y: yScale('ms') },
+      scales: { x: timeScale(hours), y: yScale('ms') },
       plugins: {
         legend: legendOpts(true),
         tooltip: { ...tooltipBase(), callbacks: { label: (c) => c.dataset.label + ': ' + (c.parsed.y == null ? 'no data' : c.parsed.y + ' ms') } },
@@ -3815,7 +3829,8 @@ function renderTargetsChart() {
   const card = document.getElementById('targetsCard');
   if (!tc || !tc.buckets.length || names.length === 0) { card.style.display = 'none'; return; }
   card.style.display = '';
-  const cutoff = Date.now() - currentRangeHours * 3600 * 1000;
+  const hours = rangeFor('targets');
+  const cutoff = Date.now() - hours * 3600 * 1000;
   const keep = tc.buckets.map(t => new Date(t).getTime() >= cutoff);
   const labels = tc.buckets.filter((_, i) => keep[i]).map(t => new Date(t));
   const datasets = names.map((name, i) => {
@@ -3835,7 +3850,7 @@ function renderTargetsChart() {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
-      scales: { x: timeScale(), y: yScale('ms') },
+      scales: { x: timeScale(hours), y: yScale('ms') },
       plugins: {
         legend: legendOpts(true),
         tooltip: { ...tooltipBase(), callbacks: { label: (c) => c.dataset.label + ': ' + (c.parsed.y == null ? 'no data' : c.parsed.y + ' ms') } },
@@ -3844,37 +3859,54 @@ function renderTargetsChart() {
   });
 }
 
-// One shared 24h/7d range drives every time-series chart. The same toggle
-// appears in several section headers; clicking any of them updates them all
-// and re-renders every range-aware chart in sync.
+// Per-chart ranges: each card's mini toggle re-renders only its own chart;
+// the topbar's global toggle sets every chart at once. ONE registry keyed
+// the same as chartRange — it also feeds rerenderCharts, so a new chart
+// added here is automatically range-aware AND theme-re-rendered (the two
+// duplicate hand-maintained lists this replaces once let a chart render
+// blank on first load).
+const RANGE_CHARTS = {
+  latency: renderLatencyChart, loss: renderLossChart, routers: renderRoutersChart,
+  targets: renderTargetsChart, speed: renderSpeedChart, loaded: renderLoadedLatencyChart,
+  wifi: renderWifiChart, devcount: renderDevCountChart,
+};
 function syncRangeToggles() {
-  document.querySelectorAll('[data-rangetoggle] button').forEach(b =>
-    b.classList.toggle('active', parseInt(b.dataset.range, 10) === currentRangeHours));
-}
-function applyRange(hours) {
-  currentRangeHours = hours;
-  syncRangeToggles();
-  safely('range charts', function() {
-    renderLatencyChart();
-    renderLossChart();
-    renderRoutersChart();
-    renderTargetsChart();
-    renderSpeedChart();
-    renderWifiChart();
-    renderLoadedLatencyChart();
-    renderDevCountChart();
+  document.querySelectorAll('.range-toggle.mini').forEach(tg => {
+    const k = tg.dataset.chart;
+    tg.querySelectorAll('button').forEach(b =>
+      b.classList.toggle('active', parseInt(b.dataset.range, 10) === rangeFor(k)));
   });
+  // the global toggle only lights up while every chart agrees
+  const vals = Object.keys(RANGE_CHARTS).map(rangeFor);
+  const uniform = vals.every(v => v === vals[0]) ? vals[0] : null;
+  document.querySelectorAll('#globalRange button').forEach(b =>
+    b.classList.toggle('active', uniform !== null && parseInt(b.dataset.range, 10) === uniform));
 }
-document.querySelectorAll('[data-rangetoggle]').forEach(tg => {
-  tg.addEventListener('click', (e) => {
+safely('range toggles', function() {
+  document.querySelectorAll('.range-toggle.mini').forEach(tg => {
+    tg.addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const k = tg.dataset.chart;
+      chartRange[k] = parseInt(btn.dataset.range, 10);
+      if (RANGE_CHARTS[k]) safely('range ' + k, RANGE_CHARTS[k]);
+      syncRangeToggles();
+    });
+  });
+  const g = document.getElementById('globalRange');
+  if (g) g.addEventListener('click', (e) => {
     const btn = e.target.closest('button');
-    if (btn) applyRange(parseInt(btn.dataset.range, 10));
+    if (!btn) return;
+    const hours = parseInt(btn.dataset.range, 10);
+    Object.keys(RANGE_CHARTS).forEach(k => { chartRange[k] = hours; });
+    Object.keys(RANGE_CHARTS).forEach(k => safely('range ' + k, RANGE_CHARTS[k]));
+    syncRangeToggles();
   });
+  syncRangeToggles();  // reflect the defaults on every toggle at load
 });
-syncRangeToggles();  // reflect the default range on every toggle at load
 
 // ---------- speed test chart (range-aware) ----------
-function rangeWord() { return currentRangeHours <= 24 ? '24 hours' : '7 days'; }
+function rangeWord(hours) { return hours <= 24 ? '24 hours' : '7 days'; }
 
 function renderSpeedChart() {
   const canvas = document.getElementById('speedChart');
@@ -3886,15 +3918,16 @@ function renderSpeedChart() {
   if (!DATA.speed_series || DATA.speed_series.length === 0) {
     return showEmpty('No speed test data yet — install a speed test tool (see README) and it will appear here automatically.');
   }
-  const series = filterByRange(DATA.speed_series, currentRangeHours);
-  if (series.length === 0) return showEmpty('No speed tests in the last ' + rangeWord() + '.');
+  const hours = rangeFor('speed');
+  const series = filterByRange(DATA.speed_series, hours);
+  if (series.length === 0) return showEmpty('No speed tests in the last ' + rangeWord(hours) + '.');
   canvas.style.display = ''; emptyEl.style.display = 'none';
   const blue = catColor(0), aqua = catColor(4);
   if (chartInstances.speed) chartInstances.speed.destroy();
   const plan = DATA.plan || {};
   // Failed test runs render as red × marks pinned at y=0 — a test that
   // couldn't finish during congestion is itself a data point.
-  const failures = filterByRange(DATA.speed_failures || [], currentRangeHours);
+  const failures = filterByRange(DATA.speed_failures || [], hours);
   const failColor = cssVar('--status-critical');
   const datasets = [
     { label: 'Download (Mbps)', data: series.map(p => p.down), borderColor: blue, backgroundColor: blue, borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, pointBackgroundColor: blue, pointBorderColor: surfaceColor(), pointBorderWidth: 2, tension: 0.2 },
@@ -3952,7 +3985,7 @@ function renderSpeedChart() {
       // the "what am I paying for" reference is always on screen even
       // when measured speeds sit well below it. suggestedMax (not max)
       // still lets the axis grow if a test ever exceeds plan + 100.
-      scales: { x: timeScale(), y: Object.assign(yScale('Mbps'), { min: 0 },
+      scales: { x: timeScale(hours), y: Object.assign(yScale('Mbps'), { min: 0 },
         (plan.down_mbps != null || plan.up_mbps != null)
           ? { suggestedMax: Math.max(plan.down_mbps || 0, plan.up_mbps || 0) + 100 } : {}) },
       plugins: { legend: legendOpts(true), tooltip: tt },
@@ -3972,8 +4005,9 @@ function renderLoadedLatencyChart() {
   if (all.length === 0) {
     return showEmpty('No latency-under-load data yet — it needs the official Ookla speedtest CLI (see README) and appears after the next test.');
   }
-  const series = filterByRange(all, currentRangeHours);
-  if (series.length === 0) return showEmpty('No loaded-latency data in the last ' + rangeWord() + '.');
+  const hours = rangeFor('loaded');
+  const series = filterByRange(all, hours);
+  if (series.length === 0) return showEmpty('No loaded-latency data in the last ' + rangeWord(hours) + '.');
   canvas.style.display = ''; emptyEl.style.display = 'none';
   const idle = catColor(2), down = catColor(0), up = catColor(4);
   if (chartInstances.loadedLat) chartInstances.loadedLat.destroy();
@@ -3991,7 +4025,7 @@ function renderLoadedLatencyChart() {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
-      scales: { x: timeScale(), y: yScale('ms') },
+      scales: { x: timeScale(hours), y: yScale('ms') },
       plugins: { legend: legendOpts(true), tooltip: tooltipBase() },
     },
   });
@@ -4006,8 +4040,9 @@ function renderWifiChart() {
     canvas.style.display = 'none'; emptyEl.style.display = 'block'; emptyEl.textContent = msg;
   };
   if (!DATA.wifi_series || DATA.wifi_series.length === 0) return showEmpty('No Wi-Fi signal data yet.');
-  const series = filterByRange(DATA.wifi_series, currentRangeHours);
-  if (series.length === 0) return showEmpty('No Wi-Fi data in the last ' + rangeWord() + '.');
+  const hours = rangeFor('wifi');
+  const series = filterByRange(DATA.wifi_series, hours);
+  if (series.length === 0) return showEmpty('No Wi-Fi data in the last ' + rangeWord(hours) + '.');
   canvas.style.display = ''; emptyEl.style.display = 'none';
   const orange = catColor(5);
   if (chartInstances.wifi) chartInstances.wifi.destroy();
@@ -4027,7 +4062,7 @@ function renderWifiChart() {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
-      scales: { x: timeScale(), y: yScale('dBm (higher is better)', { beginAtZero: false }) },
+      scales: { x: timeScale(hours), y: yScale('dBm (higher is better)', { beginAtZero: false }) },
       plugins: { legend: legendOpts(false), tooltip: tooltipBase() },
     },
   });
@@ -4043,8 +4078,9 @@ function renderDevCountChart() {
     canvas.style.display = 'none'; emptyEl.style.display = 'block'; emptyEl.textContent = msg;
   };
   if (all.length < 2) return showEmpty('No scan history yet.');
-  const series = filterByRange(all, currentRangeHours);
-  if (series.length < 2) return showEmpty('Not enough scans in the last ' + rangeWord() + '.');
+  const hours = rangeFor('devcount');
+  const series = filterByRange(all, hours);
+  if (series.length < 2) return showEmpty('Not enough scans in the last ' + rangeWord(hours) + '.');
   canvas.style.display = ''; emptyEl.style.display = 'none';
   const blue = catColor(0);
   if (chartInstances.devCount) chartInstances.devCount.destroy();
@@ -4068,7 +4104,7 @@ function renderDevCountChart() {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
-      scales: { x: timeScale(), y: yScale('devices', { ticks: Object.assign(baseTicks(), { precision: 0 }) }) },
+      scales: { x: timeScale(hours), y: yScale('devices', { ticks: Object.assign(baseTicks(), { precision: 0 }) }) },
       plugins: {
         legend: legendOpts(false),
         tooltip: { ...tooltipBase(), callbacks: { label: (c) => c.parsed.y + ' devices online' } },
@@ -4081,14 +4117,7 @@ function rerenderCharts() {
   if (typeof Chart === 'undefined') return;
   Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", sans-serif';
   safely('sparkline', renderSparkline);
-  safely('latency chart', renderLatencyChart);
-  safely('loss chart', renderLossChart);
-  safely('router latency chart', renderRoutersChart);
-  safely('custom targets chart', renderTargetsChart);
-  safely('speed test chart', renderSpeedChart);
-  safely('wifi chart', renderWifiChart);
-  safely('loaded latency chart', renderLoadedLatencyChart);
-  safely('device count chart', renderDevCountChart);
+  Object.keys(RANGE_CHARTS).forEach(k => safely(k + ' chart', RANGE_CHARTS[k]));
 }
 window.__rerenderCharts = rerenderCharts;
 rerenderCharts();

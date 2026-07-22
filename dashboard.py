@@ -1310,9 +1310,16 @@ def build_html(data):
   .dev-type { display:inline-block; margin-left:7px; padding:1px 6px; border-radius:5px; font-size:9.5px;
     font-weight:700; font-family: var(--font-mono); letter-spacing:.08em; text-transform:uppercase;
     color:var(--muted); background: var(--border-soft); vertical-align:1px; }
-  /* IoT table group header rows (one per type) */
-  .iot-group td { padding-top:14px; font-size:12.5px; font-weight:650;
-    color:var(--text-secondary); border-bottom:none; }
+  /* IoT devices: dense chip grid (one compact card per device) */
+  .iot-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(235px, 1fr)); gap:8px; }
+  .iot-chip { background: var(--surface-2); border:1px solid var(--border-soft); border-radius:9px;
+    padding:8px 11px; min-width:0; }
+  .iot-chip-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .iot-chip-top .dev-id { min-width:0; }
+  .iot-chip-top b { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .iot-chip-top .status-pill.small { flex-shrink:0; }
+  .iot-chip-sub { font-family: var(--font-mono); font-size:10.5px; color:var(--muted); margin-top:4px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #iotTableWrap { overflow-x: auto; }
 
   section { margin-bottom: 34px; scroll-margin-top: 58px; }
@@ -1531,6 +1538,11 @@ def build_html(data):
     border-left: 3px solid var(--status-warning); border-radius: 8px; padding: 12px 16px; margin-bottom: 20px;
     font-size: 13px; color: var(--text-primary); }
   .warning-banner b { display:block; margin-bottom: 2px; }
+  /* outdated-version disclaimer: same banner bones, accent flavor */
+  .update-banner { background: var(--accent-soft); border-left-color: var(--accent); }
+  .update-banner b { display:inline; margin:0; }
+  .update-banner a { color: var(--accent); font-weight: 600; text-decoration: none; }
+  .update-banner a:hover { text-decoration: underline; }
 
   /* "What's wrong right now" verdict — one plain-language line + a
      recommended action, colored by severity. The single most important
@@ -1693,6 +1705,8 @@ def build_html(data):
       <a id="settingsLink" style="display:none" title="Configure routers, floors, and device names (only available on the monitor PC)">Settings</a>
     </div>
   </div>
+
+  <div id="updateBanner" class="warning-banner update-banner"></div>
 
   <div id="diagBanner" class="diag-banner" style="display:none"></div>
 
@@ -1946,6 +1960,16 @@ if (DATA.update && DATA.update.latest) {
   up.textContent = 'Update available: v' + DATA.update.latest;
   if (DATA.update.url) up.href = DATA.update.url;
   up.style.display = '';
+  // DATA.update is only ever non-null when a strictly NEWER release
+  // exists, so this doubles as the outdated-version disclaimer
+  const ub = document.getElementById('updateBanner');
+  if (ub) {
+    const link = DATA.update.url
+      ? ' <a href="' + escapeHtml(DATA.update.url) + '" target="_blank" rel="noopener">See what’s new &rarr;</a>' : '';
+    ub.innerHTML = 'This monitor is running v' + escapeHtml(DATA.version || '?')
+      + ' — <b>v' + escapeHtml(DATA.update.latest) + ' is available.</b>' + link;
+    ub.style.display = 'block';
+  }
 }
 
 // Settings only work from the machine running the monitor (serve.py rejects
@@ -2866,8 +2890,6 @@ safely('iot devices', function() {
   const sec = document.getElementById('iotSection');
   if (!sec || !list.length) return;
   sec.style.display = '';
-  const TYPE_LABEL = { camera: 'Cameras', intercom: 'Intercoms', printer: 'Printers', light: 'Lights',
-                       plug: 'Plugs', speaker: 'Speakers', tv: 'TVs', other: 'Other' };
   const watched = list.filter(d => d.watch);
   const downN = watched.filter(d => d.status === 'down').length;
   document.getElementById('iotNote').textContent =
@@ -2905,28 +2927,21 @@ safely('iot devices', function() {
     if (d.online) return 'now';
     return d.last_seen ? timeSince(d.last_seen) + ' ago' : '—';
   }
-  const row = d => {
-    const macLine = '<span class="dev-mac">' + escapeHtml(d.mac) + '</span>';
+  // Dense chip grid (was a 4-column table with a full-width group-header
+  // row per type — it ate a screen of height for a handful of devices).
+  // One compact chip per device: status dot + name + type tag on top,
+  // latency/last-seen line below; MAC + IP live in the hover title.
+  const chip = d => {
     const watchTag = d.watch ? '' : '<span class="dev-type" title="Not actively watched — status comes from the periodic device scan. Tick Watch in Settings → Devices for live checks.">scan only</span>';
-    return '<tr><td><div class="device-name"><span class="device-icon">' + deviceIcon + '</span>'
-      + '<span class="dev-id"><span><b>' + escapeHtml(d.name) + '</b>' + watchTag + '</span>' + macLine + '</span></div></td>'
-      + '<td class="mono">' + escapeHtml(d.ip || '—') + '</td>'
-      + '<td>' + pill(d) + '</td>'
-      + '<td>' + lastCol(d) + '</td></tr>';
+    const typeTag = '<span class="dev-type">' + escapeHtml(d.type || 'other') + '</span>';
+    const title = escapeHtml(d.mac + (d.ip ? ' · ' + d.ip : ''));
+    return '<div class="iot-chip" title="' + title + '">'
+      + '<div class="iot-chip-top"><span class="dev-id"><span><b>' + escapeHtml(d.name) + '</b>' + typeTag + watchTag + '</span></span>' + pill(d) + '</div>'
+      + '<div class="iot-chip-sub">' + escapeHtml(d.ip || '—') + ' · ' + lastCol(d) + '</div>'
+      + '</div>';
   };
-  // one group header per type, in the server's sort order
-  let html = '<table><thead><tr><th>Device</th><th>IP</th><th>Status</th><th>Latency · checked</th></tr></thead><tbody>';
-  let curType;
-  for (const d of list) {
-    const t = d.type || 'other';
-    if (t !== curType) {
-      curType = t;
-      html += '<tr class="iot-group"><td colspan="4">' + (TYPE_LABEL[t] || t) + '</td></tr>';
-    }
-    html += row(d);
-  }
-  html += '</tbody></table>';
-  document.getElementById('iotTableWrap').innerHTML = html;
+  document.getElementById('iotTableWrap').innerHTML =
+    '<div class="iot-grid">' + list.map(chip).join('') + '</div>';
 });
 
 // ---------- house map ----------

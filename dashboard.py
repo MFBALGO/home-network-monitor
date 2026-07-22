@@ -1037,7 +1037,6 @@ def build_html(data):
     --accent: #0d6fb8;
     --accent-soft: rgba(13,111,184,0.09);
     --accent-glow: rgba(13,111,184,0.22);
-    --gridline-bg: rgba(20,70,140,0.045);
     --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     --cat-1: #2a78d6; --cat-2: #008300; --cat-3: #e87ba4; --cat-4: #eda100;
     --cat-5: #1baf7a; --cat-6: #eb6834; --cat-7: #4a3aa7; --cat-8: #e34948;
@@ -1088,7 +1087,6 @@ def build_html(data):
       --accent: #3fc6ff;
       --accent-soft: rgba(63,198,255,0.09);
       --accent-glow: rgba(63,198,255,0.30);
-      --gridline-bg: rgba(90,140,230,0.05);
       --cat-1: #3987e5; --cat-2: #008300; --cat-3: #d55181; --cat-4: #c98500;
       --cat-5: #199e70; --cat-6: #d95926; --cat-7: #9085e9; --cat-8: #e66767;
       --series-blue: #3987e5;
@@ -1138,7 +1136,6 @@ def build_html(data):
     --accent: #3fc6ff;
     --accent-soft: rgba(63,198,255,0.09);
     --accent-glow: rgba(63,198,255,0.30);
-    --gridline-bg: rgba(90,140,230,0.05);
     --cat-1: #3987e5; --cat-2: #008300; --cat-3: #d55181; --cat-4: #c98500;
     --cat-5: #199e70; --cat-6: #d95926; --cat-7: #9085e9; --cat-8: #e66767;
     --series-blue: #3987e5;
@@ -1188,12 +1185,8 @@ def build_html(data):
      growing the page by 30+ rows. Scrollbars are hidden globally, so the
      toggle button below the box stays the visible affordance. */
   .list-scroll.expanded { max-height: 55vh; overflow-y: auto; }
-  body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
-    background-image: linear-gradient(var(--gridline-bg) 1px, transparent 1px),
-                      linear-gradient(90deg, var(--gridline-bg) 1px, transparent 1px);
-    background-size: 44px 44px; }
-  body::after { content:""; position:fixed; left:0; right:0; top:0; height:360px; pointer-events:none; z-index:0;
-    background: radial-gradient(60% 100% at 50% 0%, var(--accent-soft), transparent 72%); }
+  body::after { content:""; position:fixed; left:0; right:0; top:0; height:220px; pointer-events:none; z-index:0;
+    background: radial-gradient(60% 100% at 50% 0%, var(--accent-soft), transparent 55%); }
   .topline { position:fixed; top:0; left:0; right:0; height:2px; z-index:5;
     background: linear-gradient(90deg, transparent, var(--accent) 25%, var(--accent) 75%, transparent); opacity:.7; }
   /* 1560 (was 1220): on modern wide monitors the old cap left a third of
@@ -1236,6 +1229,16 @@ def build_html(data):
     padding: 10px 14px; cursor:pointer;
     text-decoration:none; transition: color .12s ease; }
   #settingsLink:hover { color: var(--accent); }
+  /* right-hand tool cluster: wraps as a unit; the transient test-now
+     result gets its own full row instead of shoving the theme toggle
+     into an awkward mid-row wrap when it appears */
+  .topbar-tools { display:flex; gap:10px; row-gap:8px; align-items:center; flex-wrap:wrap;
+    justify-content:flex-end; margin-left:auto; }
+  #testNowResult { flex-basis:100%; text-align:right; order:9; }
+  @media (max-width: 480px) {
+    .topbar-tools { justify-content:flex-start; margin-left:0; }
+    #testNowResult { text-align:left; }
+  }
 
   /* the "command deck": house map front and center, stat cards flanking
      it left/right on wide screens. Below 1200px it degrades to map first,
@@ -1258,9 +1261,6 @@ def build_html(data):
   }
   .card { position:relative; background: linear-gradient(180deg, var(--surface-2), var(--surface-1) 58%);
     border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px 16px; box-shadow: var(--shadow); }
-  .card::before, .card::after { content:""; position:absolute; width:13px; height:13px; pointer-events:none; opacity:.55; }
-  .card::before { top:-1px; left:-1px; border-top:2px solid var(--accent); border-left:2px solid var(--accent); border-top-left-radius:12px; }
-  .card::after { bottom:-1px; right:-1px; border-bottom:2px solid var(--accent); border-right:2px solid var(--accent); border-bottom-right-radius:12px; }
   .card h3 { margin: 0 0 8px 0; font-size: 13px; letter-spacing: 0; color: var(--text-secondary);
     font-weight: 600; }
   .card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
@@ -1292,9 +1292,9 @@ def build_html(data):
   .status-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 11px; border-radius: 8px;
     font-size: 13.5px; font-weight: 800; font-family: var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
   .status-up { background: var(--status-good-bg); color: var(--status-good);
-    box-shadow: 0 0 16px var(--glow-good), inset 0 0 0 1px var(--glow-good); }
+    box-shadow: inset 0 0 0 1px var(--glow-good); }
   .status-down { background: var(--status-critical-bg); color: var(--status-critical);
-    box-shadow: 0 0 16px var(--glow-bad), inset 0 0 0 1px var(--glow-bad); }
+    box-shadow: inset 0 0 0 1px var(--glow-bad); }
   .status-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 6px currentColor; }
   .status-pill.small { font-size: 10.5px; padding: 3px 9px 3px 8px; letter-spacing: .08em; border-radius: 6px; box-shadow:none; }
   .status-pill.small .status-dot { box-shadow:none; }
@@ -1331,15 +1331,15 @@ def build_html(data):
   .chart-card + .chart-grid { margin-top: 12px; }  /* full-width card above a chart pair */
   .chart-grid > .chart-card { margin-top: 0; }
   /* fixed-height wrapper so maintainAspectRatio:false charts stay compact */
-  .chart-box { position: relative; width: 100%; height: 168px; }
-  .chart-box.sm { height: 140px; }
-  .chart-box.lg { height: 188px; }
+  .chart-box { position: relative; width: 100%; height: 225px; }
+  .chart-box.sm { height: 185px; }
+  .chart-box.lg { height: 250px; }
   .chart-box > canvas { position: absolute; inset: 0; }
   /* keep charts compact on phones too (single-column there) */
   @media (max-width: 640px) {
-    .chart-box { height: 130px; }
-    .chart-box.sm { height: 116px; }
-    .chart-box.lg { height: 150px; }
+    .chart-box { height: 165px; }
+    .chart-box.sm { height: 145px; }
+    .chart-box.lg { height: 190px; }
   }
   /* check-cadence footer: command · age · frequency. Deliberately dimmer
      than everything else on the card — it's metadata, not a stat. Turns
@@ -1349,10 +1349,6 @@ def build_html(data):
     font-variant-numeric: tabular-nums; }
   .check-foot.stale { color: var(--status-warning); font-weight: 700; }
   .chart-label { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); margin-bottom: 10px; }
-  .panel-hud::before, .panel-hud::after { content:""; position:absolute; width:15px; height:15px; pointer-events:none; opacity:.55; }
-  .panel-hud::before { top:-1px; left:-1px; border-top:2px solid var(--accent); border-left:2px solid var(--accent); border-top-left-radius:12px; }
-  .panel-hud::after { bottom:-1px; right:-1px; border-bottom:2px solid var(--accent); border-right:2px solid var(--accent); border-bottom-right-radius:12px; }
-
   table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase;
     letter-spacing: .06em; border-bottom: 1px solid var(--grid); padding: 8px 10px; }
@@ -1628,7 +1624,7 @@ def build_html(data):
         <div class="subtitle"><span class="live-dot"></span><span id="generatedAt"></span><a id="updatePill" target="_blank" rel="noopener" style="display:none"></a></div>
       </div>
     </div>
-    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <div class="topbar-tools">
       <div class="theme-toggle" id="refreshCtl">
         <button id="refreshBtn" title="Reload the page now">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
@@ -3344,7 +3340,7 @@ function borderColor() { return cssVar('--border'); }
 function monoFont() { return cssVar('--font-mono') || 'ui-monospace, Menlo, monospace'; }
 function catColor(i) { return cssVar('--cat-' + ((i % 8) + 1)) || '#3987e5'; }
 
-function baseTicks() { return { color: tickColor(), font: { family: monoFont(), size: 10 } }; }
+function baseTicks() { return { color: tickColor(), font: { family: monoFont(), size: 11 } }; }
 function timeScale() {
   return { type: 'time', time: { unit: currentRangeHours <= 24 ? 'hour' : 'day' },
     grid: { color: gridColor() }, border: { display: false }, ticks: baseTicks() };
@@ -3355,7 +3351,7 @@ function fixedTimeScale(unit) {
 }
 function yScale(titleText, extra) {
   return Object.assign({
-    title: { display: true, text: titleText, color: tickColor(), font: { family: monoFont(), size: 10 } },
+    title: { display: true, text: titleText, color: tickColor(), font: { family: monoFont(), size: 11 } },
     grid: { color: gridColor() }, border: { display: false }, ticks: baseTicks(), beginAtZero: true,
   }, extra || {});
 }
@@ -3369,13 +3365,13 @@ function tooltipBase() {
     padding: 10,
     boxPadding: 5,
     cornerRadius: 9,
-    titleFont: { family: monoFont(), size: 11 },
-    bodyFont: { family: monoFont(), size: 11 },
+    titleFont: { family: monoFont(), size: 12 },
+    bodyFont: { family: monoFont(), size: 12 },
     displayColors: true,
   };
 }
 function legendOpts(show) {
-  return { display: show, labels: { color: legendColor(), usePointStyle: true, pointStyle: 'line', font: { size: 11 } } };
+  return { display: show, labels: { color: legendColor(), usePointStyle: true, pointStyle: 'line', font: { size: 12 } } };
 }
 
 const chartInstances = {};
@@ -3404,7 +3400,7 @@ function refLines(lines) {
       if (!y) return;
       const { ctx, chartArea } = chart;
       ctx.save();
-      ctx.font = '9px ' + (cssVar('--font-mono') || 'ui-monospace, monospace');
+      ctx.font = '10px ' + (cssVar('--font-mono') || 'ui-monospace, monospace');
       lines.forEach(L => {
         if (L.value == null || isNaN(L.value)) return;
         const py = y.getPixelForValue(L.value);

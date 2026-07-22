@@ -105,7 +105,10 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   files, ONE writer each, that's the whole web→monitor IPC), alert
   notifier (10s poll of the events table; toast immediately,
   webhook/email queue-and-retry so internet-down alerts flush on
-  recovery; config.json `alerts` block, hot-reloaded), topology (daily
+  recovery; email is multipart plain+HTML — build_email_html inline-styled
+  table layout (severity color band, detail rows in local time, LAN
+  dashboard link via the UDP-connect own-IP trick), plain part kept as
+  the fallback; config.json `alerts` block, hot-reloaded), topology (daily
   traceroute double-NAT check into `topology_checks` — verdict from hop
   2's address class, NOT hop counting: ISPs run 10.x internally, only a
   192.168.x second hop is confidently a second home router; 100.64/10 =

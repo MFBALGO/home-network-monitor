@@ -50,15 +50,15 @@ _SHARED_HEAD = """<!DOCTYPE html>
   body { margin: 0; background: var(--page); color: var(--text-primary);
     font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
   .wrap { max-width: 860px; margin: 0 auto; padding: 28px 18px 60px; }
-  h1 { font-size: 21px; margin: 0 0 4px; letter-spacing: 0.3px; }
-  h2 { font-size: 15px; margin: 26px 0 10px; color: var(--text-secondary);
-    text-transform: uppercase; letter-spacing: 1.2px; font-weight: 600; }
-  .sub { color: var(--muted); font-size: 12.5px; font-family: var(--font-mono); margin-bottom: 22px; }
+  h1 { font-size: 22px; margin: 0 0 4px; font-weight: 650; letter-spacing: -0.01em; }
+  h2 { font-size: 16px; margin: 26px 0 10px; color: var(--text-primary); font-weight: 650; }
+  h3 { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
   .sub a { color: var(--accent); text-decoration: none; }
   .card { background: var(--surface-1); border: 1px solid var(--border);
     border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
   label { display: block; font-size: 12px; color: var(--text-secondary); margin: 12px 0 4px; }
-  input[type=text], input[type=number], select {
+  input[type=text], input[type=number], input[type=time], select {
     width: 100%; padding: 7px 10px; border-radius: 8px; font-size: 13.5px;
     background: var(--surface-2); color: var(--text-primary);
     border: 1px solid var(--border); outline: none; font-family: inherit; }
@@ -76,7 +76,7 @@ _SHARED_HEAD = """<!DOCTYPE html>
   button:disabled:hover { border-color: var(--border); }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th { text-align: left; color: var(--muted); font-size: 11px; text-transform: uppercase;
-    letter-spacing: 0.8px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+    letter-spacing: 0.4px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
   td { padding: 6px 8px; border-bottom: 1px solid var(--border-soft); vertical-align: middle; }
   td input[type=text], td select { min-width: 90px; }
   .mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); }
@@ -94,13 +94,18 @@ _SHARED_HEAD = """<!DOCTYPE html>
   .progress-track { height: 8px; border-radius: 999px; background: var(--surface-2);
     border: 1px solid var(--border); overflow: hidden; margin: 14px 0 8px; }
   .progress-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.4s; }
-  .steps { display: flex; gap: 6px; margin-bottom: 20px; font-family: var(--font-mono); font-size: 11px; }
+  .steps { display: flex; gap: 6px; margin-bottom: 20px; font-size: 11.5px; font-weight: 600; }
   .steps span { flex: 1; text-align: center; padding: 5px 2px; border-radius: 6px;
     background: var(--surface-1); border: 1px solid var(--border-soft); color: var(--muted); }
   .steps span.active { border-color: var(--accent); color: var(--accent); }
   .steps span.done { color: var(--status-good); border-color: var(--border); }
   details { margin-top: 14px; }
   summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
+  /* folded "More…" explainers under a one-line sub — keeps the cards
+     scannable without losing the detail for first-time setup */
+  details.hint { margin: 0 0 12px; }
+  details.hint summary { font-size: 12px; color: var(--muted); }
+  details.hint .sub { margin: 6px 0 0; }
   .footer { margin-top: 30px; color: var(--muted); font-size: 11.5px; font-family: var(--font-mono); text-align: center; }
   .tabs { display: flex; gap: 8px; margin-bottom: 18px; }
   .tabs button { border-radius: 8px 8px 0 0; border-bottom: 2px solid transparent; }
@@ -539,14 +544,14 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
 <div class="sub"><a href="/">&larr; back to dashboard</a> &nbsp;·&nbsp; editable only on this machine
 &nbsp;·&nbsp; <a href="/setup">rerun the setup wizard</a></div>
 
-<div class="tabs">
-  <button data-tab="general" class="active">General</button>
-  <button data-tab="routers">Routers</button>
-  <button data-tab="devices">Devices</button>
-  <button data-tab="alerts">Alerts</button>
+<div class="tabs" role="tablist" aria-label="Settings sections">
+  <button data-tab="general" class="active" id="tabbtn-general" role="tab" aria-controls="tab-general" aria-selected="true">General</button>
+  <button data-tab="routers" id="tabbtn-routers" role="tab" aria-controls="tab-routers" aria-selected="false" tabindex="-1">Routers</button>
+  <button data-tab="devices" id="tabbtn-devices" role="tab" aria-controls="tab-devices" aria-selected="false" tabindex="-1">Devices</button>
+  <button data-tab="alerts" id="tabbtn-alerts" role="tab" aria-controls="tab-alerts" aria-selected="false" tabindex="-1">Alerts</button>
 </div>
 
-<div id="tab-general">
+<div id="tab-general" role="tabpanel" aria-labelledby="tabbtn-general" tabindex="0">
   <div class="card">
     <label>Dashboard title</label>
     <input type="text" id="gTitle" maxlength="100">
@@ -593,11 +598,14 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
   </div>
   <div class="card">
     <h2 style="margin-top:0">Extra ping targets</h2>
-    <div class="sub" style="margin-bottom:10px">Destinations <b>you</b> care about — a game
-    server, your work VPN, a relative's router. The built-in checks use big anycast services
-    (the easiest hosts on the internet to reach), so "internet fine but my game is unplayable"
-    is invisible without asking the actual destination. Each target gets its own chart line and
-    its own outage events ("unreachable while the internet is fine"). Up to 5.</div>
+    <div class="sub" style="margin-bottom:4px">Destinations <b>you</b> care about — a game
+    server, your work VPN, a relative's router. Up to 5.</div>
+    <details class="hint"><summary>More…</summary>
+      <div class="sub">The built-in checks use big anycast services
+      (the easiest hosts on the internet to reach), so "internet fine but my game is unplayable"
+      is invisible without asking the actual destination. Each target gets its own chart line and
+      its own outage events ("unreachable while the internet is fine").</div>
+    </details>
     <table id="tgTable"><tr><th>Name</th><th>Host or IP</th><th></th></tr></table>
     <div class="row" style="margin-top:10px">
       <button class="small" id="tgAdd">+ Add target</button>
@@ -605,26 +613,33 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
   </div>
   <div class="card">
     <h2 style="margin-top:0">Check frequency</h2>
-    <div class="sub" style="margin-bottom:10px">How often the monitor runs each check. Saving
-    applies within one cycle — no restart. The dashboard's card footers show the <b>measured</b>
-    cadence (marked ~), which can run slower than the setting while checks wait on timeouts —
-    e.g. routers that only answer via ARP add a few seconds of every cycle.
-    Speed tests download/upload real data: more often than every 15 minutes can eat into data
-    caps and briefly loads the line each run.</div>
+    <div class="sub" style="margin-bottom:4px">How often the monitor runs each check. Saving
+    applies within one cycle — no restart.</div>
+    <details class="hint"><summary>More…</summary>
+      <div class="sub">The dashboard's card footers show the <b>measured</b>
+      cadence (marked ~), which can run slower than the setting while checks wait on timeouts —
+      e.g. routers that only answer via ARP add a few seconds of every cycle.
+      Speed tests download/upload real data: more often than every 15 minutes can eat into data
+      caps and briefly loads the line each run.</div>
+    </details>
     <div class="iv-grid" id="gIntervals"></div>
   </div>
   <div class="msg" id="gMsg"></div>
   <div class="row" style="justify-content:flex-end"><button class="primary" id="gSave">Save general settings</button></div>
 </div>
 
-<div id="tab-routers" style="display:none">
+<div id="tab-routers" style="display:none" role="tabpanel" aria-labelledby="tabbtn-routers" tabindex="0">
   <div class="card">
     <h3 style="margin:0 0 4px">Internet box (ISP modem / ONT)</h3>
-    <div class="sub" style="margin-bottom:8px">The box your internet line plugs into,
-      <b>before</b> your own router — often at 192.168.100.1 or 192.168.0.1. Monitoring it
+    <div class="sub" style="margin-bottom:4px">The box your internet line plugs into,
+      <b>before</b> your own router — often at 192.168.100.1 or 192.168.0.1.
+      Leave the IP empty if you don't have one.</div>
+    <details class="hint"><summary>More…</summary>
+      <div class="sub">Monitoring it
       splits "my router died" from "the ISP's box died", and it's drawn on the house wall
-      where the line enters, not on a floor. Leave the IP empty if you don't have one
-      (or it's in bridge mode).</div>
+      where the line enters, not on a floor. If the box is in bridge mode it usually has
+      no LAN address — leave the IP empty then too.</div>
+    </details>
     <div class="row" style="margin-bottom:16px">
       <input type="text" id="ispName" placeholder="Name (e.g. ISP Box)" style="max-width:190px">
       <input type="text" id="ispIp" class="mono" placeholder="IP (e.g. 192.168.100.1)" style="max-width:200px">
@@ -642,7 +657,7 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
   <div class="row" style="justify-content:flex-end"><button class="primary" id="rSave">Save routers</button></div>
 </div>
 
-<div id="tab-devices" style="display:none">
+<div id="tab-devices" style="display:none" role="tabpanel" aria-labelledby="tabbtn-devices" tabindex="0">
   <div class="card">
     <div class="sub" style="margin-bottom:10px">Friendly names shown on the dashboard's device
     table and in new-device alerts, keyed by MAC address. Give a device a type (camera,
@@ -655,7 +670,7 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
   <div class="row" style="justify-content:flex-end"><button class="primary" id="dSave">Save device names</button></div>
 </div>
 
-<div id="tab-alerts" style="display:none">
+<div id="tab-alerts" style="display:none" role="tabpanel" aria-labelledby="tabbtn-alerts" tabindex="0">
   <div class="card">
     <label style="display:flex;align-items:center;gap:8px">
       <input type="checkbox" id="aEnabled"> Enable alerts
@@ -680,9 +695,9 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
     </div>
     <label>Quiet hours (no desktop popups; webhook/email wait until the window ends — leave empty for none)</label>
     <div class="row">
-      <input type="text" id="aQuietStart" placeholder="23:00" maxlength="5" style="width:90px">
+      <input type="time" id="aQuietStart" style="width:120px">
       <span>to</span>
-      <input type="text" id="aQuietEnd" placeholder="07:00" maxlength="5" style="width:90px">
+      <input type="time" id="aQuietEnd" style="width:120px">
     </div>
   </div>
   <div class="card">
@@ -693,10 +708,13 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
   </div>
   <div class="card">
     <h2 style="margin-top:0">Webhook</h2>
-    <div class="sub" style="margin-bottom:8px">Simplest phone push: make a topic at
+    <div class="sub" style="margin-bottom:4px">Simplest phone push: make a topic at
     <span class="mono">ntfy.sh</span>, put <span class="mono">https://ntfy.sh/your-topic</span> here
-    with format <span class="mono">ntfy</span>, and install their app. "json" posts
-    {title, message, …} for Slack/Discord-style receivers.</div>
+    with format <span class="mono">ntfy</span>, and install their app.</div>
+    <details class="hint"><summary>More…</summary>
+      <div class="sub">"json" posts {title, message, …} for Slack/Discord-style receivers;
+      "text" posts the plain message body.</div>
+    </details>
     <label style="display:flex;align-items:center;gap:8px">
       <input type="checkbox" id="aWebhook"> Enabled
     </label>
@@ -772,13 +790,35 @@ function fmtIv(s) { return s < 60 ? s + 's' : s < 3600 ? (s / 60) + ' min' : (s 
 const S = { config: {}, routers: [], devices: {} };
 S.floorState = { floors: [], groundIndex: 0, main: null, onchange: refreshRouterFloorSelects };
 
-// ---- tabs ----
-document.querySelector('.tabs').onclick = (e) => {
-  const b = e.target.closest('button'); if (!b) return;
-  for (const x of document.querySelectorAll('.tabs button')) x.className = x === b ? 'active' : '';
+// ---- tabs (ARIA tablist: click + arrow-key navigation, roving tabindex) ----
+function activateTab(b) {
+  for (const x of document.querySelectorAll('.tabs button')) {
+    const on = x === b;
+    x.className = on ? 'active' : '';
+    x.setAttribute('aria-selected', on ? 'true' : 'false');
+    x.tabIndex = on ? 0 : -1;
+  }
   for (const name of ['general','routers','devices','alerts']) {
     document.getElementById('tab-' + name).style.display = name === b.dataset.tab ? '' : 'none';
   }
+}
+document.querySelector('.tabs').onclick = (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  activateTab(b);
+};
+document.querySelector('.tabs').onkeydown = (e) => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+  const btns = Array.from(document.querySelectorAll('.tabs button'));
+  const cur = btns.indexOf(document.activeElement);
+  if (cur === -1) return;
+  let next = cur;
+  if (e.key === 'ArrowLeft') next = (cur + btns.length - 1) % btns.length;
+  else if (e.key === 'ArrowRight') next = (cur + 1) % btns.length;
+  else if (e.key === 'Home') next = 0;
+  else next = btns.length - 1;
+  e.preventDefault();
+  btns[next].focus();
+  activateTab(btns[next]);
 };
 
 // ---- load ----
@@ -863,8 +903,15 @@ function loadAlerts() {
   document.getElementById('aEvIot').checked = !!ev.iot_outage;
   document.getElementById('aMinDur').value = a.min_duration_sec != null ? a.min_duration_sec : '';
   document.getElementById('aCooldown').value = a.cooldown_minutes != null ? a.cooldown_minutes : '';
-  document.getElementById('aQuietStart').value = (a.quiet_hours || {}).start || '';
-  document.getElementById('aQuietEnd').value = (a.quiet_hours || {}).end || '';
+  // hand-edited configs may hold "7:00" — pad to "07:00" or the time
+  // input rejects it (shows empty) and the next save silently drops it
+  function padTime(v) {
+    if (!v || v.indexOf(':') === -1) return v || '';
+    const parts = v.split(':');
+    return parts[0].padStart(2, '0') + ':' + parts[1].padStart(2, '0');
+  }
+  document.getElementById('aQuietStart').value = padTime((a.quiet_hours || {}).start);
+  document.getElementById('aQuietEnd').value = padTime((a.quiet_hours || {}).end);
   document.getElementById('aToast').checked = !ch.toast || ch.toast.enabled !== false;
   const wh = ch.webhook || {};
   document.getElementById('aWebhook').checked = !!wh.enabled;

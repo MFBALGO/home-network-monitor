@@ -108,8 +108,11 @@ _SHARED_HEAD = """<!DOCTYPE html>
   details.hint .sub { margin: 6px 0 0; }
   .footer { margin-top: 30px; color: var(--muted); font-size: 11.5px; font-family: var(--font-mono); text-align: center; }
   .tabs { display: flex; gap: 8px; margin-bottom: 18px; }
-  .tabs button { border-radius: 8px 8px 0 0; border-bottom: 2px solid transparent; }
+  .tabs button { border-radius: 8px 8px 0 0; border-bottom: 2px solid transparent; position: relative; }
   .tabs button.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  /* amber dot = this tab has unsaved edits */
+  .tabs button.dirty::after { content: ""; position: absolute; top: 6px; right: 6px;
+    width: 6px; height: 6px; border-radius: 50%; background: var(--status-warning); }
   /* Floors editor: a mini cross-section of the house. Rows above the
      street-level divider get a sky tint, rows below an earth tint — the
      same visual language as the dashboard's house map. */
@@ -833,6 +836,41 @@ document.querySelector('.tabs').onkeydown = (e) => {
   activateTab(btns[next]);
 };
 
+// ---- unsaved-changes guard ----
+// Saves are whole-file last-writer-wins, so silently navigating away has
+// really lost edits before. Each tab tracks its own dirty flag: an amber
+// dot on the tab button + a leave-page warning while any flag is set.
+const DIRTY = {};
+function markDirty(tab) { if (!DIRTY[tab]) { DIRTY[tab] = true; syncDirtyDots(); } }
+function clearDirty(tab) { DIRTY[tab] = false; syncDirtyDots(); }
+function syncDirtyDots() {
+  for (const name of ['general','routers','devices','alerts']) {
+    const btn = document.getElementById('tabbtn-' + name);
+    if (btn) btn.classList.toggle('dirty', !!DIRTY[name]);
+  }
+}
+for (const name of ['general','routers','devices','alerts']) {
+  const panel = document.getElementById('tab-' + name);
+  if (!panel) continue;
+  panel.addEventListener('input', (e) => {
+    if (e.target && e.target.id === 'dSearch') return;   // filtering edits nothing
+    markDirty(name);
+  });
+  panel.addEventListener('change', (e) => {
+    if (e.target && e.target.id === 'dSearch') return;
+    markDirty(name);
+  });
+  // row add/delete/reorder are button clicks, not input events. Saves,
+  // the test-alert button, and the read-only network scan stay clean.
+  panel.addEventListener('click', (e) => {
+    const b = e.target.closest ? e.target.closest('button') : null;
+    if (b && !b.classList.contains('primary') && b.id !== 'aTest' && b.id !== 'rScan') markDirty(name);
+  });
+}
+window.addEventListener('beforeunload', (e) => {
+  if (Object.keys(DIRTY).some(k => DIRTY[k])) { e.preventDefault(); e.returnValue = ''; }
+});
+
 // ---- load ----
 async function load() {
   const {status, data} = await api('/api/config');
@@ -1016,6 +1054,7 @@ document.getElementById('aSave').onclick = async () => {
   const {status, data} = await api('/api/config', {config: cfg});
   if (status === 200) {
     S.config = cfg;
+    clearDirty('alerts');
     showMsg(msg, 'ok', 'Saved. The monitor picks this up within ~10 seconds — no restart.',
       (data.warnings || []).map(fmtIssue));
   } else {
@@ -1094,6 +1133,7 @@ document.getElementById('gSave').onclick = async () => {
   const {status, data} = await api('/api/config', {config: cfg});
   if (status === 200) {
     S.config = cfg;
+    clearDirty('general');
     showMsg(msg, 'ok', 'Saved. The dashboard picks this up on its next refresh (~1 min); '
       + 'check frequencies apply within one old cycle of each check.',
       (data.warnings || []).map(fmtIssue));
@@ -1179,6 +1219,7 @@ document.getElementById('rSave').onclick = async () => {
   const {status, data} = await api('/api/config', {routers});
   if (status === 200) {
     S.routers = routers;
+    clearDirty('routers');
     showMsg(msg, 'ok', 'Saved. The monitor starts watching the new list within ~15 seconds.',
       (data.warnings || []).map(fmtIssue));
   } else {
@@ -1346,6 +1387,7 @@ document.getElementById('dSave').onclick = async () => {
   const {status, data} = await api('/api/config', {devices});
   if (status === 200) {
     S.devices = devices;
+    clearDirty('devices');
     showMsg(msg, 'ok', 'Saved. Device names refresh on the next scan cycle (within ~5 min).',
       (data.warnings || []).map(fmtIssue));
   } else {

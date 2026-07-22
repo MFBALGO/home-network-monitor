@@ -1213,7 +1213,7 @@ def build_html(data):
   @keyframes sweep { to { transform: rotate(360deg); } }
   .brand-mark .core { position:absolute; left:50%; top:50%; width:6px; height:6px; margin:-3px 0 0 -3px; border-radius:50%;
     background: var(--accent); box-shadow: 0 0 8px 2px var(--accent-glow); }
-  h1 { font-size: 16px; margin: 0 0 5px 0; letter-spacing: .14em; text-transform: uppercase; font-weight: 800; }
+  h1 { font-size: 20px; margin: 0 0 5px 0; letter-spacing: -.01em; font-weight: 650; }
   .subtitle { color: var(--text-secondary); font-size: 12px; display:flex; align-items:center; gap:7px; font-family: var(--font-mono); }
   .live-dot { width:7px; height:7px; border-radius:50%; background: var(--status-good); display:inline-block;
     box-shadow: 0 0 6px var(--glow-good); animation: pulse 2.2s infinite; }
@@ -1224,17 +1224,17 @@ def build_html(data):
   }
   .theme-toggle { display:flex; align-items:center; gap:4px; background: var(--surface-1); border:1px solid var(--border);
     border-radius: 10px; padding: 4px; box-shadow: var(--shadow); }
-  .theme-toggle button { border:none; background:transparent; color: var(--muted); font-size:10.5px; font-weight:700;
-    letter-spacing:.07em; text-transform:uppercase; padding: 6px 11px; border-radius: 7px; cursor:pointer;
-    font-family: var(--font-mono); transition: color .12s ease, background .12s ease; }
+  .theme-toggle button { border:none; background:transparent; color: var(--muted); font-size:12px; font-weight:600;
+    padding: 6px 11px; border-radius: 7px; cursor:pointer;
+    transition: color .12s ease, background .12s ease; }
   .theme-toggle button:hover { color: var(--text-primary); }
   .theme-toggle button.active { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-glow); }
   #refreshCtl button { display:inline-flex; align-items:center; gap:5px; }
   #refreshCtl button.active { background: var(--status-good-bg); color: var(--status-good); box-shadow: inset 0 0 0 1px var(--glow-good); }
   #settingsLink { background: var(--surface-1); border:1px solid var(--border); border-radius:10px;
-    box-shadow: var(--shadow); color: var(--muted); font-size:10.5px; font-weight:700;
-    letter-spacing:.07em; text-transform:uppercase; padding: 10px 14px; cursor:pointer;
-    font-family: var(--font-mono); text-decoration:none; transition: color .12s ease; }
+    box-shadow: var(--shadow); color: var(--muted); font-size:12px; font-weight:600;
+    padding: 10px 14px; cursor:pointer;
+    text-decoration:none; transition: color .12s ease; }
   #settingsLink:hover { color: var(--accent); }
 
   /* the "command deck": house map front and center, stat cards flanking
@@ -1257,38 +1257,40 @@ def build_html(data):
     .deck-r { grid-column: 3; }
   }
   .card { position:relative; background: linear-gradient(180deg, var(--surface-2), var(--surface-1) 58%);
-    border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px 15px; box-shadow: var(--shadow); }
+    border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px 16px; box-shadow: var(--shadow); }
   .card::before, .card::after { content:""; position:absolute; width:13px; height:13px; pointer-events:none; opacity:.55; }
   .card::before { top:-1px; left:-1px; border-top:2px solid var(--accent); border-left:2px solid var(--accent); border-top-left-radius:12px; }
   .card::after { bottom:-1px; right:-1px; border-bottom:2px solid var(--accent); border-right:2px solid var(--accent); border-bottom-right-radius:12px; }
-  .card h3 { margin: 0 0 10px 0; font-size: 10px; text-transform: uppercase; letter-spacing: .15em; color: var(--muted);
-    font-weight: 700; font-family: var(--font-mono); }
+  .card h3 { margin: 0 0 8px 0; font-size: 13px; letter-spacing: 0; color: var(--text-secondary);
+    font-weight: 600; }
   .card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
   .card-head h3 { margin:0; }
   /* upper bound matters: in the ≥1200px deck the hero lives in a single
      side column — a 2-column span there would overlap the map */
   @media (min-width: 940px) and (max-width: 1199px) { .card-hero { grid-column: span 2; } }
   .stat-row { display:flex; align-items:flex-end; justify-content:space-between; gap: 10px; }
-  .stat-value { font-size: 29px; font-weight: 600; letter-spacing: -.01em; line-height:1;
-    font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .stat-value { font-size: 30px; font-weight: 650; letter-spacing: -.01em; line-height:1;
+    font-variant-numeric: tabular-nums; }
+  /* the one stat that IS a machine value: the public IP stays mono */
+  .stat-value-ip { font-family: var(--font-mono); font-size: 18px; font-weight: 600; letter-spacing: 0; }
   .stat-value .unit { font-size: 14px; color: var(--muted); font-weight: 600; margin-left: 2px; }
-  .stat-sub { font-size: 11.5px; color: var(--text-secondary); margin-top: 8px; }
+  .stat-sub { font-size: 12.5px; color: var(--text-secondary); margin-top: 8px; }
   /* rating pill on each metric card; the good/fair thresholds live in its
      hover tooltip — a visible legend on every card was badge fatigue */
-  .rating { font-family: var(--font-mono); font-size: 9px; font-weight: 800; letter-spacing: .1em;
-    padding: 2px 7px; border-radius: 5px; display: none; white-space: nowrap; flex-shrink: 0; cursor: help; }
+  .rating { font-family: var(--font-mono); font-size: 10px; font-weight: 800; letter-spacing: .1em;
+    padding: 3px 8px; border-radius: 5px; display: none; white-space: nowrap; flex-shrink: 0; cursor: help; }
   .rating.show { display: inline-block; }
   .rating.good { color: var(--status-good); background: var(--status-good-bg); box-shadow: inset 0 0 0 1px var(--glow-good); }
   .rating.fair { color: color-mix(in srgb, var(--status-warning) 80%, black); background: var(--status-warning-bg); }
   .rating.poor { color: var(--status-critical); background: var(--status-critical-bg); box-shadow: inset 0 0 0 1px var(--glow-bad); }
-  .delta { font-size: 12px; font-weight: 700; display:inline-flex; align-items:center; gap:2px; font-family: var(--font-mono); }
+  .delta { font-size: 12px; font-weight: 600; display:inline-flex; align-items:center; gap:2px; font-variant-numeric: tabular-nums; }
   .delta.good { color: var(--success-text); }
   .delta.bad { color: var(--status-critical); }
   .delta.flat { color: var(--muted); }
   .sparkline { flex-shrink:0; }
 
   .status-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 11px; border-radius: 8px;
-    font-size: 13.5px; font-weight: 800; font-family: var(--font-mono); letter-spacing: .12em; text-transform: uppercase; }
+    font-size: 13.5px; font-weight: 800; font-family: var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
   .status-up { background: var(--status-good-bg); color: var(--status-good);
     box-shadow: 0 0 16px var(--glow-good), inset 0 0 0 1px var(--glow-good); }
   .status-down { background: var(--status-critical-bg); color: var(--status-critical);
@@ -1303,22 +1305,22 @@ def build_html(data):
     font-weight:700; font-family: var(--font-mono); letter-spacing:.08em; text-transform:uppercase;
     color:var(--muted); background: var(--border-soft); vertical-align:1px; }
   /* IoT table group header rows (one per type) */
-  .iot-group td { padding-top:14px; font-family: var(--font-mono); font-size:10px; font-weight:800;
-    letter-spacing:.14em; text-transform:uppercase; color:var(--muted); border-bottom:none; }
+  .iot-group td { padding-top:14px; font-size:12.5px; font-weight:650;
+    color:var(--text-secondary); border-bottom:none; }
   #iotTableWrap { overflow-x: auto; }
 
   section { margin-bottom: 34px; }
   section .section-head { display:flex; align-items:baseline; justify-content:space-between; margin-bottom: 12px;
     flex-wrap:wrap; gap:8px; padding-bottom: 9px; border-bottom: 1px solid var(--border-soft); }
-  section h2 { font-size: 12px; margin: 0; font-weight: 800; letter-spacing: .16em; text-transform: uppercase;
-    font-family: var(--font-mono); display:flex; align-items:center; gap:9px; }
-  section h2::before { content:""; width:7px; height:9px; background: var(--accent);
-    box-shadow: 0 0 8px var(--accent-glow); clip-path: polygon(0 0, 100% 50%, 0 100%); flex-shrink:0; }
-  section .section-note { font-size: 11.5px; color: var(--muted); font-family: var(--font-mono); }
+  section h2 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: 0;
+    display:flex; align-items:center; gap:9px; }
+  section h2::before { content:""; width:7px; height:10px; background: var(--accent);
+    clip-path: polygon(0 0, 100% 50%, 0 100%); flex-shrink:0; }
+  section .section-note { font-size: 12px; color: var(--muted); }
 
   .range-toggle { display:flex; gap:4px; background: var(--surface-1); border:1px solid var(--border); border-radius: 9px; padding: 3px; }
-  .range-toggle button { border:none; background:transparent; color: var(--muted); font-size:11px; font-weight:700;
-    font-family: var(--font-mono); letter-spacing:.05em; padding: 5px 11px; border-radius: 6px; cursor:pointer; }
+  .range-toggle button { border:none; background:transparent; color: var(--muted); font-size:12px; font-weight:600;
+    padding: 5px 11px; border-radius: 6px; cursor:pointer; }
   .range-toggle button.active { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-glow); }
 
   .chart-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 18px;
@@ -1343,18 +1345,17 @@ def build_html(data):
      than everything else on the card — it's metadata, not a stat. Turns
      amber when a check runs way past its cadence (per-card stall tell). */
   .check-foot { margin-top: 10px; padding-top: 7px; border-top: 1px solid var(--border);
-    font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
+    font-size: 11px; color: var(--muted); font-family: var(--font-mono);
     font-variant-numeric: tabular-nums; }
   .check-foot.stale { color: var(--status-warning); font-weight: 700; }
-  .chart-label { font-size: 10.5px; font-weight: 700; color: var(--muted); margin-bottom: 10px;
-    font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .13em; }
+  .chart-label { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); margin-bottom: 10px; }
   .panel-hud::before, .panel-hud::after { content:""; position:absolute; width:15px; height:15px; pointer-events:none; opacity:.55; }
   .panel-hud::before { top:-1px; left:-1px; border-top:2px solid var(--accent); border-left:2px solid var(--accent); border-top-left-radius:12px; }
   .panel-hud::after { bottom:-1px; right:-1px; border-bottom:2px solid var(--accent); border-right:2px solid var(--accent); border-bottom-right-radius:12px; }
 
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th { text-align: left; color: var(--muted); font-weight: 700; font-size: 9.5px; text-transform: uppercase;
-    letter-spacing: .13em; font-family: var(--font-mono); border-bottom: 1px solid var(--grid); padding: 8px 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .06em; border-bottom: 1px solid var(--grid); padding: 8px 10px; }
   td { padding: 9px 10px; border-bottom: 1px solid var(--border-soft); font-variant-numeric: tabular-nums; vertical-align: middle; }
   /* phones: tighter cells so the 4-column tables fit without side-scroll
      (scrollbars are hidden globally, so horizontal overflow is invisible).
@@ -1367,7 +1368,7 @@ def build_html(data):
        dashboard below a screen and a half of scrolling */
     .deck { grid-template-columns: 1fr 1fr; gap: 10px; }
     .deck-map, .card-hero { grid-column: span 2; }
-    .stat-value { font-size: 24px; }
+    .stat-value { font-size: 25px; }
     table { font-size: 12px; }
     th, td { padding: 8px 4px; }
     td.mono, .device-name .mono { font-size: 11px; }
@@ -1412,7 +1413,7 @@ def build_html(data):
   @keyframes blinkSoft { 50% { opacity: .55; } }
 
   .ghost-btn { border:1px solid var(--border); background: var(--surface-2); color: var(--text-secondary);
-    font-family: var(--font-mono); font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+    font-size:12px; font-weight:600;
     padding:7px 16px; border-radius:8px; cursor:pointer; transition: color .12s ease, border-color .12s ease; }
   .ghost-btn:hover { color: var(--accent); border-color: var(--accent-glow); }
 
@@ -1421,14 +1422,14 @@ def build_html(data):
   .osum { background: var(--surface-2); border:1px solid var(--border-soft); border-radius:10px; padding:11px 13px 12px; position:relative; overflow:hidden; }
   .osum::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background: var(--muted); opacity:.85; }
   .osum.good::before { background: var(--status-good); } .osum.warn::before { background: var(--status-warning); } .osum.bad::before { background: var(--status-critical); }
-  .osum .k { font-size:9px; text-transform:uppercase; letter-spacing:.13em; color:var(--muted); font-family:var(--font-mono); font-weight:700; }
-  .osum .v { font-size:21px; font-weight:600; font-family:var(--font-mono); font-variant-numeric:tabular-nums; margin-top:6px; letter-spacing:-.01em; line-height:1; }
+  .osum .k { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:600; }
+  .osum .v { font-size:22px; font-weight:650; font-variant-numeric:tabular-nums; margin-top:6px; letter-spacing:-.01em; line-height:1; }
   .osum .s { font-size:10.5px; color:var(--text-secondary); margin-top:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .osum.good .v { color: var(--status-good); } .osum.warn .v { color: var(--status-warning); } .osum.bad .v { color: var(--status-critical); }
 
   .timeline-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:9px; flex-wrap:wrap; }
-  .timeline-label { font-size:10.5px; font-weight:700; color:var(--muted); font-family:var(--font-mono); text-transform:uppercase; letter-spacing:.13em; }
-  .timeline-legend { display:flex; gap:12px; flex-wrap:wrap; font-family:var(--font-mono); font-size:10px; color:var(--text-secondary); }
+  .timeline-label { font-size:12.5px; font-weight:600; color:var(--text-secondary); }
+  .timeline-legend { display:flex; gap:12px; flex-wrap:wrap; font-size:11px; color:var(--text-secondary); }
   .timeline-legend .tlk { display:inline-flex; align-items:center; gap:5px; }
   .timeline-legend .tlk i { width:9px; height:9px; border-radius:2px; display:inline-block; }
   .timeline-svg { display:block; width:100%; height:auto; }
@@ -1458,8 +1459,8 @@ def build_html(data):
     overflow-x: auto; font-size: 10.5px; line-height: 1.55; color: var(--text-secondary); }
 
   .outage-filters { display:flex; gap:6px; flex-wrap:wrap; margin:18px 0 12px; }
-  .ofilter { border:1px solid var(--border); background:var(--surface-1); color:var(--muted); font-family:var(--font-mono);
-    font-size:10.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:5px 11px; border-radius:7px;
+  .ofilter { border:1px solid var(--border); background:var(--surface-1); color:var(--muted);
+    font-size:12px; font-weight:600; padding:5px 11px; border-radius:7px;
     cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition: color .12s ease, background .12s ease; }
   .ofilter:hover { color:var(--text-primary); }
   .ofilter.active { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-glow); }
@@ -1470,8 +1471,8 @@ def build_html(data):
 
   .device-name { display:flex; align-items:center; gap:8px; }
   .dev-id { display:flex; flex-direction:column; min-width:0; }
-  .chart-sublabel { font-family: var(--font-mono); font-size: 10px; color: var(--muted);
-    font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 10px; }
+  .chart-sublabel { font-size: 11px; color: var(--muted);
+    font-weight: 400; margin-left: 10px; }
   .dev-mac { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); letter-spacing: .02em; }
   .device-icon { width:26px; height:26px; border-radius:7px; background: var(--surface-2); border:1px solid var(--border);
     display:flex; align-items:center; justify-content:center; flex-shrink:0; color: var(--muted); }
@@ -1479,7 +1480,7 @@ def build_html(data):
 
   .empty { color: var(--muted); font-size: 13px; padding: 20px 4px; text-align:center; }
   .legend-note { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 8px 28px;
-    font-size: 12px; color: var(--text-secondary); margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-soft); }
+    font-size: 12.5px; color: var(--text-secondary); margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-soft); }
   .legend-item { display: flex; align-items: baseline; gap: 8px; line-height: 1.45; }
   .legend-item .badge { flex-shrink: 0; white-space: nowrap; min-width: 118px; }
   .footer-note { text-align:center; color: var(--muted); font-size: 11.5px; margin-top: 44px; font-family: var(--font-mono); }
@@ -1713,7 +1714,7 @@ def build_html(data):
       </div>
       <div class="card deck-r">
         <h3>Public IP</h3>
-        <div class="stat-value" id="publicIp" style="font-size:19px;">—</div>
+        <div class="stat-value stat-value-ip" id="publicIp">—</div>
         <div class="stat-sub" id="publicIpStable"></div>
         <div class="check-foot" id="cfPublicIp"></div>
       </div>

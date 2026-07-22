@@ -283,8 +283,22 @@ def validate_config(cfg):
                         port = em.get("port")
                         if port is not None and (not isinstance(port, int) or not 1 <= port <= 65535):
                             errors.append(_err("config", "alerts.channels.email.port", "must be a port number (1-65535)"))
-                        if not em.get("to"):
+                        # 'to' is one address, a comma/semicolon-separated
+                        # string of several, or a JSON array of strings —
+                        # monitor.py's email_recipients() normalizes all
+                        # three; here just check every entry looks like an
+                        # address so a stray "and" or trailing comma is
+                        # caught at save time, not at send time.
+                        to = em.get("to")
+                        addrs = ([str(a).strip() for a in to] if isinstance(to, list)
+                                 else re.split(r"[,;]", str(to or "")))
+                        addrs = [a.strip() for a in addrs if str(a).strip()]
+                        if not addrs:
                             errors.append(_err("config", "alerts.channels.email.to", "required when email is enabled"))
+                        for a in addrs:
+                            if not re.fullmatch(r"[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+", a):
+                                errors.append(_err("config", "alerts.channels.email.to",
+                                                   f'"{a}" does not look like an email address'))
 
     known = {"title", "floors", "underground_floors", "main_router_floor",
              "hide_ip_prefixes", "thresholds", "plan_down_mbps", "plan_up_mbps",

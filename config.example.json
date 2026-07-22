@@ -64,7 +64,7 @@
         "username": "",
         "password": "",
         "from": "",
-        "to": ""
+        "to": "you@example.com, family@example.com"
       }
     }
   }

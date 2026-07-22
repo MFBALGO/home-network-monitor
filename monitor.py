@@ -2664,6 +2664,19 @@ def send_webhook(cfg, title, message, meta):
     urllib.request.urlopen(req, timeout=10).read(200)
 
 
+def email_recipients(to):
+    """Normalize the email 'to' config to a comma-joined address list for
+    the To header. Accepts a plain string ("a@x.com" or comma/semicolon-
+    separated "a@x.com, b@y.com") or a JSON array of strings — the header
+    wants commas, and smtplib's send_message() delivers to every address
+    it finds there, so multi-recipient comes free once normalized."""
+    if isinstance(to, list):
+        parts = [str(a).strip() for a in to]
+    else:
+        parts = re.split(r"[,;]", str(to or ""))
+    return ", ".join(a.strip() for a in parts if a.strip())
+
+
 def send_email(cfg, title, message):
     """Plain SMTP notification. Credentials live in config.json — which is
     gitignored and unreachable from the LAN, but still plaintext on disk:
@@ -2674,7 +2687,7 @@ def send_email(cfg, title, message):
     msg = EmailMessage()
     msg["Subject"] = title
     msg["From"] = cfg.get("from") or cfg.get("username") or "netmon@localhost"
-    msg["To"] = cfg.get("to") or ""
+    msg["To"] = email_recipients(cfg.get("to"))
     msg.set_content(message)
     with smtplib.SMTP(cfg.get("host") or "", int(cfg.get("port") or 587), timeout=15) as s:
         if cfg.get("starttls", True):

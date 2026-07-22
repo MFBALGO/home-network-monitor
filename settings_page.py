@@ -726,7 +726,7 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
     </div>
     <div class="row">
       <div><label>From</label><input type="text" id="aEmailFrom" placeholder="netmon@home" style="width:200px"></div>
-      <div><label>To</label><input type="text" id="aEmailTo" placeholder="you@example.com" style="width:200px"></div>
+      <div><label>To (comma-separated for several)</label><input type="text" id="aEmailTo" placeholder="you@example.com, family@example.com" style="width:280px"></div>
     </div>
   </div>
   <div class="msg" id="aMsg"></div>
@@ -876,7 +876,10 @@ function loadAlerts() {
   document.getElementById('aEmailUser').value = em.username || '';
   document.getElementById('aEmailPass').value = em.password || '';
   document.getElementById('aEmailFrom').value = em.from || '';
-  document.getElementById('aEmailTo').value = em.to || '';
+  // hand-edited configs may hold a JSON array of addresses — show it
+  // comma-joined; the save writes the string form back, which the
+  // monitor accepts equally
+  document.getElementById('aEmailTo').value = Array.isArray(em.to) ? em.to.join(', ') : (em.to || '');
 }
 
 function collectAlerts() {

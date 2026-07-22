@@ -1311,8 +1311,13 @@ def build_html(data):
   .dev-type { display:inline-block; margin-left:7px; padding:1px 6px; border-radius:5px; font-size:9.5px;
     font-weight:700; font-family: var(--font-mono); letter-spacing:.08em; text-transform:uppercase;
     color:var(--muted); background: var(--border-soft); vertical-align:1px; }
+  /* devices: all-devices table left, IoT chips right (stacked on phones;
+     left card takes the full row when no IoT devices are tagged) */
+  .dev-cols { display:grid; grid-template-columns: 3fr 2fr; gap:12px; align-items:start; }
+  .dev-cols.no-iot { grid-template-columns: 1fr; }
+  @media (max-width: 940px) { .dev-cols { grid-template-columns: 1fr; } }
   /* IoT devices: dense chip grid (one compact card per device) */
-  .iot-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(235px, 1fr)); gap:8px; }
+  .iot-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); gap:8px; }
   .iot-chip { background: var(--surface-2); border:1px solid var(--border-soft); border-radius:9px;
     padding:8px 11px; min-width:0; }
   .iot-chip-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
@@ -1876,17 +1881,6 @@ def build_html(data):
     </div>
   </section>
 
-  <section id="iotSection" style="display:none">
-    <div class="section-head">
-      <h2>IoT devices</h2>
-      <span class="section-note" id="iotNote"></span>
-    </div>
-    <div class="chart-card">
-      <div id="iotTableWrap"></div>
-      <div class="check-foot" id="cfIot"></div>
-    </div>
-  </section>
-
   <section id="sec-devices">
     <div class="section-head">
       <h2>Devices on your network</h2>
@@ -1902,8 +1896,19 @@ def build_html(data):
       <div id="devCountEmpty" class="empty" style="display:none">No scan history yet.</div>
       <div class="check-foot" id="cfDevices"></div>
     </div>
-    <div class="chart-card">
-      <div id="devicesTableWrap"></div>
+    <!-- chart on top, then all devices left / IoT devices right; the
+         right card hides (and the left goes full width) when nothing is
+         typed/watched in devices.json -->
+    <div class="dev-cols no-iot" id="devCols">
+      <div class="chart-card">
+        <div class="chart-label">All devices</div>
+        <div id="devicesTableWrap"></div>
+      </div>
+      <div class="chart-card" id="iotCard" style="display:none">
+        <div class="chart-label">IoT devices<span class="chart-sublabel" id="iotNote"></span></div>
+        <div id="iotTableWrap"></div>
+        <div class="check-foot" id="cfIot"></div>
+      </div>
     </div>
   </section>
 
@@ -2886,9 +2891,11 @@ safely('iot devices', function() {
   // rows ride the device-scan census. Section hidden when nothing is
   // tagged — same pattern as the custom-targets card.
   const list = DATA.iot_devices || [];
-  const sec = document.getElementById('iotSection');
-  if (!sec || !list.length) return;
-  sec.style.display = '';
+  const card = document.getElementById('iotCard');
+  if (!card || !list.length) return;
+  card.style.display = '';
+  const cols = document.getElementById('devCols');
+  if (cols) cols.classList.remove('no-iot');
   const watched = list.filter(d => d.watch);
   const downN = watched.filter(d => d.status === 'down').length;
   document.getElementById('iotNote').textContent =

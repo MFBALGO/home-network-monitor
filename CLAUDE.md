@@ -251,8 +251,12 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   the devices section as the right column of `.dev-cols` (devices chart
   on top, all-devices table left 3fr / `#iotCard` right 2fr; right card
   hidden + `no-iot` full-width left when nothing is typed/watched;
-  stacked <940px; a dense `.iot-grid` chip grid — one compact chip per
-  device with type tag + status pill, MAC/IP in the hover title;
+  stacked <940px; rows styled like the all-devices table, grouped by
+  type with the category labels stacked down a LEFT rail (`.iot-cat` /
+  `.iot-cat-label`); NB `.chart-card` is `overflow: visible` — an auto
+  overflow with hidden scrollbars made cards silently wheel-scrollable
+  whenever the hover readout poked past an edge; wide content must
+  scroll in its own wrapper, never on the card;
   own outage-log category cat='iot'/"IoT" chip — hardDown filters
   cat outage|dns so IoT is auto-excluded from the downtime chips; NOT
   in the diagnosis banner, whose rules are all scope-filtered). Chart colors
@@ -305,8 +309,9 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   cleared by that tab's successful save. The Devices tab renders the
   CENSUS union — KNOWN devices by default (entry/manual/typed rows),
   "Show all N seen devices" or any search query reveals the full census
-  (visibility-based, not a re-render, so unsaved edits survive): one
-  row per seen device (numeric-IP-ascending sort;
+  (visibility-based, not a re-render, so unsaved edits survive; the
+  view toggle and scans are on the dirty-tracker's clean-list): one
+  row per seen device (known-first then numeric-IP-ascending;
   hostname as name-input placeholder, mono context line; the ✕ renders
   only when the row HAS an entry, and clearing fades the row + "entry
   forgotten on save" note — reversed by typing) + a Scan-for-devices-now

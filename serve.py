@@ -277,6 +277,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def main():
+    # When the updater installs a new version, exit(1) so Task Scheduler /
+    # launchd restarts us on the new code (see update.py for why nothing
+    # ever kills or re-execs a service in place).
+    try:
+        import update as _update
+        _update.install_restart_watcher(__version__, "the web server", print)
+    except Exception:
+        pass  # partially-copied install without update.py - fine
+
     server = ThreadingHTTPServer(("0.0.0.0", PORT), DashboardHandler)
     print(f"serving the dashboard on port {PORT} (all interfaces)")
     server.serve_forever()

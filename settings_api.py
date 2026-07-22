@@ -30,6 +30,11 @@ from datetime import datetime, timedelta, timezone
 import scan_routers
 
 try:
+    import update as _update
+except ImportError:  # partially-copied install without update.py
+    _update = None
+
+try:
     from version import __version__
 except ImportError:  # partially-copied install
     __version__ = "0.0.0"
@@ -746,9 +751,92 @@ def start_device_scan():
     return 202, {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# One-click updates (Settings -> General). The heavy lifting lives in
+# update.py; here we only report status and spawn the updater DETACHED -
+# it must keep running while serve.py itself exits for the post-update
+# restart (see update.py's module docstring for the full story).
+# ---------------------------------------------------------------------------
+
+_last_update_check = 0.0
+_last_update_run = 0.0
+
+
+def update_status():
+    """Current version + last-known release info + live updater progress,
+    for the Settings page's Updates card (poll-friendly)."""
+    if _update is None:
+        return 200, {"ok": True, "current": __version__, "supported": False}
+    return 200, {"ok": True, "supported": True, "current": __version__,
+                 "status": _update.read_status(), "info": _update.cached_info()}
+
+
+def run_update_check():
+    """Refresh the release info from GitHub right now (the 'Check for
+    updates' button). Synchronous - a ~2s wait behind a button beats
+    another polling rail."""
+    global _last_update_check
+    if _update is None:
+        return 501, {"ok": False, "error": "update.py is missing from this install"}
+    if time.time() - _last_update_check < 30:
+        return 429, {"ok": False, "error": "just checked - try again in half a minute"}
+    _last_update_check = time.time()
+    try:
+        info = _update.fetch_release_info()
+    except Exception as e:
+        return 502, {"ok": False, "error": f"couldn't reach GitHub: {e}"}
+    return 200, {"ok": True, "current": __version__, "info": _update.cached_info(),
+                 "fetched": info["tag"]}
+
+
+def start_update():
+    """Spawn `python update.py --auto` detached. Detached matters twice
+    over: the updater outlives this request, and it must survive serve.py
+    exiting when the update lands (the restart watcher exits this very
+    process). 409 while one runs; no cooldown gymnastics beyond that -
+    this is localhost-only."""
+    global _last_update_run
+    if _update is None:
+        return 501, {"ok": False, "error": "update.py is missing from this install"}
+    status = _update.read_status()
+    if status.get("state") == "running":
+        try:
+            started = datetime.fromisoformat(status.get("started_ts"))
+            if (datetime.now(timezone.utc) - started).total_seconds() < 600:
+                return 409, {"ok": False, "error": "an update is already running"}
+        except (TypeError, ValueError):
+            pass
+    if time.time() - _last_update_run < 30:
+        return 429, {"ok": False, "error": "an update was just started"}
+    info = _update.cached_info()
+    if not info.get("available"):
+        return 409, {"ok": False, "error": "already up to date - check for updates first"}
+    _last_update_run = time.time()
+
+    import subprocess
+    import sys as _sys
+    kwargs = {"cwd": BASE_DIR, "stdin": subprocess.DEVNULL,
+              "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    if os.name == "nt":
+        # DETACHED_PROCESS + CREATE_NO_WINDOW: no console flash under
+        # pythonw, and no tie to this process's lifetime
+        kwargs["creationflags"] = 0x00000008 | 0x08000000
+    else:
+        kwargs["start_new_session"] = True
+    try:
+        subprocess.Popen(
+            [_sys.executable, os.path.join(BASE_DIR, "update.py"), "--auto"],
+            **kwargs)
+    except OSError as e:
+        return 500, {"ok": False, "error": f"couldn't start the updater: {e}"}
+    return 202, {"ok": True}
+
+
 def handle_get(path):
     if path == "/api/test/status":
         return 200, load_json(TEST_STATUS_PATH, {"state": "idle"})
+    if path == "/api/update/status":
+        return update_status()
     if path == "/api/config":
         return 200, {
             "config": load_json(CONFIG_PATH, {}),
@@ -783,6 +871,10 @@ def handle_post(path, body):
         return start_device_scan()
     if path == "/api/alerts/test":
         return send_test_alert_command()
+    if path == "/api/update/check":
+        return run_update_check()
+    if path == "/api/update/run":
+        return start_update()
     return 404, {"ok": False, "error": "unknown endpoint"}
 
 

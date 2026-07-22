@@ -21,9 +21,10 @@ import ipaddress
 import json
 import os
 import re
+import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import scan_routers
 
@@ -36,6 +37,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 ROUTERS_CONFIG_PATH = os.path.join(BASE_DIR, "routers.json")
 DEVICE_NAMES_PATH = os.path.join(BASE_DIR, "devices.json")
+DB_PATH = os.path.join(BASE_DIR, "data", "network_monitor.db")
 
 MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
 # "192.168.100." style prefixes for hide_ip_prefixes: 1-4 dotted number
@@ -614,6 +616,57 @@ def send_test_alert_command():
     return 202, {"ok": True}
 
 
+def load_device_census(days=30):
+    """mac -> {ip, hostname, first_seen, last_seen, online} from the
+    collector's device-scan history, so the Settings Devices tab can show
+    WHICH physical device each MAC is instead of a bare address. Read-only;
+    an empty dict when the DB doesn't exist yet (fresh install) or is busy.
+    Respects config hide_ip_prefixes the same way the dashboard does."""
+    if not os.path.exists(DB_PATH):
+        return {}
+    hide = load_json(CONFIG_PATH, {}).get("hide_ip_prefixes") or []
+    since = (datetime.now().astimezone() - timedelta(days=days)).isoformat()
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=5)
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("pragma busy_timeout=5000")
+            rows = conn.execute(
+                """SELECT d.mac, d.ip, d.hostname, p.first_seen, p.last_seen
+                   FROM devices d
+                   JOIN (SELECT mac, MIN(ts) AS first_seen, MAX(ts) AS last_seen
+                         FROM devices WHERE ts >= ? GROUP BY mac) p
+                     ON d.mac = p.mac AND d.ts = p.last_seen
+                   GROUP BY d.mac""", (since,)).fetchall()
+            latest = conn.execute("SELECT MAX(ts) AS m FROM devices").fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return {}
+    # same "online" rule as the dashboard: present within 10 min of the
+    # latest scan (a device can miss one sweep without reading as away)
+    online_cutoff = ""
+    if latest and latest["m"]:
+        try:
+            online_cutoff = (datetime.fromisoformat(latest["m"])
+                             - timedelta(minutes=10)).isoformat()
+        except ValueError:
+            pass
+    out = {}
+    for r in rows:
+        ip = r["ip"] or ""
+        if any(ip.startswith(p) for p in hide if isinstance(p, str)):
+            continue
+        out[r["mac"]] = {
+            "ip": ip,
+            "hostname": r["hostname"] or "",
+            "first_seen": r["first_seen"],
+            "last_seen": r["last_seen"],
+            "online": bool(online_cutoff) and r["last_seen"] >= online_cutoff,
+        }
+    return out
+
+
 def handle_get(path):
     if path == "/api/test/status":
         return 200, load_json(TEST_STATUS_PATH, {"state": "idle"})
@@ -622,6 +675,7 @@ def handle_get(path):
             "config": load_json(CONFIG_PATH, {}),
             "routers": load_json(ROUTERS_CONFIG_PATH, []),
             "devices": load_json(DEVICE_NAMES_PATH, {}),
+            "census": load_device_census(),
             "meta": {
                 "version": __version__,
                 "wizard_needed": wizard_needed(),

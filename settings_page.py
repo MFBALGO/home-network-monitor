@@ -123,6 +123,12 @@ _SHARED_HEAD = """<!DOCTYPE html>
     letter-spacing: 1.2px; text-transform: uppercase; white-space: nowrap; }
   .floor-main { white-space: nowrap; }
   .floor-main.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  /* Devices tab: context sub-line under each name (mac · ip · last seen)
+     and the divider before named-but-vanished entries */
+  .d-ctx { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .d-ctx .on { color: var(--status-good); font-weight: 600; }
+  .d-group td { padding-top: 14px; color: var(--muted); font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.4px; border-bottom: none; font-weight: 600; }
   .thresh-grid { display: grid; grid-template-columns: 110px 1fr 1fr; gap: 8px 12px; align-items: center; }
   .iv-grid { display: grid; grid-template-columns: minmax(180px, 1fr) 150px; gap: 8px 12px; align-items: center; }
   .thresh-grid .hdr { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; }
@@ -659,12 +665,18 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
 
 <div id="tab-devices" style="display:none" role="tabpanel" aria-labelledby="tabbtn-devices" tabindex="0">
   <div class="card">
-    <div class="sub" style="margin-bottom:10px">Friendly names shown on the dashboard's device
-    table and in new-device alerts, keyed by MAC address. Give a device a type (camera,
-    printer, ...) to group it in the dashboard's IoT section; tick Watch to actively check
-    it every ~30s and log outages when it stops answering.</div>
-    <table id="dTable"><tr><th>MAC address</th><th>Name</th><th>Type</th><th>Watch</th><th></th></tr></table>
-    <div class="row" style="margin-top:10px"><button class="small" id="dAdd">+ Add device</button></div>
+    <div class="sub" style="margin-bottom:4px">Every device the scanner has seen in the last
+    30 days, ready to name — no more copying MAC addresses from the dashboard.</div>
+    <details class="hint" style="margin-bottom:10px"><summary>More…</summary>
+      <div class="sub">Names show on the dashboard's device table and in new-device alerts.
+      Give a device a type (camera, printer, ...) to group it in the dashboard's IoT section;
+      tick Watch to actively check it every ~30s and log outages when it stops answering.
+      Clearing a row's fields (&#10005;) just forgets the name — the device stays listed as
+      long as the scanner keeps seeing it.</div>
+    </details>
+    <input type="search" id="dSearch" placeholder="Filter — name, IP, MAC, hostname" autocomplete="off" spellcheck="false" style="max-width:280px; margin-bottom:10px">
+    <table id="dTable"><tr><th>Device</th><th>Type</th><th>Watch</th><th></th></tr></table>
+    <div class="row" style="margin-top:10px"><button class="small" id="dAdd">+ Add a device by MAC</button></div>
   </div>
   <div class="msg" id="dMsg"></div>
   <div class="row" style="justify-content:flex-end"><button class="primary" id="dSave">Save device names</button></div>
@@ -787,7 +799,7 @@ const INTERVAL_CHECKS = [
   ['public_ip', 'Public IP check',                         600,  [120, 300, 600, 1800, 3600]],
 ];
 function fmtIv(s) { return s < 60 ? s + 's' : s < 3600 ? (s / 60) + ' min' : (s / 3600) + ' h'; }
-const S = { config: {}, routers: [], devices: {} };
+const S = { config: {}, routers: [], devices: {}, census: {} };
 S.floorState = { floors: [], groundIndex: 0, main: null, onchange: refreshRouterFloorSelects };
 
 // ---- tabs (ARIA tablist: click + arrow-key navigation, roving tabindex) ----
@@ -831,6 +843,7 @@ async function load() {
   S.config = data.config || {};
   S.routers = data.routers || [];
   S.devices = data.devices || {};
+  S.census = data.census || {};
 
   document.getElementById('gTitle').value = S.config.title || 'Home Network Monitor';
   S.floorState.floors = (S.config.floors || []).slice();
@@ -1214,51 +1227,120 @@ document.getElementById('rScan').onclick = async () => {
 // devices.json values: a plain name string, or {name, type, watch} for IoT
 // devices — mirrors monitor.py / settings_api.py IOT_TYPES.
 const IOT_TYPES = ['camera', 'intercom', 'printer', 'light', 'plug', 'speaker', 'tv', 'other'];
-function deviceRow(mac, value) {
-  const v = typeof value === 'string' ? {name: value} : (value || {});
-  const opts = ['<option value="">(none)</option>'].concat(IOT_TYPES.map(t =>
-    '<option value="' + t + '"' + (v.type === t ? ' selected' : '') + '>' +
+function timeAgo(ts) {
+  if (!ts) return '';
+  const secs = (Date.now() - new Date(ts).getTime()) / 1000;
+  if (isNaN(secs)) return '';
+  if (secs < 3600) return Math.max(1, Math.round(secs / 60)) + 'm ago';
+  if (secs < 86400) return Math.round(secs / 3600) + 'h ago';
+  return Math.round(secs / 86400) + 'd ago';
+}
+function typeOpts(sel) {
+  return ['<option value="">(none)</option>'].concat(IOT_TYPES.map(t =>
+    '<option value="' + t + '"' + (sel === t ? ' selected' : '') + '>' +
     t.charAt(0).toUpperCase() + t.slice(1) + '</option>')).join('');
-  return '<tr>' +
-    '<td><input type="text" class="d-mac mono" placeholder="aa:bb:cc:dd:ee:ff" value="' + esc(mac) + '"></td>' +
-    '<td><input type="text" class="d-name" value="' + esc(v.name || '') + '"></td>' +
-    '<td><select class="d-type">' + opts + '</select></td>' +
+}
+// One row per device the scanner has SEEN (S.census, from the collector's
+// DB) plus any devices.json entries it hasn't - so naming a device means
+// finding it by its IP/hostname/online state right here, not copying a
+// MAC across from the dashboard.
+function deviceRow(mac, value, ctx) {
+  const v = typeof value === 'string' ? {name: value} : (value || {});
+  const bits = [];
+  if (ctx) {
+    if (ctx.online) bits.push('<span class="on">online</span>');
+    else if (ctx.last_seen) bits.push('seen ' + esc(timeAgo(ctx.last_seen)));
+    if (ctx.ip) bits.push(esc(ctx.ip));
+    if (ctx.hostname) bits.push(esc(ctx.hostname));
+  } else {
+    bits.push('not seen in 30 days');
+  }
+  return '<tr class="d-row" data-mac="' + esc(mac) + '">' +
+    '<td><input type="text" class="d-name" value="' + esc(v.name || '') +
+      '" placeholder="' + esc(ctx && ctx.hostname ? ctx.hostname : 'name this device') + '">' +
+    '<div class="d-ctx">' + esc(mac) + ' · ' + bits.join(' · ') + '</div></td>' +
+    '<td><select class="d-type">' + typeOpts(v.type) + '</select></td>' +
     '<td style="text-align:center"><input type="checkbox" class="d-watch"' + (v.watch ? ' checked' : '') +
       ' title="Actively check every ~30s and log outages when it stops answering"></td>' +
+    '<td><button class="small danger d-del" title="Forget the name/type/watch">&#10005;</button></td></tr>';
+}
+// manual escape hatch for a device the scanner has never seen (e.g. a
+// printer that's been off for months): editable MAC field
+function manualDeviceRow() {
+  return '<tr class="d-row" data-manual="1">' +
+    '<td><input type="text" class="d-mac mono" placeholder="aa:bb:cc:dd:ee:ff" style="max-width:200px">' +
+    '<input type="text" class="d-name" placeholder="name" style="margin-top:4px"></td>' +
+    '<td><select class="d-type">' + typeOpts('') + '</select></td>' +
+    '<td style="text-align:center"><input type="checkbox" class="d-watch"></td>' +
     '<td><button class="small danger d-del">&#10005;</button></td></tr>';
 }
 function renderDevices() {
-  document.getElementById('dTable').innerHTML =
-    '<tr><th>MAC address</th><th>Name</th><th>Type</th><th>Watch</th><th></th></tr>' +
-    Object.entries(S.devices).map(([m, v]) => deviceRow(m, v)).join('');
+  const seen = Object.keys(S.census);
+  const unseen = Object.keys(S.devices).filter(m => !S.census[m]);
+  // online first, then most recently seen; vanished-but-named entries last
+  seen.sort((a, b) => {
+    const ca = S.census[a], cb = S.census[b];
+    if (!!ca.online !== !!cb.online) return ca.online ? -1 : 1;
+    return (cb.last_seen || '').localeCompare(ca.last_seen || '');
+  });
+  let html = '<tr><th>Device</th><th>Type</th><th>Watch</th><th></th></tr>';
+  html += seen.map(m => deviceRow(m, S.devices[m], S.census[m])).join('');
+  if (seen.length && unseen.length) {
+    html += '<tr class="d-group"><td colspan="4">Named, but not seen in 30 days</td></tr>';
+  }
+  html += unseen.map(m => deviceRow(m, S.devices[m], null)).join('');
+  document.getElementById('dTable').innerHTML = html;
+  filterDevices();
 }
+function filterDevices() {
+  const q = (document.getElementById('dSearch').value || '').trim().toLowerCase();
+  for (const tr of document.querySelectorAll('#dTable tr.d-row')) {
+    const nm = tr.querySelector('.d-name');
+    const hay = ((tr.dataset.mac || '') + ' ' + (nm ? nm.value : '') + ' ' + tr.textContent).toLowerCase();
+    tr.style.display = (!q || hay.indexOf(q) !== -1) ? '' : 'none';
+  }
+  for (const tr of document.querySelectorAll('#dTable tr.d-group')) tr.style.display = q ? 'none' : '';
+}
+document.getElementById('dSearch').oninput = filterDevices;
 document.getElementById('dTable').onclick = (e) => {
-  if (e.target.classList.contains('d-del')) e.target.closest('tr').remove();
+  if (!e.target.classList.contains('d-del')) return;
+  const tr = e.target.closest('tr');
+  if (tr.dataset.manual) { tr.remove(); return; }
+  // census-backed rows stay listed - clearing the fields just drops the
+  // devices.json entry on the next save
+  tr.querySelector('.d-name').value = '';
+  tr.querySelector('.d-type').value = '';
+  tr.querySelector('.d-watch').checked = false;
 };
 document.getElementById('dAdd').onclick = () => {
-  document.getElementById('dTable').insertAdjacentHTML('beforeend', deviceRow('', ''));
+  document.getElementById('dTable').insertAdjacentHTML('beforeend', manualDeviceRow());
+  const rows = document.querySelectorAll('#dTable tr.d-row');
+  const last = rows[rows.length - 1];
+  if (last) last.querySelector('.d-mac').focus();
 };
 document.getElementById('dSave').onclick = async () => {
   const msg = document.getElementById('dMsg');
   clearMsg(msg);
   const devices = {};
-  for (const tr of document.querySelectorAll('#dTable tr')) {
-    const mac = tr.querySelector('.d-mac');
-    if (!mac) continue;
+  for (const tr of document.querySelectorAll('#dTable tr.d-row')) {
+    const macEl = tr.querySelector('.d-mac');
+    const mac = (tr.dataset.mac || (macEl ? macEl.value : '')).trim();
     const name = tr.querySelector('.d-name').value.trim();
     const type = tr.querySelector('.d-type').value;
     const watch = tr.querySelector('.d-watch').checked;
-    if (mac.value.trim() || name) {
-      // compact form: plain string unless IoT fields are set (the server
-      // normalizes the same way — keeps untouched entries byte-identical)
-      if (type || watch) {
-        const v = {name};
-        if (type) v.type = type;
-        if (watch) v.watch = true;
-        devices[mac.value.trim()] = v;
-      } else {
-        devices[mac.value.trim()] = name;
-      }
+    // census rows with nothing filled in are just "seen devices" — only
+    // rows carrying a name/type/watch become devices.json entries
+    if (!mac && !name) continue;
+    if (!name && !type && !watch) continue;
+    // compact form: plain string unless IoT fields are set (the server
+    // normalizes the same way — keeps untouched entries byte-identical)
+    if (type || watch) {
+      const v = {name};
+      if (type) v.type = type;
+      if (watch) v.watch = true;
+      devices[mac] = v;
+    } else {
+      devices[mac] = name;
     }
   }
   const {status, data} = await api('/api/config', {devices});

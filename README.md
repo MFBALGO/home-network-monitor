@@ -443,18 +443,36 @@ The project also lives at
 ## Updates
 
 The dashboard shows a small **"Update available"** pill (top of the page,
-next to the timestamp) when a newer release exists on GitHub. The
-generating machine checks at most **once a day**, remembers the answer in
-`data/update_check.json`, and never lets a failed check affect the
-dashboard — offline, it just tries again tomorrow. This is the only
-network call the toolkit makes apart from its actual monitoring targets;
-turn it off by adding `"update_check": false` to `config.json` (or
-unticking it in Settings).
+next to the timestamp) and a banner with the release notes when a newer
+release exists on GitHub. The generating machine checks at most **once a
+day**, remembers the answer in `data/update_check.json`, and never lets a
+failed check affect the dashboard — offline, it just tries again
+tomorrow. This is the only network call the toolkit makes apart from its
+actual monitoring targets (installing an update downloads one zip from
+GitHub, and nothing else); turn the check off by adding
+`"update_check": false` to `config.json` (or unticking it in Settings).
 
-To update: download the new release zip and copy the `.py` files over
-your old ones (your `data/`, configs, and logs are never part of the
-zip), then restart the services (`bash setup.sh` / `setup-windows.bat`
-re-registers them safely).
+Three ways to install an update, easiest first:
+
+1. **One click** — on the monitor PC, open
+   `http://localhost:8080/settings` → General → **Updates** → *Update
+   now*. It downloads the release, keeps the old version in
+   `data/backup/`, swaps the code, and the services restart themselves
+   (the dashboard pauses for a minute or so). This deliberately only
+   works from the monitor PC itself, like all settings.
+2. **Double-click** — run `update-windows.bat` (Windows) or
+   `bash update.sh` (macOS/Linux) in the install folder. Same engine,
+   progress printed to the window, asks before installing.
+3. **By hand** — download the release zip and copy its files over your
+   old ones, then restart the services (`bash setup.sh` /
+   `setup-windows.bat` re-registers them safely).
+
+Whichever way you choose, your configs, database, and logs are never
+touched — the updater refuses to write them even if a zip contained
+them. Every replaced file must compile before the update counts; if
+anything is wrong it rolls itself back. To go back on purpose, run
+`python update.py --rollback` in the install folder — the previous
+version is restored from `data/backup/` and the services restart onto it.
 
 ## Troubleshooting
 

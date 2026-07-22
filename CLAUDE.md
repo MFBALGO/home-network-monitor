@@ -204,8 +204,25 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   in the tooltip); Chart.js
   charts (vendored) with threshold reference lines, a
   synced 24h/7d toggle, and the speed chart pinned to 0..plan+100 so the
-  plan lines stay visible; devices table with friendly names from
+  plan lines stay visible — chart TOOLTIPS are enabled:false + an
+  external handler rendering the tooltip model into a `.chart-tip`
+  readout strip pinned to the card's top-right (the floating box
+  covered the plot; per-chart label callbacks still apply); the
+  timeline is CLICKABLE (rows and timeline marks share a startMs|cat
+  `data-ev` key → scroll+flash the row, auto-reset filter / expand
+  "older"), summary chips click through to their filter pill, log rows
+  carry relative times; map hover cards have a "chart ↓" link focusing
+  that router's line in the per-router chart (others dimmed,
+  `routerFocusName` reapplied by applyRouterFocus() after re-renders;
+  cards accept the mouse while shown — hide is on a 250ms delay), a
+  plain-language <title> decoder on the status line, and the map
+  re-renders on resize across the 520px compact threshold
+  (renderHouseMap is a named function); a fixed `.quick-nav` jump bar
+  (Map/Charts/Outages/Devices → `#sec-*` ids) slides in past 480px
+  scroll; devices table with friendly names from
   devices.json (online rows first, away rows collapsed behind a toggle;
+  a `#devSearch` live filter matches name/hostname/IP/MAC and shows
+  away matches too; first_seen within 24h ⇒ green "new" tag;
   MAC as a muted mono sub-line under the device name — NOT a column,
   which was the widest cell and forced phone side-scroll; phone tables
   must fit without side-scroll since scrollbars are invisible),
@@ -232,15 +249,30 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   if the file is mid-rewrite.
 - `settings_api.py` — HTTP-agnostic backend for the wizard/settings:
   tolerant loads, atomic saves (tmp+fsync+os.replace with retry),
-  per-file validators returning (errors, warnings), and the background
+  per-file validators returning (errors, warnings), the background
   discovery job (threading.Lock-guarded status dict, decorates results
-  with is_gateway/suggested/known_router_name).
+  with is_gateway/suggested/known_router_name), and
+  `load_device_census()` — read-only mac→{ip, hostname, first/last
+  seen, online} from the DB's devices table (30d window, respects
+  hide_ip_prefixes, {} on fresh install/busy DB) served as `census` on
+  GET /api/config for the Devices tab.
 - `settings_page.py` — `WIZARD_HTML` (auto-scan → floors → routers →
   review, 409-guarded overwrite, double-NAT heads-up from the
   piggybacked topology check) and `SETTINGS_HTML` (General/Routers/
   Devices/Alerts tabs; Alerts has a Send-test-alert button riding the
   command rail) as Python strings served from memory, styled to match
-  the dashboard.
+  the dashboard. Tabs are a real ARIA tablist (roving tabindex,
+  Arrow/Home/End). Per-tab unsaved-changes guard: input/change +
+  row-button clicks set a dirty flag (amber dot on the tab,
+  beforeunload warning; saves/test-alert/scan/filter box exempt),
+  cleared by that tab's successful save. The Devices tab renders the
+  CENSUS union: one row per seen device (online first, then last_seen;
+  hostname as name-input placeholder, mono context line, ✕ clears the
+  entry but keeps the row) + "Named, but not seen in 30 days" group +
+  manual add-by-MAC; save collects only rows with name/type/watch and
+  keeps the compact string-or-object form. Quiet hours are
+  `<input type=time>` (loadAlerts pads legacy "7:00" → "07:00" or the
+  input shows empty and the next save silently drops the block).
 - `scan_routers.py` — standalone LAN scanner to find router IPs (TCP
   80/443 sweep + ping sweep + ARP + HTTP title fingerprint). Core logic
   is the importable `discover(progress=None)`; the CLI prints from its

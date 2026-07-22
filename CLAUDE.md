@@ -334,7 +334,37 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
 - `version.py` — single source of truth for the version; every script
   imports it with a fallback and supports `--version`. dashboard.py runs
   a daily fail-silent GitHub releases check (cached in
-  `data/update_check.json`, opt-out `"update_check": false`).
+  `data/update_check.json`, opt-out `"update_check": false`; the check
+  also caches the release NOTES + share-zip asset URL for the banner
+  and the updater).
+- `update.py` — the self-updater engine behind three front doors:
+  Settings → General → Updates ("Update now" → POST /api/update/run
+  spawns `python update.py --auto` DETACHED), the shipped
+  `update-windows.bat`/`update.sh` double-click wrappers (interactive),
+  and plain `python update.py` (also `--check`, `--rollback`,
+  `--version`). Pipeline: fetch releases/latest (env
+  `NETMON_UPDATE_API` overrides the repo for forks/tests) → download
+  the netmon-share.zip asset (https-only except loopback/private hosts;
+  size caps) → validate (zip-slip guard, required files present,
+  version INSIDE the zip must match the tag) → backup replaced files to
+  `data/backup/v<current>/` (manifest.json lists replaced+created; last
+  2 backups kept) → per-file tmp+os.replace swap → in-memory compile
+  check of every new .py, AUTO-ROLLBACK on failure. PROTECTED list
+  refuses to ever write configs/data/logs/dashboard.html even if a zip
+  contains them. Progress → `data/update_status.json` (ONE writer, the
+  updater process; Settings polls GET /api/update/status). RESTART
+  DESIGN: the updater never kills or restarts services — monitor.py and
+  serve.py run update.install_restart_watcher(), which watches the
+  status file for state=done with a DIFFERENT version and then exits
+  the process with code 1 so Task Scheduler (-RestartCount) / launchd
+  (KeepAlive) restarts it on the new code ~1 min later. os.execv
+  self-restart was tested and REJECTED: on Windows the exec'd process
+  becomes an orphan outside the task's job — the task flips to Ready,
+  Stop-ScheduledTask can't kill it, and a later task start would race
+  it. The Settings poll treats fetch failures as "web server
+  restarting, keep waiting" and declares success when the reported
+  version CHANGES; update endpoints are localhost-only (NOT in
+  serve.py's LAN_API — a phone must not update the house monitor).
 - `diagnose.py` — builds `netmon-diagnostics-*.zip` (report + logs tail
   + configs) for remote troubleshooting; `build_bundle()` is importable.
 - SQLite tables: `pings` (+sent/received burst counts), `router_pings`,

@@ -2703,18 +2703,145 @@ def email_recipients(to):
     return ", ".join(a.strip() for a in parts if a.strip())
 
 
-def send_email(cfg, title, message):
-    """Plain SMTP notification. Credentials live in config.json — which is
-    gitignored and unreachable from the LAN, but still plaintext on disk:
-    the settings UI tells users to prefer an app password. Raises on
-    failure for the retry queue."""
+# Email severity accents: (band color, text-on-dark color, band label).
+# Mirrors the dashboard's status palette (vermilion serious, sage-adjacent
+# green for recovery) so the inbox and the page tell one story.
+EMAIL_SEVERITIES = {
+    "down":      ("#c94e1d", "#f4703c", "Problem detected"),
+    "recovered": ("#2f8a57", "#63a97e", "Recovered"),
+    "info":      ("#3b78a8", "#7fb1d8", "Notice"),
+    "test":      ("#54636f", "#93a4b2", "Test alert"),
+}
+
+EMAIL_KIND_LABELS = {
+    "outage": "Outage", "degraded": "Degraded connection",
+    "instability": "Unstable connection", "new_device": "New device",
+    "ip_change": "Public IP change", "test": "Test alert",
+}
+
+
+def _email_where(meta):
+    """Human 'Where' detail line from the event meta, or None."""
+    scope, router = meta.get("scope"), meta.get("router")
+    if scope == "iot":
+        return f'IoT device "{router}"' if router else "IoT device"
+    if scope == "target":
+        return f'Custom target "{router}"' if router else "Custom target"
+    named = {"gateway": "Main router", "internet": "Internet (ISP side)",
+             "dns": "DNS resolution"}.get(scope)
+    if named:
+        return named
+    return router  # AP outages: scope='router', the name says it all
+
+
+def _email_local_ts(iso):
+    """ISO UTC event timestamp -> local human time for the detail rows."""
+    try:
+        return datetime.fromisoformat(iso).astimezone().strftime("%a %d %b %Y, %H:%M")
+    except Exception:
+        return iso
+
+
+def dashboard_url():
+    """Best-effort LAN URL for the email footer. The UDP connect() trick
+    reads the outbound interface's address without sending a packet, so it
+    works even while the internet is down (queued alerts flush on recovery,
+    but a LAN SMTP host could deliver mid-outage)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+        return f"http://{ip}:{int(os.environ.get('NETMON_WEB_PORT') or 8080)}/"
+    except Exception:
+        return None
+
+
+def build_email_html(message, meta):
+    """Styled HTML body for alert emails. Email HTML is its own world:
+    Gmail strips <style> blocks and Outlook renders with Word's engine, so
+    everything is inline styles on nested tables — no classes, no flexbox,
+    no external assets. A dark card on a neutral page echoes the
+    dashboard's mission-control look while surviving clients that force
+    their own page background."""
+    from html import escape
+    meta = meta or {}
+    band, text_accent, label = EMAIL_SEVERITIES.get(meta.get("severity"),
+                                                    EMAIL_SEVERITIES["info"])
+    mono = "font-family:Consolas,Menlo,'Courier New',monospace;"
+    rows = []
+    kind = meta.get("kind")
+    if kind == "outage" and meta.get("scope") == "iot":
+        rows.append(("Event", "IoT outage"))
+    elif kind in EMAIL_KIND_LABELS:
+        rows.append(("Event", EMAIL_KIND_LABELS[kind]))
+    where = _email_where(meta)
+    if where:
+        rows.append(("Where", where))
+    if meta.get("start"):
+        rows.append(("Started", _email_local_ts(meta["start"])))
+    if meta.get("end"):
+        rows.append(("Ended", _email_local_ts(meta["end"])))
+        try:
+            dur = (datetime.fromisoformat(meta["end"])
+                   - datetime.fromisoformat(meta["start"])).total_seconds()
+            rows.append(("Duration", _fmt_secs(dur)))
+        except Exception:
+            pass
+    details = ""
+    if rows:
+        cells = "".join(
+            "<tr>"
+            f'<td style="padding:5px 16px 5px 0;{mono}font-size:11px;line-height:1.6;'
+            'color:#8b98a5;text-transform:uppercase;letter-spacing:1px;'
+            f'vertical-align:top;white-space:nowrap;">{escape(k)}</td>'
+            f'<td style="padding:5px 0;{mono}font-size:13px;line-height:1.6;'
+            f'color:#dbe4ec;">{escape(v)}</td>'
+            "</tr>"
+            for k, v in rows)
+        details = (
+            '<div style="margin-top:18px;border-top:1px solid #24313f;padding-top:10px;">'
+            '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+            f'style="width:100%;">{cells}</table></div>')
+    url = dashboard_url()
+    link = (f' &middot; <a href="{escape(url)}" style="color:#7fb1d8;'
+            'text-decoration:none;">open the dashboard</a>' if url else "")
+    return f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#eef1f4;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef1f4;">
+<tr><td align="center" style="padding:28px 12px;">
+<table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="width:560px;max-width:100%;">
+<tr><td style="background:{band};height:5px;font-size:0;line-height:5px;border-radius:8px 8px 0 0;">&nbsp;</td></tr>
+<tr><td style="background:#101820;padding:24px 28px;border-radius:0 0 8px 8px;">
+<div style="{mono}font-size:11px;color:{text_accent};text-transform:uppercase;letter-spacing:2px;">{escape(label)} &middot; Home Network Monitor</div>
+<div style="margin-top:12px;font-family:'Segoe UI',Arial,sans-serif;font-size:19px;font-weight:600;line-height:1.45;color:#eef3f8;">{escape(message)}</div>
+{details}
+</td></tr>
+<tr><td style="padding:14px 6px;{mono}font-size:11px;color:#8a949e;text-align:center;">Home Network Monitor v{__version__}{link}</td></tr>
+</table>
+</td></tr></table>
+</body></html>
+"""
+
+
+def send_email(cfg, title, message, meta=None):
+    """SMTP notification, multipart/alternative: the plain message stays as
+    the fallback part, plus the styled HTML body (clients render the last
+    part they support, so HTML wins where possible). Credentials live in
+    config.json — which is gitignored and unreachable from the LAN, but
+    still plaintext on disk: the settings UI tells users to prefer an app
+    password. Raises on failure for the retry queue."""
     import smtplib
     from email.message import EmailMessage
     msg = EmailMessage()
     msg["Subject"] = title
     msg["From"] = cfg.get("from") or cfg.get("username") or "netmon@localhost"
     msg["To"] = email_recipients(cfg.get("to"))
-    msg.set_content(message)
+    url = dashboard_url()
+    msg.set_content(message + (f"\n\nDashboard: {url}" if url else ""))
+    msg.add_alternative(build_email_html(message, meta), subtype="html")
     with smtplib.SMTP(cfg.get("host") or "", int(cfg.get("port") or 587), timeout=15) as s:
         if cfg.get("starttls", True):
             s.starttls()
@@ -2731,10 +2858,11 @@ def send_test_alert():
     title = "Home Network Monitor — test alert"
     message = "Alerting works. This is a test sent from the Settings page."
     ch = cfg.get("channels", {})
+    meta = {"kind": "test", "severity": "test"}
     if ch.get("toast", {}).get("enabled"):
         send_toast(title, message)
-    for name, sender in (("webhook", lambda c: send_webhook(c, title, message, {"kind": "test"})),
-                         ("email", lambda c: send_email(c, title, message))):
+    for name, sender in (("webhook", lambda c: send_webhook(c, title, message, meta)),
+                         ("email", lambda c: send_email(c, title, message, meta))):
         c = ch.get(name, {})
         if c.get("enabled"):
             try:
@@ -2824,7 +2952,7 @@ def alert_loop(conn):
                 if item["channel"] == "webhook":
                     send_webhook(ch.get("webhook", {}), item["title"], item["message"], item["meta"])
                 else:
-                    send_email(ch.get("email", {}), item["title"], item["message"])
+                    send_email(ch.get("email", {}), item["title"], item["message"], item["meta"])
                 queue.remove(item)
             except Exception as e:
                 item["backoff"] = min(item["backoff"] * 2, 300)

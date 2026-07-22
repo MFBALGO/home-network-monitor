@@ -1325,6 +1325,17 @@ def build_html(data):
 
   .chart-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 18px;
     box-shadow: var(--shadow); overflow-x:auto; position:relative; }
+  /* hover readout strip: hugs the card's top-right, over the label row,
+     so the values never sit on top of the lines being read */
+  .chart-tip { position:absolute; top:8px; right:14px; left:auto; max-width: calc(100% - 28px); z-index:3;
+    display:none; flex-wrap:wrap; gap:3px 12px; align-items:center; justify-content:flex-end;
+    background: var(--surface-2); border:1px solid var(--border); border-radius:8px;
+    padding: 5px 10px; font-family: var(--font-mono); font-size:11px; color: var(--text-primary);
+    pointer-events:none; box-shadow: var(--shadow); font-variant-numeric: tabular-nums; }
+  .chart-tip.show { display:flex; }
+  .chart-tip .tip-time { color: var(--text-secondary); font-weight:700; }
+  .chart-tip .tip-item { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+  .chart-tip .tip-item i { display:inline-block; width:9px; height:3px; border-radius:2px; flex-shrink:0; }
   .chart-card + .chart-card { margin-top: 12px; }
   /* two-up responsive grid: two charts per row on wide screens, one on phones */
   .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
@@ -3355,16 +3366,36 @@ function yScale(titleText, extra) {
     grid: { color: gridColor() }, border: { display: false }, ticks: baseTicks(), beginAtZero: true,
   }, extra || {});
 }
+// Tooltips render as a compact readout strip pinned to the TOP of the
+// chart card instead of Chart.js's floating box — with 10 router lines
+// the box covered half the plot right where the cursor was pointing.
+// The strip reuses the tooltip MODEL (so per-chart label callbacks still
+// apply); only the drawing moved out of the canvas.
+function externalTip(context) {
+  const tooltip = context.tooltip;
+  const canvas = context.chart.canvas;
+  const cardEl = canvas && canvas.closest ? canvas.closest('.chart-card') : null;
+  if (!cardEl) return;
+  let tip = cardEl.querySelector('.chart-tip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.className = 'chart-tip';
+    cardEl.appendChild(tip);
+  }
+  if (!tooltip || tooltip.opacity === 0) { tip.classList.remove('show'); return; }
+  const title = (tooltip.title || []).join(' ');
+  const items = (tooltip.body || []).map((b, i) => {
+    const col = (tooltip.labelColors && tooltip.labelColors[i]) || {};
+    const sw = col.borderColor || col.backgroundColor || 'var(--muted)';
+    return '<span class="tip-item"><i style="background:' + sw + '"></i>' + escapeHtml(b.lines.join(' ')) + '</span>';
+  }).join('');
+  tip.innerHTML = '<span class="tip-time">' + escapeHtml(title) + '</span>' + items;
+  tip.classList.add('show');
+}
 function tooltipBase() {
   return {
-    backgroundColor: cssVar('--surface-2') || surfaceColor(),
-    titleColor: textColor(),
-    bodyColor: textColor(),
-    borderColor: borderColor(),
-    borderWidth: 1,
-    padding: 10,
-    boxPadding: 5,
-    cornerRadius: 9,
+    enabled: false,
+    external: externalTip,
     titleFont: { family: monoFont(), size: 12 },
     bodyFont: { family: monoFont(), size: 12 },
     displayColors: true,

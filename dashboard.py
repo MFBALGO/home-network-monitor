@@ -1360,6 +1360,11 @@ def build_html(data):
     font-variant-numeric: tabular-nums; }
   .check-foot.stale { color: var(--status-warning); font-weight: 700; }
   .chart-label { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); margin-bottom: 10px; }
+  /* "Focused: <router> ✕" chip on the per-router chart while a map link
+     has the chart narrowed to one line */
+  .chart-focus { margin-left: 10px; font-size: 11.5px; font-weight: 600; color: var(--accent);
+    background: var(--accent-soft); border-radius: 6px; padding: 2px 9px; cursor: pointer; }
+  .chart-focus:hover { box-shadow: inset 0 0 0 1px var(--accent-glow); }
   table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase;
     letter-spacing: .06em; border-bottom: 1px solid var(--grid); padding: 8px 10px; }
@@ -1577,7 +1582,11 @@ def build_html(data):
   .house-svg.compact .net-label { font-size: 11.5px; }
   .house-svg.compact .net-stat { font-size: 11px; }
   .house-svg .hovercard { opacity: 0; pointer-events: none; transition: opacity .15s ease; }
-  .house-svg .hovercard.show { opacity: 1; }
+  /* shown cards accept the mouse so the "chart" link inside is clickable
+     (hide runs on a short delay so crossing the pill→card gap survives) */
+  .house-svg .hovercard.show { opacity: 1; pointer-events: auto; }
+  .house-svg .card-link { fill: var(--accent); font-size: 10px; font-weight: 700; cursor: pointer; }
+  .house-svg .card-link:hover { fill: var(--text-primary); }
   /* SVG flavors of the cadence footer (hover cards + internet node) */
   .house-svg .card-div { stroke: var(--border); stroke-width: 1; }
   .house-svg .card-foot { fill: var(--muted); font-size: 9px; font-family: var(--font-mono); }
@@ -1726,8 +1735,8 @@ def build_html(data):
         <div class="check-foot" id="cfPublicIp"></div>
       </div>
     </div>
-    <div class="chart-card">
-      <div class="chart-label">Per-router latency (ms)</div>
+    <div class="chart-card" id="routersCard">
+      <div class="chart-label">Per-router latency (ms)<span class="chart-focus" id="routerFocus" style="display:none" title="Click to show all routers again"></span></div>
       <div class="chart-box lg"><canvas id="routersChart"></canvas></div>
       <div id="routersChartEmpty" class="empty" style="display:none">No router ping history yet.</div>
       <div class="check-foot" id="cfRouters"></div>
@@ -2801,8 +2810,13 @@ safely('iot devices', function() {
       if (d.status === 'up') {
         const silent = d.method === 'probe' || d.method === 'arp';
         const txt = d.method === 'tcp' ? 'Online · web' : silent ? 'Online · silent' : 'Online';
+        // same plain-language decoder as the map hover cards
+        const tip = d.method === 'tcp' ? 'Alive via its web port — it ignores pings (common)'
+          : d.method === 'probe' ? 'Proven alive each check: it refuses a closed-port probe. Ignores pings — normal'
+          : d.method === 'arp' ? 'Seen answering network-presence (ARP) checks. Ignores pings — normal for stealthy devices'
+          : 'Answers ping normally';
         return '<span class="status-pill small ' + (silent ? 'status-silent-pill' : 'status-up')
-          + '"><span class="status-dot"></span>' + txt + '</span>';
+          + '" title="' + escapeHtml(tip) + '"><span class="status-dot"></span>' + txt + '</span>';
       }
       if (d.status === 'down') {
         return '<span class="status-pill small status-down"><span class="status-dot"></span>Down</span>';
@@ -2847,7 +2861,10 @@ safely('iot devices', function() {
 });
 
 // ---------- house map ----------
-safely('house map', function() {
+// Named (not an anonymous safely block) so the resize listener below can
+// re-render when the window crosses the compact/desktop threshold — a
+// phone rotate used to need a full page reload to switch layouts.
+function renderHouseMap() {
   const wrap = document.getElementById('houseMapWrap');
   // The ISP box (role:'isp' in routers.json) is not an AP on a floor —
   // topologically it sits BETWEEN the internet and the main router, so it
@@ -2878,6 +2895,7 @@ safely('house map', function() {
   // pills packed into centered rows, and each floor's band grows to fit
   // its rows — the "auto-scaling floor height" mode.
   const compact = (wrap.clientWidth || 900) < 520;
+  renderHouseMap.lastCompact = compact;
   const W = compact ? 330 : 1000;
   const TOP = compact ? 30 : 96, BH = 172; // wall top, desktop floor band height
   const HX0 = compact ? 14 : 180, HX1 = compact ? W - 14 : 910;  // house walls
@@ -3022,6 +3040,12 @@ safely('house map', function() {
       ? (opts.method === 'tcp' ? 'Online · web'
          : (opts.method === 'probe' || opts.method === 'arp') ? 'Online · silent' : 'Online')
       : 'Offline';
+    // plain-language decoder for the status jargon, as a native tooltip
+    const statusTip = opts.status !== 'up' ? '' : (
+      opts.method === 'tcp' ? 'Alive via its web admin port — it ignores pings (common for routers)'
+      : opts.method === 'probe' ? 'Proven alive each check: it actively refuses a closed-port probe. Ignores pings — normal, not a fault'
+      : opts.method === 'arp' ? 'Seen answering network-presence (ARP) checks. Ignores pings entirely — a stealth firewall, normal for some access points'
+      : 'Answers ping normally');
     const pctv = opts.uptime_pct;
     const barW = w - 28;
     const fillW = pctv != null ? Math.max(2, barW * Math.min(100, pctv) / 100) : 0;
@@ -3032,7 +3056,8 @@ safely('house map', function() {
       <text class="card-name" x="${x0 + 14}" y="${y0 + 21}">${escapeHtml(opts.name)}</text>
       <text class="card-mono" x="${x0 + 14}" y="${y0 + 37}">${escapeHtml(opts.ip || '')}</text>
       <circle class="status-dot-svg" cx="${x0 + 18}" cy="${y0 + 50.5}" r="3.4"/>
-      <text class="card-status" x="${x0 + 27}" y="${y0 + 54}">${statusTxt}</text>
+      <text class="card-status" x="${x0 + 27}" y="${y0 + 54}">${statusTxt}${statusTip ? `<title>${escapeHtml(statusTip)}</title>` : ''}</text>
+      ${opts.chartable ? `<text class="card-link" x="${x0 + w - 12}" y="${y0 + 37}" text-anchor="end" data-chartlink="${escapeHtml(opts.name)}">chart &#8595;</text>` : ''}
       <text class="card-stats" x="${x0 + w - 12}" y="${y0 + 54}" text-anchor="end">${fmtMs(opts.avg_latency)}</text>
       <rect class="bar-track" x="${x0 + 14}" y="${y0 + 63}" width="${barW}" height="4" rx="2"/>
       ${pctv != null ? `<rect class="bar-fill" x="${x0 + 14}" y="${y0 + 63}" width="${Math.min(fillW, barW)}" height="4" rx="2"/>` : ''}
@@ -3265,9 +3290,13 @@ safely('house map', function() {
   // router pills; the detailed cards render last (on top of everything)
   // and appear on hover/tap
   const hcs = [];
+  // routers with a line in the per-router chart get a "chart ↓" link on
+  // their hover card (the gateway rides the main latency chart instead)
+  const chartNames = new Set(Object.keys(((DATA.routers_chart || {}).series) || {}));
   placed.forEach((p, i) => {
     svg += pill(p.x, p.y, p, 'hc-' + i);
-    hcs.push(hovercard(p, { ...p, showSpeed: speedHost === 'router' && p.name === MONLOC }, 'hc-' + i));
+    hcs.push(hovercard(p, { ...p, showSpeed: speedHost === 'router' && p.name === MONLOC,
+                            chartable: chartNames.has(p.name) }, 'hc-' + i));
   });
   if (gw) {
     // Combo-box merge: gw.isp_name is the user's name for the ISP box the
@@ -3293,7 +3322,8 @@ safely('house map', function() {
       <text class="pill-name" x="${x0 + 24}" y="${ISP.y - 4}">${escapeHtml(nm)}</text>
       <text class="isp-sub" x="${x0 + 14}" y="${ISP.y + 14}">ISP box</text>
     </g>`;
-    hcs.push(hovercard(ISP, { ...ispBox, showSpeed: speedHost === 'isp' }, 'hc-isp'));
+    hcs.push(hovercard(ISP, { ...ispBox, showSpeed: speedHost === 'isp',
+                              chartable: chartNames.has(ispBox.name) }, 'hc-isp'));
   }
   svg += hcs.join('');
 
@@ -3303,13 +3333,28 @@ safely('house map', function() {
   // rather than waiting for the next 10s tick
   tickCheckFoots();
 
-  // hover on desktop, tap to toggle on touch
+  // hover on desktop, tap to toggle on touch. Hide runs on a short delay
+  // and the shown card itself cancels it, so the mouse can cross the
+  // pill→card gap to reach the "chart" link without the card vanishing.
   wrap.querySelectorAll('.pillgrp').forEach(g => {
     const hc = document.getElementById(g.dataset.hc);
     if (!hc) return;
-    g.addEventListener('mouseenter', () => hc.classList.add('show'));
-    g.addEventListener('mouseleave', () => hc.classList.remove('show'));
-    g.addEventListener('click', () => hc.classList.toggle('show'));
+    let hideT = null;
+    const show = () => { clearTimeout(hideT); hc.classList.add('show'); };
+    const hide = () => { hideT = setTimeout(() => hc.classList.remove('show'), 250); };
+    g.addEventListener('mouseenter', show);
+    g.addEventListener('mouseleave', hide);
+    hc.addEventListener('mouseenter', show);
+    hc.addEventListener('mouseleave', hide);
+    g.addEventListener('click', () => { clearTimeout(hideT); hc.classList.toggle('show'); });
+  });
+
+  // "chart ↓" links on the hover cards → focus that router's line
+  wrap.addEventListener('click', (ev) => {
+    const ln = ev.target && ev.target.closest ? ev.target.closest('[data-chartlink]') : null;
+    if (!ln) return;
+    ev.stopPropagation();
+    focusRouterChart(ln.getAttribute('data-chartlink'));
   });
 
   if (unplaced.length) {
@@ -3318,6 +3363,20 @@ safely('house map', function() {
     n.textContent = 'Not on the map yet (no floor assigned): ' + unplaced.map(r => r.name).join(', ')
       + ' — pick each one’s floor in Settings → Routers.';
   }
+}
+safely('house map', renderHouseMap);
+// rotate / window resize: re-render only when crossing the compact
+// threshold — mid-drag renders are pointless, so debounce 200ms
+safely('house map resize', function() {
+  window.addEventListener('resize', () => {
+    clearTimeout(window.__mapResizeT);
+    window.__mapResizeT = setTimeout(() => {
+      const w = document.getElementById('houseMapWrap');
+      if (!w) return;
+      const nowCompact = (w.clientWidth || 900) < 520;
+      if (nowCompact !== renderHouseMap.lastCompact) safely('house map', renderHouseMap);
+    }, 200);
+  });
 });
 
 // ---------- double-NAT hint ----------
@@ -3596,7 +3655,45 @@ function renderRoutersChart() {
       },
     },
   });
+  applyRouterFocus();   // keep a map-link focus across range/theme re-renders
 }
+
+// ---------- map → chart focus ----------
+// A "chart ↓" link on a router's map hover card narrows the per-router
+// chart to that line (others dimmed) and scrolls it into view; the
+// "Focused: X ✕" chip in the chart label clears it.
+let routerFocusName = null;
+function applyRouterFocus() {
+  const ch = chartInstances.routers;
+  const chip = document.getElementById('routerFocus');
+  if (!ch || !ch.data || !ch.data.datasets) return;
+  const has = routerFocusName && ch.data.datasets.some(d => d.label === routerFocusName);
+  ch.data.datasets.forEach((d, i) => {
+    const col = catColor(i);
+    if (has && d.label !== routerFocusName) {
+      const dim = hexToRgba(col, 0.14);
+      d.borderColor = dim; d.backgroundColor = dim; d.borderWidth = 1;
+    } else {
+      d.borderColor = col; d.backgroundColor = col;
+      d.borderWidth = has ? 2.5 : 1.5;
+    }
+  });
+  ch.update();
+  if (chip) {
+    if (has) { chip.style.display = ''; chip.textContent = 'Focused: ' + routerFocusName + ' ✕'; }
+    else { chip.style.display = 'none'; }
+  }
+}
+function focusRouterChart(name) {
+  routerFocusName = name;
+  applyRouterFocus();
+  const cardEl = document.getElementById('routersCard');
+  if (cardEl && cardEl.scrollIntoView) cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+safely('router focus chip', function() {
+  const chip = document.getElementById('routerFocus');
+  if (chip) chip.addEventListener('click', () => { routerFocusName = null; applyRouterFocus(); });
+});
 
 // ---------- custom-target latency chart (only when targets exist) ----------
 function renderTargetsChart() {

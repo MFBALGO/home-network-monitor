@@ -1886,6 +1886,8 @@ def build_html(data):
       <h2>Devices on your network</h2>
       <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
         <span class="section-note" id="devicesNote">most recent scan</span>
+        <span class="section-note" id="devScanNote" style="display:none"></span>
+        <button class="ghost-btn mini" id="devScanBtn" style="display:none" title="Sweep the network for devices right now (~10-30s) — same scan the monitor runs on its schedule">Scan now</button>
         <input type="search" id="devSearch" class="search-box" placeholder="Filter — name, IP, MAC" autocomplete="off" spellcheck="false">
       </div>
     </div>
@@ -4181,8 +4183,47 @@ safely('test now', function() {
   fetch('/api/test/status').then(r => {
     if (!r.ok) return;
     allBtns.forEach(b => { b.style.display = ''; });
+    const dsb = document.getElementById('devScanBtn');
+    if (dsb) dsb.style.display = '';
     return r.json().then(st => { if (st.state === 'running') { active = topBtn; setBusy(st.phase); poll(true); } });
   }).catch(() => {});
+});
+
+// ---------- devices scan-now ----------
+// Same command rail as Check now, but its own small state machine — a
+// device sweep isn't a connectivity test and reports a device count.
+safely('devices scan now', function() {
+  if (location.protocol === 'file:') return;
+  const btn = document.getElementById('devScanBtn');
+  const note = document.getElementById('devScanNote');
+  if (!btn || !note) return;
+  let timer = null;
+  const idle = () => { btn.disabled = false; btn.textContent = 'Scan now'; if (timer) { clearInterval(timer); timer = null; } };
+  const say = (txt) => { note.style.display = ''; note.textContent = txt; };
+  btn.addEventListener('click', () => {
+    note.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Scanning…';
+    fetch('/api/devices/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(r => {
+        if (r.status === 202) {
+          let waited = 0;
+          timer = setInterval(() => {
+            waited += 2;
+            fetch('/api/test/status').then(x => x.json()).then(st => {
+              if (st.state === 'done' && st.results && st.results.devices_found != null) {
+                idle(); say(st.results.devices_found + ' devices answered — table refreshes with the next regen (~1 min)');
+              } else if (st.state === 'error') { idle(); say('scan failed: ' + (st.error || 'unknown')); }
+            }).catch(() => {});
+            if (waited > 120) { idle(); say('no result after 2 minutes — check the monitor service'); }
+          }, 2000);
+        }
+        else if (r.status === 429) { idle(); say('please wait a minute between scans'); }
+        else if (r.status === 409) { idle(); say('a test or scan is already running — try again shortly'); }
+        else { idle(); say('scan unavailable (' + r.status + ')'); }
+      })
+      .catch(() => { idle(); say('could not reach the server'); });
+  });
 });
 
 // restore the saved theme (done last: applyTheme re-renders the charts)

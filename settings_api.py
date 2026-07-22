@@ -703,16 +703,35 @@ def device_scan_cmd():
     return f"built-in ping sweep of {target} + {arp}"
 
 
+_last_scan_started = 0.0
+
+
 def start_device_scan():
     """Ask the monitor to run a device sweep right now (the Settings →
-    Devices button). Same one-way command rail as the test button; the
-    page polls /api/test/status for completion."""
-    cmd = {"id": f"{int(time.time() * 1000)}-{os.getpid()}", "action": "scan_now",
-           "issued_ts": datetime.now(timezone.utc).isoformat()}
-    try:
-        save_json_atomic(COMMANDS_PATH, cmd)
-    except OSError as e:
-        return 500, {"ok": False, "error": f"couldn't write command: {e}"}
+    Devices button AND the dashboard's LAN-reachable Scan-now). Same
+    one-way command rail as the test button; the page polls
+    /api/test/status for completion. Guarded like start_test — this is
+    LAN-exposed, so 409 while a run is fresh and a 60s cooldown."""
+    global _last_scan_started
+    with _test_lock:
+        status = load_json(TEST_STATUS_PATH, {})
+        if status.get("state") == "running":
+            try:
+                started = datetime.fromisoformat(status.get("started_ts"))
+                fresh = (datetime.now(timezone.utc) - started).total_seconds() < 300
+            except (TypeError, ValueError):
+                fresh = False
+            if fresh:
+                return 409, {"ok": False, "error": "a test or scan is already running"}
+        if time.time() - _last_scan_started < TEST_COOLDOWN_SEC:
+            return 429, {"ok": False, "error": "please wait a minute between scans"}
+        _last_scan_started = time.time()
+        cmd = {"id": f"{int(time.time() * 1000)}-{os.getpid()}", "action": "scan_now",
+               "issued_ts": datetime.now(timezone.utc).isoformat()}
+        try:
+            save_json_atomic(COMMANDS_PATH, cmd)
+        except OSError as e:
+            return 500, {"ok": False, "error": f"couldn't write command: {e}"}
     return 202, {"ok": True}
 
 

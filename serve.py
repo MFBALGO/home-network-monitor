@@ -74,7 +74,9 @@ MAX_POST_BYTES = 256 * 1024
 # Delete an entry here to make it localhost-only again.
 LAN_API = {
     "GET": {"/api/test/status"},
-    "POST": {"/api/test/run"},
+    # device scan is rate-limited server-side like test/run (60s cooldown
+    # + 409 while one runs) — see settings_api.start_device_scan
+    "POST": {"/api/test/run", "/api/devices/scan"},
 }
 
 WARMING_UP_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8">

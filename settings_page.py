@@ -1428,6 +1428,8 @@ document.getElementById('dScan').onclick = async () => {
   const done = (label) => { btn.disabled = false; btn.textContent = 'Scan for devices now'; if (label) showMsg(msg, 'ok', label); };
   const fail = (label) => { btn.disabled = false; btn.textContent = 'Scan for devices now'; showMsg(msg, 'error', label); };
   const {status} = await api('/api/devices/scan', {});
+  if (status === 429) { fail('Please wait a minute between scans.'); return; }
+  if (status === 409) { fail('A test or scan is already running — try again shortly.'); return; }
   if (status !== 202) { fail('Could not start the scan (HTTP ' + status + ') — is the monitor running?'); return; }
   let waited = 0;
   const timer = setInterval(async () => {

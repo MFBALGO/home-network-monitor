@@ -583,6 +583,13 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
     Speed tests and latency measure <b>that path</b>, so the dashboard labels them with it
     (a weak reading may be an in-house link, not the ISP).</label>
     <select id="gMonLoc" style="max-width:280px"><option value="">(not set)</option></select>
+    <label>Default chart time range — what every dashboard chart shows when the page loads
+    (each chart still has its own 3h/24h/7d toggle)</label>
+    <select id="gRange" style="max-width:160px">
+      <option value="3">3 hours</option>
+      <option value="24">24 hours</option>
+      <option value="168">7 days</option>
+    </select>
     <label style="display:flex;align-items:center;gap:8px;margin-top:14px">
       <input type="checkbox" id="gUpdateCheck" checked>
       Check GitHub once a day for new versions (the only non-monitoring network call this tool makes)
@@ -911,6 +918,8 @@ async function load() {
   locSel.innerHTML = '<option value="">(not set)</option>' + locNames.map(n =>
     '<option' + (n === locCur ? ' selected' : '') + '>' + esc(n) + '</option>').join('');
 
+  document.getElementById('gRange').value = String(S.config.default_range_hours || 3);
+
   const dt = S.config.detection || {};
   document.getElementById('dtFails').value = dt.outage_fails != null ? dt.outage_fails : '';
   document.getElementById('dtLat').value = dt.degraded_latency_ms != null ? dt.degraded_latency_ms : '';
@@ -1106,6 +1115,9 @@ document.getElementById('gSave').onclick = async () => {
   else cfg.update_check = false;
   const monLoc = document.getElementById('gMonLoc').value;
   if (monLoc) cfg.monitor_location = monLoc; else delete cfg.monitor_location;
+  const dRange = parseInt(document.getElementById('gRange').value, 10);
+  if (dRange === 3) delete cfg.default_range_hours;   // 3h IS the built-in default
+  else cfg.default_range_hours = dRange;
   const dt = {};
   const dtFails = parseInt(document.getElementById('dtFails').value, 10);
   const dtLat = parseFloat(document.getElementById('dtLat').value);

@@ -870,6 +870,7 @@ def main():
     data = {
         "generated_at": now.isoformat(),
         "version": __version__,
+        "default_range_hours": site_config.get("default_range_hours"),
         "update": check_for_update(site_config),
         "current_status": current_status,
         "current_latency": latest["latency_ms"] if latest else None,
@@ -1691,6 +1692,7 @@ def build_html(data):
       </div>
       <span id="testNowResult" class="section-note" style="display:none"></span>
       <div class="theme-toggle" id="globalRange" title="Set every chart's time range at once (each chart also has its own toggle)">
+        <button data-range="3">3h</button>
         <button data-range="24">24h</button>
         <button data-range="168">7d</button>
       </div>
@@ -1785,14 +1787,14 @@ def build_html(data):
       </div>
     </div>
     <div class="chart-card with-tools" id="routersCard">
-      <div class="card-tools"><span class="range-toggle mini" data-chart="routers"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
+      <div class="card-tools"><span class="range-toggle mini" data-chart="routers"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
       <div class="chart-label">Per-router latency (ms)<span class="chart-focus" id="routerFocus" style="display:none" title="Click to show all routers again"></span></div>
       <div class="chart-box lg"><canvas id="routersChart"></canvas></div>
       <div id="routersChartEmpty" class="empty" style="display:none">No router ping history yet.</div>
       <div class="check-foot" id="cfRouters"></div>
     </div>
     <div class="chart-card with-tools" id="targetsCard" style="display:none">
-      <div class="card-tools"><span class="range-toggle mini" data-chart="targets"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
+      <div class="card-tools"><span class="range-toggle mini" data-chart="targets"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
       <div class="chart-label">Your targets — latency (ms)<span class="chart-sublabel">custom destinations from Settings; each gets its own outage events</span></div>
       <div class="chart-box"><canvas id="targetsChart"></canvas></div>
       <div class="check-foot" id="cfTargets"></div>
@@ -1805,14 +1807,14 @@ def build_html(data):
     </div>
     <div class="chart-grid">
       <div class="chart-card with-tools">
-        <div class="card-tools"><button class="ghost-btn mini" data-checknow="quick" data-checknote="latency" style="display:none" title="Run a live ping + DNS check right now (~10s) — the result is recorded like any scheduled check">Check now</button><span class="range-toggle mini" data-chart="latency"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
+        <div class="card-tools"><button class="ghost-btn mini" data-checknow="quick" data-checknote="latency" style="display:none" title="Run a live ping + DNS check right now (~10s) — the result is recorded like any scheduled check">Check now</button><span class="range-toggle mini" data-chart="latency"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
         <div class="chart-label">Average latency (ms)</div>
         <div class="chart-box"><canvas id="latencyChart"></canvas></div>
         <div class="stat-sub" id="ck-latency" style="display:none"></div>
         <div class="check-foot" id="cfLatencyChart"></div>
       </div>
       <div class="chart-card with-tools">
-        <div class="card-tools"><button class="ghost-btn mini" data-checknow="quick" data-checknote="loss" style="display:none" title="Run a live ping + DNS check right now (~10s) — the result is recorded like any scheduled check">Check now</button><span class="range-toggle mini" data-chart="loss"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
+        <div class="card-tools"><button class="ghost-btn mini" data-checknow="quick" data-checknote="loss" style="display:none" title="Run a live ping + DNS check right now (~10s) — the result is recorded like any scheduled check">Check now</button><span class="range-toggle mini" data-chart="loss"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
         <div class="chart-label">Packet loss (%)</div>
         <div class="chart-box sm"><canvas id="lossChart"></canvas></div>
         <div class="stat-sub" id="ck-loss" style="display:none"></div>
@@ -1826,7 +1828,7 @@ def build_html(data):
       <h2>Speed</h2>
     </div>
     <div class="chart-card with-tools">
-      <div class="card-tools"><button class="ghost-btn mini" data-checknow="speed" data-checknote="speed" style="display:none" title="Run a full speed test right now (~1 min) — it briefly loads the line and is recorded like any scheduled test">Check now</button><span class="range-toggle mini" data-chart="speed"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
+      <div class="card-tools"><button class="ghost-btn mini" data-checknow="speed" data-checknote="speed" style="display:none" title="Run a full speed test right now (~1 min) — it briefly loads the line and is recorded like any scheduled test">Check now</button><span class="range-toggle mini" data-chart="speed"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
       <div class="chart-label">Speed test (Mbps)<span id="speedVantage" class="chart-sublabel"></span></div>
       <div class="chart-box"><canvas id="speedChart"></canvas></div>
       <div id="speedEmpty" class="empty" style="display:none">No speed test data yet — install a speed test tool (see README) and it will appear here automatically.</div>
@@ -1836,7 +1838,7 @@ def build_html(data):
     </div>
     <div class="chart-grid">
       <div class="chart-card with-tools">
-        <div class="card-tools"><span class="range-toggle mini" data-chart="loaded"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
+        <div class="card-tools"><span class="range-toggle mini" data-chart="loaded"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
         <div class="chart-label" style="display:flex; align-items:center; gap:8px;">Latency under load (ms)
           <span class="rating" id="rateBufferbloat"></span></div>
         <div class="chart-box sm"><canvas id="loadedLatencyChart"></canvas></div>
@@ -1894,7 +1896,7 @@ def build_html(data):
       </div>
     </div>
     <div class="chart-card with-tools">
-      <div class="card-tools"><span class="range-toggle mini" data-chart="devcount"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
+      <div class="card-tools"><span class="range-toggle mini" data-chart="devcount"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
       <div class="chart-label">Devices online over time</div>
       <div class="chart-box sm"><canvas id="devCountChart"></canvas></div>
       <div id="devCountEmpty" class="empty" style="display:none">No scan history yet.</div>
@@ -3611,12 +3613,17 @@ function refLines(lines) {
   };
 }
 
-// Each chart owns its 24h/7d range (mini toggle in the card corner); the
-// topbar's global toggle sets them all at once. Keys must match the
+// Each chart owns its 3h/24h/7d range (mini toggle in the card corner);
+// the topbar's global toggle sets them all at once. Keys must match the
 // data-chart attrs in the markup AND the RANGE_CHARTS registry below.
-const chartRange = { latency: 168, loss: 168, routers: 168, targets: 168,
-                     speed: 168, loaded: 168, devcount: 168 };
-function rangeFor(key) { return chartRange[key] || 168; }
+// The load-time default comes from config default_range_hours (Settings
+// → General), falling back to 3h.
+const DEFAULT_RANGE = [3, 24, 168].indexOf(DATA.default_range_hours) !== -1
+  ? DATA.default_range_hours : 3;
+const chartRange = { latency: DEFAULT_RANGE, loss: DEFAULT_RANGE, routers: DEFAULT_RANGE,
+                     targets: DEFAULT_RANGE, speed: DEFAULT_RANGE, loaded: DEFAULT_RANGE,
+                     devcount: DEFAULT_RANGE };
+function rangeFor(key) { return chartRange[key] || DEFAULT_RANGE; }
 
 function renderLatencyChart() {
   const hours = rangeFor('latency');
@@ -3881,7 +3888,7 @@ safely('range toggles', function() {
 });
 
 // ---------- speed test chart (range-aware) ----------
-function rangeWord(hours) { return hours <= 24 ? '24 hours' : '7 days'; }
+function rangeWord(hours) { return hours <= 3 ? '3 hours' : hours <= 24 ? '24 hours' : '7 days'; }
 
 function renderSpeedChart() {
   const canvas = document.getElementById('speedChart');

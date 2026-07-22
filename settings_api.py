@@ -165,6 +165,11 @@ def validate_config(cfg):
         if v is not None and (not isinstance(v, (int, float)) or v <= 0):
             errors.append(_err("config", key, "must be a positive number (or removed)"))
 
+    # dashboard load-time chart range (Settings → General select)
+    dr = cfg.get("default_range_hours")
+    if dr is not None and dr not in (3, 24, 168):
+        errors.append(_err("config", "default_range_hours", "must be 3, 24, or 168"))
+
     # event-trigger overrides — bounds mirror monitor.py's DETECTION_BOUNDS
     detection = cfg.get("detection")
     if detection is not None:
@@ -307,7 +312,7 @@ def validate_config(cfg):
     known = {"title", "floors", "underground_floors", "main_router_floor",
              "hide_ip_prefixes", "thresholds", "plan_down_mbps", "plan_up_mbps",
              "update_check", "alerts", "intervals", "detection", "monitor_location",
-             "custom_targets"}
+             "custom_targets", "default_range_hours"}
     for key in cfg:
         if key not in known:
             warnings.append(_err("config", key, "unknown setting - kept as-is"))

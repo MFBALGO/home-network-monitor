@@ -21,6 +21,8 @@ import ipaddress
 import json
 import os
 import re
+import shutil
+import socket
 import sqlite3
 import threading
 import time
@@ -667,6 +669,48 @@ def load_device_census(days=30):
     return out
 
 
+def device_scan_cmd():
+    """Human-readable version of what a device scan actually runs, shown
+    next to the Settings → Devices scan button — mirrors monitor.py's
+    nmap-else-ping-sweep decision (incl. the known Windows install paths)
+    and the ARP read that follows either sweep."""
+    nmap = shutil.which("nmap")
+    if not nmap and os.name == "nt":
+        for p in (r"C:\Program Files\Nmap\nmap.exe",
+                  r"C:\Program Files (x86)\Nmap\nmap.exe"):
+            if os.path.exists(p):
+                nmap = p
+                break
+    target = "<local subnet>"
+    try:
+        # best-effort /24 label from this machine's outbound interface
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(2)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        target = ".".join(ip.split(".")[:3]) + ".0/24"
+    except OSError:
+        pass
+    arp = "arp -a" if os.name == "nt" else "arp -an"
+    if nmap:
+        return f"nmap -sn -T4 --max-retries 1 {target} + {arp}"
+    return f"built-in ping sweep of {target} + {arp}"
+
+
+def start_device_scan():
+    """Ask the monitor to run a device sweep right now (the Settings →
+    Devices button). Same one-way command rail as the test button; the
+    page polls /api/test/status for completion."""
+    cmd = {"id": f"{int(time.time() * 1000)}-{os.getpid()}", "action": "scan_now",
+           "issued_ts": datetime.now(timezone.utc).isoformat()}
+    try:
+        save_json_atomic(COMMANDS_PATH, cmd)
+    except OSError as e:
+        return 500, {"ok": False, "error": f"couldn't write command: {e}"}
+    return 202, {"ok": True}
+
+
 def handle_get(path):
     if path == "/api/test/status":
         return 200, load_json(TEST_STATUS_PATH, {"state": "idle"})
@@ -679,6 +723,7 @@ def handle_get(path):
             "meta": {
                 "version": __version__,
                 "wizard_needed": wizard_needed(),
+                "scan_cmd": device_scan_cmd(),
                 "files": {
                     "config": _file_meta(CONFIG_PATH),
                     "routers": _file_meta(ROUTERS_CONFIG_PATH),
@@ -698,6 +743,8 @@ def handle_post(path, body):
         return _save_config(body)
     if path == "/api/test/run":
         return start_test(body)
+    if path == "/api/devices/scan":
+        return start_device_scan()
     if path == "/api/alerts/test":
         return send_test_alert_command()
     return 404, {"ok": False, "error": "unknown endpoint"}

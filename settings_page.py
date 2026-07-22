@@ -677,7 +677,11 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
       Clearing a row's fields (&#10005;) just forgets the name — the device stays listed as
       long as the scanner keeps seeing it.</div>
     </details>
-    <input type="search" id="dSearch" placeholder="Filter — name, IP, MAC, hostname" autocomplete="off" spellcheck="false" style="max-width:280px; margin-bottom:10px">
+    <div class="row" style="margin-bottom:10px">
+      <input type="search" id="dSearch" placeholder="Filter — name, IP, MAC, hostname" autocomplete="off" spellcheck="false" style="max-width:280px">
+      <button class="small" id="dScan">Scan for devices now</button>
+      <span class="mono" id="dScanCmd" style="font-size:11px"></span>
+    </div>
     <table id="dTable"><tr><th>Device</th><th>Type</th><th>Watch</th><th></th></tr></table>
     <div class="row" style="margin-top:10px"><button class="small" id="dAdd">+ Add a device by MAC</button></div>
   </div>
@@ -881,6 +885,8 @@ async function load() {
   S.routers = data.routers || [];
   S.devices = data.devices || {};
   S.census = data.census || {};
+  document.getElementById('dScanCmd').textContent =
+    'runs: ' + ((data.meta && data.meta.scan_cmd) || 'ping sweep + arp');
 
   document.getElementById('gTitle').value = S.config.title || 'Home Network Monitor';
   S.floorState.floors = (S.config.floors || []).slice();
@@ -1363,6 +1369,38 @@ document.getElementById('dAdd').onclick = () => {
   const rows = document.querySelectorAll('#dTable tr.d-row');
   const last = rows[rows.length - 1];
   if (last) last.querySelector('.d-mac').focus();
+};
+// on-demand device sweep: the monitor picks the command up within ~2s,
+// sweeps (nmap or ping sweep + arp), and we re-pull the census when the
+// status file says it finished
+document.getElementById('dScan').onclick = async () => {
+  const btn = document.getElementById('dScan');
+  const msg = document.getElementById('dMsg');
+  clearMsg(msg);
+  btn.disabled = true;
+  btn.textContent = 'Scanning…';
+  const done = (label) => { btn.disabled = false; btn.textContent = 'Scan for devices now'; if (label) showMsg(msg, 'ok', label); };
+  const fail = (label) => { btn.disabled = false; btn.textContent = 'Scan for devices now'; showMsg(msg, 'error', label); };
+  const {status} = await api('/api/devices/scan', {});
+  if (status !== 202) { fail('Could not start the scan (HTTP ' + status + ') — is the monitor running?'); return; }
+  let waited = 0;
+  const timer = setInterval(async () => {
+    waited += 2;
+    const {status: s, data: st} = await api('/api/test/status');
+    if (s === 200 && st && st.state === 'done') {
+      clearInterval(timer);
+      const n = st.results && st.results.devices_found;
+      const {status: cs, data: cfg} = await api('/api/config');
+      if (cs === 200) { S.census = cfg.census || {}; S.devices = cfg.devices || {}; renderDevices(); }
+      done('Scan finished' + (n != null ? ' — ' + n + ' devices answered.' : '.'));
+    } else if (s === 200 && st && st.state === 'error') {
+      clearInterval(timer);
+      fail('Scan failed: ' + (st.error || 'unknown'));
+    } else if (waited > 120) {
+      clearInterval(timer);
+      fail('No result after 2 minutes — check the monitor service.');
+    }
+  }, 2000);
 };
 document.getElementById('dSave').onclick = async () => {
   const msg = document.getElementById('dMsg');

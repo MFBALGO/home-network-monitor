@@ -4116,6 +4116,7 @@ safely('test now', function() {
     if (res.external) bits.push('internet ' + (res.external.ok ? (res.external.avg_ms != null ? res.external.avg_ms + 'ms' : 'ok') : 'FAIL'));
     if (res.dns) bits.push('DNS ' + (res.dns.ok ? (res.dns.ms != null ? Math.round(res.dns.ms) + 'ms' : 'ok') : 'FAIL'));
     if (res.speedtest) bits.push(res.speedtest.error ? 'speed test failed' : ('↓' + Math.round(res.speedtest.down) + ' ↑' + Math.round(res.speedtest.up) + ' Mbps'));
+    if (res.devices_found != null) bits.push(res.devices_found + ' devices answered a scan');
     showNote(bits.join(' · ') + ' — on the charts after the next refresh (~1 min)');
   }
   function poll(sinceLoad) {

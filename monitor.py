@@ -1719,33 +1719,43 @@ def wifi_loop(conn):
         time.sleep(check_interval("wifi"))
 
 
-def device_loop(conn):
-    warned_no_ip = False
+# Shared device-scan state: device_loop and the web UI's on-demand
+# "scan_now" command both go through run_device_scan, so the new-device
+# baseline / first-scan-absorbs behavior is identical no matter which
+# path triggered the sweep. The lock stops the two from sweeping the
+# subnet concurrently (the scheduled cycle just waits its turn).
+_device_scan_state = {"known_macs": None, "first_cycle": True,
+                      "last_sweep_mode": None, "warned_no_ip": False}
+_device_scan_lock = threading.Lock()
 
-    # --- new-device detection state ---
-    # Baseline = every MAC ever recorded. A MAC outside the baseline is a
-    # brand-new device on the network, which gets logged as an event —
-    # useful both for "whose phone is that?" and as a light security signal.
-    known_macs = set()
-    try:
-        with _lock:
-            known_macs = {row[0] for row in conn.execute(
-                "SELECT DISTINCT mac FROM devices WHERE mac IS NOT NULL")}
-    except Exception as e:
-        log_error(f"couldn't seed known-device baseline: {e!r}")
-    first_cycle = True
-    last_sweep_mode = None
 
-    while True:
+def run_device_scan(conn):
+    """One full device sweep: populate ARP (nmap or ping sweep), read the
+    ARP table, insert the census snapshot, raise new-device events.
+    Returns how many devices the sweep saw."""
+    with _device_scan_lock:
+        st = _device_scan_state
+        if st["known_macs"] is None:
+            # Baseline = every MAC ever recorded. A MAC outside the
+            # baseline is a brand-new device on the network — useful both
+            # for "whose phone is that?" and as a light security signal.
+            st["known_macs"] = set()
+            try:
+                with _lock:
+                    st["known_macs"] = {row[0] for row in conn.execute(
+                        "SELECT DISTINCT mac FROM devices WHERE mac IS NOT NULL")}
+            except Exception as e:
+                log_error(f"couldn't seed known-device baseline: {e!r}")
+
         # Re-detect every cycle: launchd starts this before Wi-Fi is up at
         # boot, and the Mac can move between networks without a restart.
         own_ip, prefix = get_own_ip_and_prefix()
-        if not own_ip and not warned_no_ip:
+        if not own_ip and not st["warned_no_ip"]:
             log("warning: couldn't determine this Mac's IP/subnet — "
                 "device scan will fall back to whatever's already in the ARP cache "
                 "(may miss devices that don't talk to this Mac directly). "
                 "Will keep retrying every cycle.")
-            warned_no_ip = True
+            st["warned_no_ip"] = True
 
         # Populate ARP entries for every responsive device. Prefer nmap
         # when installed (checked every cycle, so installing it later
@@ -1753,9 +1763,9 @@ def device_loop(conn):
         # ping sweep otherwise.
         nmap_bin = find_nmap_binary()
         mode = "nmap" if nmap_bin else "ping sweep"
-        if mode != last_sweep_mode:
+        if mode != st["last_sweep_mode"]:
             log(f"device discovery via {mode}")
-            last_sweep_mode = mode
+            st["last_sweep_mode"] = mode
         swept = nmap_sweep_subnet(own_ip, prefix, nmap_bin) if nmap_bin else False
         if not swept:
             ping_sweep_subnet(own_ip, prefix)
@@ -1772,9 +1782,9 @@ def device_loop(conn):
             )
 
         # --- new-device events ---
-        unseen = [d for d in devices if d["mac"] not in known_macs]
+        unseen = [d for d in devices if d["mac"] not in st["known_macs"]]
         if unseen:
-            if first_cycle:
+            if st["first_cycle"]:
                 # The first scan after a (re)start absorbs unseen MACs
                 # silently: after a code change or a long stretch of broken
                 # scans, dozens of "new" devices would otherwise flood the
@@ -1792,8 +1802,14 @@ def device_loop(conn):
                         (ts, ts, "new_device", "lan", note),
                     )
                     log(note)
-            known_macs.update(d["mac"] for d in unseen)
-        first_cycle = False
+            st["known_macs"].update(d["mac"] for d in unseen)
+        st["first_cycle"] = False
+        return len(devices)
+
+
+def device_loop(conn):
+    while True:
+        run_device_scan(conn)
         time.sleep(check_interval("devices"))
 
 
@@ -2324,6 +2340,16 @@ def command_loop(conn):
                 run_on_demand_test(conn, bool(cmd.get("speedtest")))
             elif action == "test_alert":
                 send_test_alert()
+            elif action == "scan_now":
+                # on-demand device sweep from Settings → Devices; shares
+                # the test-status file so the page can poll for completion
+                started = now_iso()
+                _set_test_status(state="running", phase="device scan",
+                                 started_ts=started)
+                n = run_device_scan(conn)
+                _set_test_status(state="done", started_ts=started,
+                                 finished_ts=now_iso(),
+                                 results={"devices_found": n})
         except Exception as e:
             log_error(f"command loop error: {e!r}")
             _set_test_status(state="error", error=str(e)[:200])

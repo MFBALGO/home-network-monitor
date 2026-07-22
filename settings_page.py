@@ -642,6 +642,32 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
     </details>
     <div class="iv-grid" id="gIntervals"></div>
   </div>
+  <div class="card">
+    <h2 style="margin-top:0">Updates</h2>
+    <div class="sub" style="margin-bottom:8px">One click: downloads the new release from GitHub,
+    keeps the old version in <span class="mono">data/backup</span>, swaps the code, and the
+    services restart themselves — the dashboard pauses for a minute or so while they come back.</div>
+    <details class="hint"><summary>More…</summary>
+      <div class="sub">Your settings, device names, and all history stay untouched — the updater
+      never writes config files or the database. If something goes wrong the update rolls itself
+      back; <span class="mono">python update.py --rollback</span> in the install folder restores
+      the previous version by hand. Prefer doing it yourself? Double-click
+      <span class="mono">update-windows.bat</span> (or run <span class="mono">bash update.sh</span>)
+      in the install folder — same engine, visible progress.</div>
+    </details>
+    <div class="row" style="align-items:center; flex-wrap:wrap; margin-top:8px">
+      <span>Installed: <b class="mono" id="uCur">…</b></span>
+      <span id="uLatest" style="margin-left:14px"></span>
+      <span class="grow"></span>
+      <button class="small" id="uCheck">Check for updates</button>
+      <button class="primary" id="uRun" style="display:none">Update now</button>
+    </div>
+    <details id="uNotesWrap" class="hint" style="display:none; margin-top:8px">
+      <summary>What&#8217;s new in <span id="uNotesVer"></span></summary>
+      <pre id="uNotes" class="mono" style="white-space:pre-wrap; font-size:12px; margin:8px 0 0; max-height:260px; overflow-y:auto"></pre>
+    </details>
+    <div class="msg" id="uMsg"></div>
+  </div>
   <div class="msg" id="gMsg"></div>
   <div class="row" style="justify-content:flex-end"><button class="primary" id="gSave">Save general settings</button></div>
 </div>
@@ -880,7 +906,7 @@ for (const name of ['general','routers','devices','alerts']) {
   // row add/delete/reorder are button clicks, not input events. Saves,
   // the test-alert button, the scans, and the show-all view toggle edit
   // nothing — they must not trip the unsaved-changes dot.
-  const CLEAN_BUTTONS = ['aTest', 'rScan', 'dScan', 'dShowAll'];
+  const CLEAN_BUTTONS = ['aTest', 'rScan', 'dScan', 'dShowAll', 'uCheck', 'uRun'];
   panel.addEventListener('click', (e) => {
     const b = e.target.closest ? e.target.closest('button') : null;
     if (b && !b.classList.contains('primary') && CLEAN_BUTTONS.indexOf(b.id) === -1) markDirty(name);
@@ -963,6 +989,7 @@ async function load() {
   renderRouters();
   renderDevices();
   loadAlerts();
+  loadUpdateCard();
 }
 
 // ---- alerts tab ----
@@ -1094,6 +1121,113 @@ document.getElementById('aTest').onclick = async () => {
   showMsg(msg, status === 202 ? 'ok' : 'error', status === 202
     ? 'Test alert queued — it goes to every enabled channel within a few seconds. Save first if you just changed settings.'
     : 'Could not queue the test alert (HTTP ' + status + ').');
+};
+
+// ---- updates card ----
+// The one flow here that outlives its own web server: while the update
+// installs, serve.py exits and comes back on the new code, so the poll
+// below treats fetch failures as "restarting, keep waiting" rather than
+// errors, and declares success when the reported version CHANGES.
+function renderUpdateInfo(current, info) {
+  document.getElementById('uCur').textContent = 'v' + current;
+  const latest = document.getElementById('uLatest');
+  const run = document.getElementById('uRun');
+  const wrap = document.getElementById('uNotesWrap');
+  if (!info || !info.tag) {
+    latest.textContent = 'Latest release: not checked yet';
+    run.style.display = 'none';
+    wrap.style.display = 'none';
+    return;
+  }
+  if (info.available) {
+    latest.innerHTML = 'Latest: <b>v' + esc(info.version) + '</b> — update available';
+    run.style.display = '';
+  } else {
+    latest.textContent = 'Latest: v' + (info.version || '?') + ' — you are up to date';
+    run.style.display = 'none';
+  }
+  if (info.notes) {
+    wrap.style.display = '';
+    document.getElementById('uNotesVer').textContent = 'v' + (info.version || '?');
+    document.getElementById('uNotes').textContent = info.notes;
+  } else {
+    wrap.style.display = 'none';
+  }
+}
+async function loadUpdateCard() {
+  let r;
+  try { r = await api('/api/update/status'); } catch (e) { return; }
+  if (r.status !== 200 || !r.data || !r.data.ok) return;
+  if (r.data.supported === false) {
+    document.getElementById('uCur').textContent = 'v' + r.data.current;
+    document.getElementById('uCheck').style.display = 'none';
+    return;
+  }
+  S.updateCurrent = r.data.current;
+  renderUpdateInfo(r.data.current, r.data.info);
+  const st = r.data.status || {};
+  if (st.state === 'running') pollUpdate();  // page reloaded mid-update
+}
+let uPolling = false;
+async function pollUpdate() {
+  if (uPolling) return;
+  uPolling = true;
+  const msg = document.getElementById('uMsg');
+  document.getElementById('uRun').disabled = true;
+  for (let i = 0; i < 150; i++) {           // ~5 min ceiling
+    await new Promise(res => setTimeout(res, 2000));
+    let r = null;
+    try { r = await api('/api/update/status'); } catch (e) {}
+    if (!r || r.status !== 200 || !r.data) {
+      // the web service is restarting onto the new code - expected
+      showMsg(msg, 'warn', 'Restarting services… the page reconnects by itself.');
+      continue;
+    }
+    const st = (r.data.status || {});
+    if (r.data.current && S.updateCurrent && r.data.current !== S.updateCurrent) {
+      showMsg(msg, 'ok', 'Updated to v' + r.data.current + ' — reloading…');
+      setTimeout(() => location.reload(), 1500);
+      return;
+    }
+    if (st.state === 'error') {
+      showMsg(msg, 'error', 'Update failed: ' + (st.error || 'unknown error') +
+        (st.step === 'verifying' ? ' (the previous version was restored)' : ''));
+      break;
+    }
+    if (st.state === 'running') {
+      showMsg(msg, 'warn', 'Updating: ' + (st.step || '…') + (st.detail ? ' — ' + st.detail : ''));
+    }
+  }
+  uPolling = false;
+  document.getElementById('uRun').disabled = false;
+}
+document.getElementById('uCheck').onclick = async () => {
+  const msg = document.getElementById('uMsg');
+  showMsg(msg, 'warn', 'Checking GitHub…');
+  const {status, data} = await api('/api/update/check', {});
+  if (status !== 200 || !data || !data.ok) {
+    showMsg(msg, 'error', (data && data.error) || ('Check failed (HTTP ' + status + ').'));
+    return;
+  }
+  clearMsg(msg);
+  renderUpdateInfo(data.current, data.info);
+  if (data.info && !data.info.available) {
+    showMsg(msg, 'ok', 'You are on the latest version (v' + data.current + ').');
+  }
+};
+document.getElementById('uRun').onclick = async () => {
+  const msg = document.getElementById('uMsg');
+  const to = (S.config && document.getElementById('uNotesVer').textContent) || 'the latest version';
+  if (!confirm('Update from v' + (S.updateCurrent || '?') + ' to ' + to + '?' +
+      ' The previous version is kept in data/backup, and the dashboard pauses' +
+      ' for a minute while the services restart.')) return;
+  const {status, data} = await api('/api/update/run', {});
+  if (status !== 202) {
+    showMsg(msg, 'error', (data && data.error) || ('Could not start the update (HTTP ' + status + ').'));
+    return;
+  }
+  showMsg(msg, 'warn', 'Update started…');
+  pollUpdate();
 };
 
 // ---- general save ----

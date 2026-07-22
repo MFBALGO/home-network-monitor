@@ -667,6 +667,7 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
     <div class="row" style="margin-top:10px">
       <button class="small" id="rAdd">+ Add router</button>
       <span class="grow"></span>
+      <span class="mono" id="rScanCmd" style="font-size:11px"></span>
       <button class="small" id="rScan">Scan network for routers</button>
     </div>
     <div id="rScanResults"></div>
@@ -692,7 +693,10 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
       <span class="mono" id="dScanCmd" style="font-size:11px"></span>
     </div>
     <table id="dTable"><tr><th>Device</th><th>Type</th><th>Watch</th><th></th></tr></table>
-    <div class="row" style="margin-top:10px"><button class="small" id="dAdd">+ Add a device by MAC</button></div>
+    <div class="row" style="margin-top:10px">
+      <button class="small" id="dAdd">+ Add a device by MAC</button>
+      <button class="small" id="dShowAll" style="display:none"></button>
+    </div>
   </div>
   <div class="msg" id="dMsg"></div>
   <div class="row" style="justify-content:flex-end"><button class="primary" id="dSave">Save device names</button></div>
@@ -898,6 +902,8 @@ async function load() {
   S.census = data.census || {};
   document.getElementById('dScanCmd').textContent =
     'runs: ' + ((data.meta && data.meta.scan_cmd) || 'ping sweep + arp');
+  document.getElementById('rScanCmd').textContent =
+    'runs: ' + ((data.meta && data.meta.router_scan_cmd) || 'port + ping sweep + arp');
 
   document.getElementById('gTitle').value = S.config.title || 'Home Network Monitor';
   S.floorState.floors = (S.config.floors || []).slice();
@@ -1326,7 +1332,7 @@ function deviceRow(mac, value, ctx) {
   // the ✕ only shows when there is something to forget — on a bare census
   // row it was a silent no-op that read as "the button is broken"
   const hasEntry = !!(v.name || v.type || v.watch);
-  return '<tr class="d-row" data-mac="' + esc(mac) + '">' +
+  return '<tr class="d-row" data-mac="' + esc(mac) + '"' + (hasEntry ? ' data-entry="1"' : '') + '>' +
     '<td><input type="text" class="d-name" value="' + esc(v.name || '') +
       '" placeholder="' + esc(ctx && ctx.hostname ? ctx.hostname : 'name this device') + '">' +
     '<div class="d-ctx">' + esc(mac) + ' · ' + bits.join(' · ') +
@@ -1372,16 +1378,37 @@ function renderDevices() {
   document.getElementById('dTable').innerHTML = html;
   filterDevices();
 }
+// Visibility, not re-render (re-rendering would eat unsaved edits):
+// default shows only KNOWN devices (a devices.json entry, a manual row,
+// or anything the user typed into since load); "Show all N seen devices"
+// or any search query reveals the full census.
 function filterDevices() {
   const q = (document.getElementById('dSearch').value || '').trim().toLowerCase();
+  const revealed = S.showAllDevices || !!q;
   for (const tr of document.querySelectorAll('#dTable tr.d-row')) {
     const nm = tr.querySelector('.d-name');
+    const sel = tr.querySelector('.d-type');
+    const w = tr.querySelector('.d-watch');
+    const typed = (nm && nm.value.trim()) || (sel && sel.value) || (w && w.checked);
+    const known = tr.dataset.entry === '1' || tr.dataset.manual === '1' || !!typed;
     const hay = ((tr.dataset.mac || '') + ' ' + (nm ? nm.value : '') + ' ' + tr.textContent).toLowerCase();
-    tr.style.display = (!q || hay.indexOf(q) !== -1) ? '' : 'none';
+    const matches = !q || hay.indexOf(q) !== -1;
+    tr.style.display = (matches && (revealed || known)) ? '' : 'none';
   }
   for (const tr of document.querySelectorAll('#dTable tr.d-group')) tr.style.display = q ? 'none' : '';
+  const btn = document.getElementById('dShowAll');
+  if (btn) {
+    const unnamed = Object.keys(S.census).filter(m => !S.devices[m]).length;
+    btn.style.display = (q || !unnamed) ? 'none' : '';
+    btn.textContent = S.showAllDevices ? 'Show known devices only'
+      : 'Show all ' + Object.keys(S.census).length + ' seen devices';
+  }
 }
 document.getElementById('dSearch').oninput = filterDevices;
+document.getElementById('dShowAll').onclick = () => {
+  S.showAllDevices = !S.showAllDevices;
+  filterDevices();
+};
 document.getElementById('dTable').onclick = (e) => {
   if (!e.target.classList.contains('d-del')) return;
   const tr = e.target.closest('tr');

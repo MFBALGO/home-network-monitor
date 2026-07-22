@@ -22,7 +22,6 @@ import json
 import os
 import re
 import shutil
-import socket
 import sqlite3
 import threading
 import time
@@ -674,6 +673,19 @@ def load_device_census(days=30):
     return out
 
 
+def _subnet_label():
+    """CIDR label of the LAN this machine sits on, for the scan-command
+    disclosure strings. Uses scan_routers' detection (real prefix, not a
+    hardcoded /24) with a plain fallback when it can't tell."""
+    try:
+        ip, prefix = scan_routers.get_own_ip_and_prefix()
+        if ip:
+            return str(ipaddress.ip_network(f"{ip}/{prefix or 24}", strict=False))
+    except Exception:
+        pass
+    return "<local subnet>"
+
+
 def device_scan_cmd():
     """Human-readable version of what a device scan actually runs, shown
     next to the Settings → Devices scan button — mirrors monitor.py's
@@ -686,21 +698,20 @@ def device_scan_cmd():
             if os.path.exists(p):
                 nmap = p
                 break
-    target = "<local subnet>"
-    try:
-        # best-effort /24 label from this machine's outbound interface
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(2)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        target = ".".join(ip.split(".")[:3]) + ".0/24"
-    except OSError:
-        pass
+    target = _subnet_label()
     arp = "arp -a" if os.name == "nt" else "arp -an"
     if nmap:
         return f"nmap -sn -T4 --max-retries 1 {target} + {arp}"
     return f"built-in ping sweep of {target} + {arp}"
+
+
+def router_scan_cmd():
+    """What the Routers-tab network scan (scan_routers.discover) actually
+    does, in one honest line — TCP connect to the web ports, a ping
+    sweep, the ARP read, then an HTTP fingerprint of the hits."""
+    ping = "ping -n 1 -w 1000" if os.name == "nt" else "ping -c 1"
+    return (f"TCP connect :80,:443 across {_subnet_label()}"
+            f" + {ping} sweep + arp -a + HTTP title/Server fingerprint")
 
 
 _last_scan_started = 0.0
@@ -748,6 +759,7 @@ def handle_get(path):
                 "version": __version__,
                 "wizard_needed": wizard_needed(),
                 "scan_cmd": device_scan_cmd(),
+                "router_scan_cmd": router_scan_cmd(),
                 "files": {
                     "config": _file_meta(CONFIG_PATH),
                     "routers": _file_meta(ROUTERS_CONFIG_PATH),

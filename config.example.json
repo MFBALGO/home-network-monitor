@@ -1,34 +1,71 @@
 {
   "title": "Home Network Monitor",
-  "floors": ["First Floor", "Ground Floor"],
+  "floors": [
+    "First Floor",
+    "Ground Floor"
+  ],
   "underground_floors": [],
   "main_router_floor": "Ground Floor",
   "plan_down_mbps": 500,
   "plan_up_mbps": 200,
   "monitor_location": "Main Router",
   "custom_targets": [
-    {"name": "Example game server", "host": "example.com"}
+    {
+      "name": "Example game server",
+      "host": "example.com"
+    }
   ],
   "detection": {
-    "outage_fails": 3, "degraded_latency_ms": 150, "degraded_loss_pct": 20
+    "outage_fails": 3,
+    "degraded_latency_ms": 150,
+    "degraded_loss_pct": 20
   },
   "thresholds": {
-    "plan_pct": {"good": 90, "fair": 80}
+    "plan_pct": {
+      "good": 90,
+      "fair": 80
+    }
   },
   "intervals": {
-    "ping": 15, "router": 15, "dns": 60,
-    "wifi": 300, "devices": 300, "speedtest": 1800, "public_ip": 600
+    "ping": 15,
+    "router": 15,
+    "dns": 60,
+    "wifi": 300,
+    "devices": 300,
+    "speedtest": 1800,
+    "public_ip": 600,
+    "iot": 30
   },
   "alerts": {
     "enabled": false,
     "min_duration_sec": 60,
     "cooldown_minutes": 5,
-    "events": {"outage": true, "degraded": false, "new_device": true, "ip_change": false},
+    "events": {
+      "outage": true,
+      "degraded": false,
+      "new_device": true,
+      "ip_change": false,
+      "iot_outage": false
+    },
     "channels": {
-      "toast": {"enabled": true},
-      "webhook": {"enabled": false, "url": "https://ntfy.sh/your-topic-here", "format": "ntfy"},
-      "email": {"enabled": false, "host": "smtp.example.com", "port": 587, "starttls": true,
-                "username": "", "password": "", "from": "", "to": ""}
+      "toast": {
+        "enabled": true
+      },
+      "webhook": {
+        "enabled": false,
+        "url": "https://ntfy.sh/your-topic-here",
+        "format": "ntfy"
+      },
+      "email": {
+        "enabled": false,
+        "host": "smtp.example.com",
+        "port": 587,
+        "starttls": true,
+        "username": "",
+        "password": "",
+        "from": "",
+        "to": ""
+      }
     }
   }
 }

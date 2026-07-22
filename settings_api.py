@@ -220,7 +220,7 @@ def validate_config(cfg):
         # rejecting here just gives the user honest feedback.
         iv_bounds = {"ping": (5, 300), "router": (10, 600), "wifi": (60, 3600),
                      "devices": (60, 3600), "speedtest": (600, 24 * 3600),
-                     "public_ip": (120, 3600), "dns": (15, 900)}
+                     "public_ip": (120, 3600), "dns": (15, 900), "iot": (10, 600)}
         if not isinstance(intervals, dict):
             errors.append(_err("config", "intervals", "must be an object of {check: seconds}"))
         else:
@@ -261,7 +261,7 @@ def validate_config(cfg):
                     errors.append(_err("config", "alerts.events", "must be an object of {event: true/false}"))
                 else:
                     for k, v in evs.items():
-                        if k not in ("outage", "degraded", "new_device", "ip_change", "instability"):
+                        if k not in ("outage", "degraded", "new_device", "ip_change", "instability", "iot_outage"):
                             warnings.append(_err("config", f"alerts.events.{k}", "unknown event type - kept as-is"))
                         elif not isinstance(v, bool):
                             errors.append(_err("config", f"alerts.events.{k}", "must be true or false"))
@@ -371,21 +371,67 @@ def validate_routers(routers, floors=None):
     return errors, warnings
 
 
+# Mirrors monitor.py's IOT_TYPES (no-imports rule — update together).
+IOT_TYPES = ("camera", "intercom", "printer", "light", "plug", "speaker", "tv", "other")
+
+
 def validate_devices(devices):
+    """devices.json values are a plain name string, or an object
+    {"name": ..., "type": <IOT_TYPES>, "watch": bool} for IoT
+    categorization / active watching."""
     errors, warnings = [], []
     if not isinstance(devices, dict):
         return [_err("devices", "", "must be a JSON object of {mac: name}")], []
-    for mac, name in devices.items():
+    watched = 0
+    for mac, value in devices.items():
         if normalize_mac(mac) is None:
             errors.append(_err("devices", mac, "not a valid MAC address (aa:bb:cc:dd:ee:ff)"))
-        if not isinstance(name, str) or not name.strip() or len(name) > 80:
+        if isinstance(value, dict):
+            name = value.get("name")
+            if not isinstance(name, str) or not name.strip() or len(name) > 80:
+                errors.append(_err("devices", mac, "name must be non-empty text, at most 80 characters"))
+            typ = value.get("type")
+            if typ not in (None, "") and (not isinstance(typ, str) or typ.strip().lower() not in IOT_TYPES):
+                errors.append(_err("devices", mac, "type must be one of: " + ", ".join(IOT_TYPES)))
+            if value.get("watch") is not None and not isinstance(value["watch"], bool):
+                errors.append(_err("devices", mac, "watch must be true or false"))
+            if value.get("watch") is True:
+                watched += 1
+            for k in value:
+                if k not in ("name", "type", "watch"):
+                    warnings.append(_err("devices", f"{mac}.{k}", "unknown field - kept as-is"))
+        elif not isinstance(value, str) or not value.strip() or len(value) > 80:
             errors.append(_err("devices", mac, "name must be non-empty text, at most 80 characters"))
+    if watched > 10:
+        warnings.append(_err("devices", "", f"{watched} devices are actively watched - each unreachable "
+                             "one burns several seconds of probe timeouts per check cycle, which "
+                             "stretches the real cadence well past the configured interval"))
     return errors, warnings
 
 
 def normalize_devices(devices):
-    """Canonicalize MAC keys (dashes -> colons, lowercase)."""
-    return {normalize_mac(mac): name.strip() for mac, name in devices.items()}
+    """Canonicalize MAC keys (dashes -> colons, lowercase) and write the
+    compact value form: a plain string when there's no type and watch is
+    off — so a file that never uses IoT features stays byte-identical to
+    the original format. Unknown object keys (warned above) are kept."""
+    out = {}
+    for mac, value in devices.items():
+        key = normalize_mac(mac)
+        if isinstance(value, dict):
+            v = dict(value)
+            v["name"] = str(v.get("name", "")).strip()
+            typ = str(v.get("type") or "").strip().lower()
+            if typ:
+                v["type"] = typ
+            else:
+                v.pop("type", None)
+            if not v.get("watch"):
+                v.pop("watch", None)
+            extras = set(v) - {"name"}
+            out[key] = v if extras else v["name"]
+        else:
+            out[key] = value.strip()
+    return out
 
 
 # ---------------------------------------------------------------------------

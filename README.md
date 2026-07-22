@@ -316,6 +316,46 @@ triggers a "New device" event in the outage log. (The first scan after a
 monitor restart absorbs unknown devices silently as a baseline, so a code
 update can't flood the log.)
 
+### Optional: IoT devices (cameras, intercoms, printers, lights…)
+
+A devices.json value can also be an object that tags the device with a
+type and, optionally, puts it under active watch:
+
+```json
+{
+  "11:22:33:44:55:66": { "name": "Front door camera", "type": "camera", "watch": true },
+  "22:33:44:55:66:77": { "name": "Office printer", "type": "printer" },
+  "aa:bb:cc:dd:ee:ff": "Living room TV"
+}
+```
+
+(The Settings page's *Devices* tab has a Type dropdown and a Watch
+checkbox for this — no hand-editing needed. Plain-string entries keep
+working unchanged.)
+
+Any device with a `type` appears in a dedicated **IoT devices** section
+on the dashboard, grouped by type — `camera`, `intercom`, `printer`,
+`light`, `plug`, `speaker`, `tv`, or `other`.
+
+`"watch": true` upgrades a device from "seen by the periodic scan" to
+**actively checked every ~30 seconds** (configurable as `intervals.iot`,
+10–600 s) with the same 4-tier liveness ladder used for routers:
+ping → TCP → closed-port probe → ARP. That matters for IoT gear —
+cameras and printers often ignore ping but answer on their RTSP/web
+ports, showing as "Online · web" or "Online · silent" just like silent
+access points. Watched devices are tracked by MAC, so a DHCP lease
+change doesn't lose them; the monitor re-resolves the IP automatically.
+
+When a watched device stops answering, an **"IoT device down"** event
+opens in the outage log (with its own filter chip and timeline marks)
+and closes on recovery. These events are deliberately *excluded* from
+your internet uptime numbers and the ISP evidence report — a dead
+lightbulb is not your ISP's fault — and they never alert unless you
+enable the separate **"IoT devices (watched)"** checkbox in Settings →
+Alerts (off by default). While your own network/internet connection is
+down, IoT events are held back so one house-wide outage doesn't page
+you once per camera.
+
 ### Optional: customizing the house map (config.json)
 
 The dashboard's house map draws your floors from `config.json`:
@@ -459,7 +499,7 @@ dashboard.
 | `settings_api.py` / `settings_page.py` | The wizard and settings pages behind `serve.py` |
 | `data/network_monitor.db` | SQLite database of everything collected |
 | `routers.json` | Optional list of extra routers/access points to monitor by name (with optional floor) |
-| `devices.json` | Optional MAC → friendly-name mapping for the device table and new-device alerts |
+| `devices.json` | Optional MAC → name mapping for the device table and new-device alerts; entries can also carry an IoT `type` and `watch` flag (see "IoT devices" above) |
 | `config.json` | Optional house/dashboard settings: title, floors, thresholds, plan speeds |
 | `scan_routers.py` | One-off diagnostic: scans your LAN for devices with a web admin port open, to help you find router IPs |
 | `diagnose.py` | Builds a diagnostics zip for remote troubleshooting |

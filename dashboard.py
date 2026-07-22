@@ -65,12 +65,12 @@ MONITOR_GAP_MIN = 5
 # work time (e.g. a 15s router setting yields ~30s with ARP fallbacks).
 INTERVAL_DEFAULTS = {
     "ping": 15, "router": 15, "wifi": 300, "devices": 300,
-    "speedtest": 1800, "public_ip": 600, "dns": 60,
+    "speedtest": 1800, "public_ip": 600, "dns": 60, "iot": 30,
 }
 INTERVAL_BOUNDS = {
     "ping": (5, 300), "router": (10, 600), "wifi": (60, 3600),
     "devices": (60, 3600), "speedtest": (600, 24 * 3600),
-    "public_ip": (120, 3600), "dns": (15, 900),
+    "public_ip": (120, 3600), "dns": (15, 900), "iot": (10, 600),
 }
 
 
@@ -289,6 +289,12 @@ def main():
             target_class TEXT NOT NULL, failed_checks INTEGER NOT NULL
         )"""
     )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS iot_pings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, mac TEXT NOT NULL,
+            name TEXT, ip TEXT, success INTEGER NOT NULL, latency_ms REAL, method TEXT
+        )"""
+    )
     conn.commit()
 
     pings = q(conn, "SELECT ts, target, target_type, success, latency_ms, sent, received FROM pings WHERE ts >= ? ORDER BY ts", (since,))
@@ -373,15 +379,69 @@ def main():
             f"SELECT ts AS t, COUNT(DISTINCT mac) AS v FROM devices WHERE {count_where} GROUP BY ts ORDER BY ts",
             tuple(count_params))
 
-    # Friendly device names from devices.json ({"mac": "name"}).
+    # Friendly device names from devices.json. Values are a plain name
+    # string or {"name", "type", "watch"} for IoT devices — this normalizer
+    # mirrors monitor.py's _device_meta_from_value / IOT_TYPES (no-imports
+    # rule — update together).
+    IOT_TYPES = ("camera", "intercom", "printer", "light", "plug", "speaker", "tv", "other")
+
     def norm_mac(mac):
         parts = str(mac).strip().lower().split(":")
         if len(parts) == 6:
             return ":".join(p.zfill(2) for p in parts)
         return str(mac).strip().lower()
-    device_names = {norm_mac(k): str(v).strip() for k, v in load_json_config(DEVICE_NAMES_PATH, {}).items() if str(v).strip()}
+
+    device_meta = {}
+    for k, v in load_json_config(DEVICE_NAMES_PATH, {}).items():
+        if isinstance(v, dict):
+            name = str(v.get("name") or "").strip()
+            typ = str(v.get("type") or "").strip().lower() or None
+            if name:
+                device_meta[norm_mac(k)] = {"name": name,
+                                            "type": typ if typ in IOT_TYPES else None,
+                                            "watch": bool(v.get("watch"))}
+        elif str(v).strip():
+            device_meta[norm_mac(k)] = {"name": str(v).strip(), "type": None, "watch": False}
     for d in devices:
-        d["name"] = device_names.get(norm_mac(d["mac"]))
+        m = device_meta.get(norm_mac(d["mac"]))
+        d["name"] = m["name"] if m else None
+        d["type"] = m["type"] if m else None
+
+    # IoT section: every typed or watched devices.json entry. Watched ones
+    # carry live liveness from iot_pings; the rest ride the device-scan
+    # census (online/away + last seen). watch-without-type groups as
+    # 'other' client-side.
+    iot_rows = q(conn, "SELECT ts, mac, name, ip, success, latency_ms, method FROM iot_pings WHERE ts >= ? ORDER BY ts", (since,))
+    iot_last = {}          # mac -> latest iot_pings row
+    iot_ts_by_mac = {}     # mac -> [ts, ...] for the measured cadence
+    for r in iot_rows:
+        iot_last[r["mac"]] = r
+        iot_ts_by_mac.setdefault(r["mac"], []).append(r["ts"])
+    dev_by_mac = {norm_mac(d["mac"]): d for d in devices}
+    iot_devices = []
+    for mac, m in device_meta.items():
+        if not m["type"] and not m["watch"]:
+            continue
+        dv = dev_by_mac.get(mac)
+        last = iot_last.get(mac)
+        iot_devices.append({
+            "mac": mac, "name": m["name"], "type": m["type"], "watch": m["watch"],
+            "ip": (last["ip"] if last else None) or (dv["ip"] if dv else None),
+            # watched liveness (None/'never' until the first probe lands)
+            "status": (("up" if last["success"] else "down") if last else "never") if m["watch"] else None,
+            "latency": last["latency_ms"] if last else None,
+            "method": last["method"] if last else None,
+            "last_check": last["ts"] if last else None,
+            "measured": median_gap(iot_ts_by_mac.get(mac, [])),
+            # scan-derived presence (used for unwatched rows)
+            "online": dv["online"] if dv else None,
+            "last_seen": dv["last_seen"] if dv else None,
+        })
+    # type order first (the client renders one group per type, in this
+    # order), watched rows before unwatched within a group, then name
+    type_rank = {t: i for i, t in enumerate(IOT_TYPES)}
+    iot_devices.sort(key=lambda x: (type_rank.get(x["type"] or "other", 99), not x["watch"], x["name"].lower()))
+    iot_last_check = max((r["ts"] for r in iot_rows), default=None)
 
     # ISP evidence report: throttled, and a failure here must never take the
     # dashboard down with it — the report is a bonus artifact.
@@ -905,6 +965,7 @@ def main():
         "topology": topology,
         "devices": devices,
         "last_device_scan_ts": last_scan_ts,
+        "iot_devices": iot_devices,
         # Per-source "when did this last run" timestamps for the cadence
         # footers (command · age · frequency on every card). Frequencies are
         # hardcoded in the JS to mirror monitor.py's *_INTERVAL_SEC constants.
@@ -917,6 +978,7 @@ def main():
             "wifi": wifi[-1]["ts"] if wifi else None,
             "public_ip": ip_last_check,
             "devices": last_scan_ts,
+            "iot": iot_last_check,
             # which sweep the device scan actually uses (monitor.py checks
             # nmap every cycle; same PATH here, so this matches in practice)
             "device_cmd": "nmap sweep + arp" if shutil.which("nmap") else "ping sweep + arp",
@@ -936,6 +998,9 @@ def main():
                 "wifi": median_gap([w["ts"] for w in wifi]),
                 "public_ip": median_gap([r["ts"] for r in public_ip_rows]),
                 "devices": median_gap([d["t"] for d in device_count_series]),
+                # one shared footer for the section: cadence of the whole
+                # pass, i.e. any watched device's samples
+                "iot": median_gap([r["ts"] for r in iot_rows if r["mac"] == iot_rows[-1]["mac"]]) if iot_rows else None,
             },
         },
     }
@@ -1231,6 +1296,16 @@ def build_html(data):
   .status-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 6px currentColor; }
   .status-pill.small { font-size: 10.5px; padding: 3px 9px 3px 8px; letter-spacing: .08em; border-radius: 6px; box-shadow:none; }
   .status-pill.small .status-dot { box-shadow:none; }
+  /* sage variant for "Online · silent" (probe/arp tier) — same decoder as the map */
+  .status-silent-pill { background: var(--status-good-bg); color: var(--status-silent); }
+  /* small muted type tag next to a device name (camera / printer / ...) */
+  .dev-type { display:inline-block; margin-left:7px; padding:1px 6px; border-radius:5px; font-size:9.5px;
+    font-weight:700; font-family: var(--font-mono); letter-spacing:.08em; text-transform:uppercase;
+    color:var(--muted); background: var(--border-soft); vertical-align:1px; }
+  /* IoT table group header rows (one per type) */
+  .iot-group td { padding-top:14px; font-family: var(--font-mono); font-size:10px; font-weight:800;
+    letter-spacing:.14em; text-transform:uppercase; color:var(--muted); border-bottom:none; }
+  #iotTableWrap { overflow-x: auto; }
 
   section { margin-bottom: 34px; }
   section .section-head { display:flex; align-items:baseline; justify-content:space-between; margin-bottom: 12px;
@@ -1323,6 +1398,7 @@ def build_html(data):
   .badge-internet { color: var(--status-critical); } .badge-internet .dot { background: var(--status-critical); }
   .badge-degraded { color: var(--status-warning); } .badge-degraded .dot { background: color-mix(in srgb, var(--status-warning) 75%, black); }
   .badge-ipchange { color: var(--series-blue); } .badge-ipchange .dot { background: var(--series-blue); }
+  .badge-iot { color: var(--series-blue); } .badge-iot .dot { background: var(--series-blue); }
   .badge-newdevice { color: var(--series-green); } .badge-newdevice .dot { background: var(--series-green); }
   .badge-dns { color: var(--status-serious); } .badge-dns .dot { background: var(--status-serious); }
   tr.event-dns td:first-child { border-left-color: var(--status-serious); }
@@ -1732,8 +1808,20 @@ def build_html(data):
         <div class="legend-item"><span class="badge badge-dns"><span class="dot"></span>DNS failure</span><span>Name lookups were failing — sites won't load by name even though pings still work.</span></div>
         <div class="legend-item"><span class="badge badge-ipchange"><span class="dot"></span>Public IP changed</span><span>Informational — your ISP reassigned your address (common around brief reconnects).</span></div>
         <div class="legend-item"><span class="badge badge-newdevice"><span class="dot"></span>New device</span><span>A never-seen-before device joined the network — name it in <span class="mono">devices.json</span>.</span></div>
+        <div class="legend-item"><span class="badge badge-iot"><span class="dot"></span>IoT device down</span><span>A watched device (camera, printer, …) stopped answering — that device, not your internet; excluded from uptime.</span></div>
         <div class="legend-item"><span class="badge badge-gap"><span class="dot"></span>Monitoring paused</span><span>No data was collected (Mac asleep or monitor stopped) — not an outage, but not measured uptime either.</span></div>
       </div>
+    </div>
+  </section>
+
+  <section id="iotSection" style="display:none">
+    <div class="section-head">
+      <h2>IoT devices</h2>
+      <span class="section-note" id="iotNote"></span>
+    </div>
+    <div class="chart-card">
+      <div id="iotTableWrap"></div>
+      <div class="check-foot" id="cfIot"></div>
     </div>
   </section>
 
@@ -2004,6 +2092,11 @@ safely('check footers', function() {
   setCheckFoot('cfBufferbloat',  'ookla speedtest cli', C.speed, spd.freq, spd.approx);
   setCheckFoot('cfWifi',         C.wifi_cmd || 'wi-fi snapshot', C.wifi, wifi.freq, wifi.approx);
   setCheckFoot('cfDevices',      C.device_cmd || 'device scan', C.devices, dev.freq, dev.approx);
+  // only when something is watched — an empty freq would render "no data"
+  if ((DATA.iot_devices || []).some(d => d.watch)) {
+    const iot = checkEff('iot');
+    setCheckFoot('cfIot', 'ping / tcp / arp', C.iot, iot.freq, iot.approx);
+  }
   // per-router chart rides the router thread; freshest check + median of
   // the per-router measured cadences (they move together — one loop)
   const rs = DATA.router_summary || [];
@@ -2354,13 +2447,14 @@ safely('outages log', function() {
   const TL_COLOR = { outage: 'var(--status-critical)', dns: 'var(--status-serious)',
     slow: 'var(--status-warning)', device: 'var(--status-good)', ip: 'var(--series-blue)',
     paused: 'var(--muted)', wifi: 'var(--series-blue)', flap: 'var(--status-serious)',
-    tgt: 'var(--series-blue)' };
+    tgt: 'var(--series-blue)', iot: 'var(--series-blue)' };
   function classify(e) {
     let cat, label, badgeClass, rowClass, point = false;
     if (e.kind === 'outage' && e.scope === 'gateway') { cat='outage'; label='Gateway down'; badgeClass='badge-gateway'; rowClass='event-gateway'; }
     else if (e.kind === 'outage' && e.scope === 'router') { cat='outage'; label=(e.router_name||'Router')+' down'; badgeClass='badge-gateway'; rowClass='event-gateway'; }
     else if (e.kind === 'outage' && e.scope === 'dns') { cat='dns'; label='DNS failure'; badgeClass='badge-dns'; rowClass='event-dns'; }
     else if (e.kind === 'outage' && e.scope === 'target') { cat='tgt'; label=(e.router_name||'Target')+' unreachable'; badgeClass='badge-dns'; rowClass='event-dns'; }
+    else if (e.kind === 'outage' && e.scope === 'iot') { cat='iot'; label=(e.router_name||'IoT device')+' down'; badgeClass='badge-iot'; rowClass='event-ipchange'; }
     else if (e.kind === 'outage') { cat='outage'; label='Internet down'; badgeClass='badge-internet'; rowClass='event-internet'; }
     else if (e.kind === 'degraded') { cat='slow'; label='Slow / degraded'; badgeClass='badge-degraded'; rowClass='event-degraded'; }
     else if (e.kind === 'instability') { cat='flap'; label='Flapping'; badgeClass='badge-degraded'; rowClass='event-degraded'; }
@@ -2475,8 +2569,8 @@ safely('outages log', function() {
     `<span class="tlk"><i style="background:${c}"></i>${n}</span>`).join('');
 
   // ---- filter chips ----
-  const CAT_NAMES = { outage: 'Outages', dns: 'DNS', tgt: 'Targets', slow: 'Slow', flap: 'Flapping', device: 'Devices', ip: 'IP changes', wifi: 'Wi-Fi roams', paused: 'Paused' };
-  const CAT_ORDER = ['outage', 'dns', 'tgt', 'slow', 'flap', 'device', 'ip', 'wifi', 'paused'];
+  const CAT_NAMES = { outage: 'Outages', dns: 'DNS', tgt: 'Targets', iot: 'IoT', slow: 'Slow', flap: 'Flapping', device: 'Devices', ip: 'IP changes', wifi: 'Wi-Fi roams', paused: 'Paused' };
+  const CAT_ORDER = ['outage', 'dns', 'tgt', 'iot', 'slow', 'flap', 'device', 'ip', 'wifi', 'paused'];
   const counts = {};
   allEvents.forEach(e => { counts[e.cat] = (counts[e.cat] || 0) + 1; });
   const present = CAT_ORDER.filter(c => counts[c]);
@@ -2642,6 +2736,10 @@ if (!DATA.devices || DATA.devices.length === 0) {
     // column (a MAC column was the widest cell and forced side-scrolling
     // on phones, which is why it was banished to a tooltip for a while)
     const macLine = d.mac ? `<span class="dev-mac">${escapeHtml(d.mac)}</span>` : '';
+    // devices.json type (camera/printer/...) as a small tag — the device
+    // also appears in the IoT section above, but stays here so the scan
+    // counts and the devices-online chart keep matching the table
+    if (d.type) label += `<span class="dev-type">${escapeHtml(d.type)}</span>`;
     return `<tr${hidden ? ' style="display:none" data-away="1"' : ''}>
     <td><div class="device-name"><span class="device-icon">${deviceIcon}</span><span class="dev-id"><span>${label}</span>${macLine}</span></div></td>
     <td class="mono">${escapeHtml(d.ip)}</td>
@@ -2670,6 +2768,75 @@ if (!DATA.devices || DATA.devices.length === 0) {
     });
   }
 }
+
+// ---------- IoT devices ----------
+safely('iot devices', function() {
+  // Typed/watched devices from devices.json. Watched rows carry live
+  // liveness from the iot thread (same 4-tier ladder as routers, so the
+  // same "Online · web" / "Online · silent" decoding applies); unwatched
+  // rows ride the device-scan census. Section hidden when nothing is
+  // tagged — same pattern as the custom-targets card.
+  const list = DATA.iot_devices || [];
+  const sec = document.getElementById('iotSection');
+  if (!sec || !list.length) return;
+  sec.style.display = '';
+  const TYPE_LABEL = { camera: 'Cameras', intercom: 'Intercoms', printer: 'Printers', light: 'Lights',
+                       plug: 'Plugs', speaker: 'Speakers', tv: 'TVs', other: 'Other' };
+  const watched = list.filter(d => d.watch);
+  const downN = watched.filter(d => d.status === 'down').length;
+  document.getElementById('iotNote').textContent =
+    list.length + ' device' + (list.length === 1 ? '' : 's') + ' · ' + watched.length + ' watched'
+    + (downN ? ' · ' + downN + ' unreachable' : '');
+
+  function pill(d) {
+    if (d.watch) {
+      if (d.status === 'up') {
+        const silent = d.method === 'probe' || d.method === 'arp';
+        const txt = d.method === 'tcp' ? 'Online · web' : silent ? 'Online · silent' : 'Online';
+        return '<span class="status-pill small ' + (silent ? 'status-silent-pill' : 'status-up')
+          + '"><span class="status-dot"></span>' + txt + '</span>';
+      }
+      if (d.status === 'down') {
+        return '<span class="status-pill small status-down"><span class="status-dot"></span>Down</span>';
+      }
+      return '<span class="status-pill small" style="background:var(--border-soft);color:var(--muted)">Never seen</span>';
+    }
+    return d.online
+      ? '<span class="status-pill small status-up"><span class="status-dot"></span>Online</span>'
+      : '<span class="status-pill small" style="background:var(--border-soft);color:var(--muted)"><span class="status-dot"></span>Away</span>';
+  }
+  function lastCol(d) {
+    if (d.watch) {
+      if (!d.last_check) return 'waiting for first check';
+      const lat = d.latency != null ? Math.round(d.latency) + ' ms · ' : '';
+      return lat + timeSince(d.last_check) + ' ago';
+    }
+    if (d.online) return 'now';
+    return d.last_seen ? timeSince(d.last_seen) + ' ago' : '—';
+  }
+  const row = d => {
+    const macLine = '<span class="dev-mac">' + escapeHtml(d.mac) + '</span>';
+    const watchTag = d.watch ? '' : '<span class="dev-type" title="Not actively watched — status comes from the periodic device scan. Tick Watch in Settings → Devices for live checks.">scan only</span>';
+    return '<tr><td><div class="device-name"><span class="device-icon">' + deviceIcon + '</span>'
+      + '<span class="dev-id"><span><b>' + escapeHtml(d.name) + '</b>' + watchTag + '</span>' + macLine + '</span></div></td>'
+      + '<td class="mono">' + escapeHtml(d.ip || '—') + '</td>'
+      + '<td>' + pill(d) + '</td>'
+      + '<td>' + lastCol(d) + '</td></tr>';
+  };
+  // one group header per type, in the server's sort order
+  let html = '<table><thead><tr><th>Device</th><th>IP</th><th>Status</th><th>Latency · checked</th></tr></thead><tbody>';
+  let curType;
+  for (const d of list) {
+    const t = d.type || 'other';
+    if (t !== curType) {
+      curType = t;
+      html += '<tr class="iot-group"><td colspan="4">' + (TYPE_LABEL[t] || t) + '</td></tr>';
+    }
+    html += row(d);
+  }
+  html += '</tbody></table>';
+  document.getElementById('iotTableWrap').innerHTML = html;
+});
 
 // ---------- house map ----------
 safely('house map', function() {
@@ -3806,6 +3973,9 @@ def generate_report(conn, site_config):
         events = q(conn,
                    "SELECT start_ts, end_ts, kind, scope, note, router_name FROM events"
                    " WHERE kind IN ('outage','degraded')"
+                   # a dead camera/printer is not ISP evidence — keep IoT
+                   # outages out of the complaint document entirely
+                   " AND COALESCE(scope,'') != 'iot'"
                    " AND (start_ts >= ? OR end_ts >= ? OR end_ts IS NULL)"
                    " ORDER BY start_ts DESC", (since, since))
         speedtests = q(conn,

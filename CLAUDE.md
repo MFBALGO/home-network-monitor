@@ -68,7 +68,7 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
 
 ## Architecture / code map
 
-- `monitor.py` — always-on collector, 11 daemon threads (all intervals
+- `monitor.py` — always-on collector, 12 daemon threads (all intervals
   below are the defaults — config.json `intervals` overrides them, hot-
   reloaded): ping (gateway +
   1.1.1.1/8.8.8.8/9.9.9.9 every 15s — BURSTS of 3 per target via
@@ -80,7 +80,17 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   events + hourly neighbor scan into `wifi_scan`), device scan (5m),
   speedtest (30m, Ookla CLI; also captures ping.jitter,
   download/upload.latency.iqm = bufferbloat, packetLoss), public IP
-  (10m), router checks (15s per router), DNS health (60s; failing
+  (10m), router checks (15s per router), iot watch (30s; devices.json
+  entries with watch:true probed via the same check_router 4-tier
+  ladder, MAC-keyed with the IP re-resolved each pass from the devices
+  table + a live-ARP drift re-probe on failure, samples into
+  `iot_pings`; never-seen MACs are skipped silently; scope='iot'
+  outage events at detection outage_fails, HELD while the gateway is
+  unreachable so a dead monitor-PC link can't page once per camera;
+  un-watch/delete closes the event '[watch removed]'; excluded from
+  uptime, the report, and the diagnosis banner; alerts only via the
+  separate alerts.events.iot_outage key, default OFF — enabled_for
+  maps outage+scope=iot onto it), DNS health (60s; failing
   domains named in the event note; www.speedtest.net is IN the rotation
   deliberately — instruments the Ookla CLI's "Couldn't resolve host
   name" failure class; each cycle ALSO queries the gateway
@@ -199,7 +209,12 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   MAC as a muted mono sub-line under the device name — NOT a column,
   which was the widest cell and forced phone side-scroll; phone tables
   must fit without side-scroll since scrollbars are invisible),
-  `hide_ip_prefixes` drops matching devices. Chart colors
+  `hide_ip_prefixes` drops matching devices; "IoT devices" section
+  between the outage log and the devices table (hidden when nothing is
+  typed/watched, one group header per type, 4 columns so phones fit;
+  own outage-log category cat='iot'/"IoT" chip — hardDown filters
+  cat outage|dns so IoT is auto-excluded from the downtime chips; NOT
+  in the diagnosis banner, whose rules are all scope-filtered). Chart colors
   are baked at build time → charts fully re-render on theme change. Page
   scrollbars are hidden globally but scrolling still works — beware
   `overflow-x: clip` (it coerces overflow-y to clip and kills page
@@ -237,9 +252,13 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
 - `diagnose.py` — builds `netmon-diagnostics-*.zip` (report + logs tail
   + configs) for remote troubleshooting; `build_bundle()` is importable.
 - SQLite tables: `pings` (+sent/received burst counts), `router_pings`,
-  `devices`, `dns_checks` (+resolver), `events` (kinds: outage/degraded/
-  ip_change/new_device/wifi_roam/instability; +evidence JSON), `blips`
-  (micro-outages shorter than the outage threshold), `public_ip`,
+  `devices` (+idx_devices_mac for the iot MAC→IP lookups), `dns_checks`
+  (+resolver), `events` (kinds: outage/degraded/
+  ip_change/new_device/wifi_roam/instability; scopes incl. 'iot';
+  +evidence JSON), `blips`
+  (micro-outages shorter than the outage threshold), `iot_pings`
+  (watched-IoT liveness, MAC-keyed — deliberately NOT router_pings,
+  whose name-keyed history feeds the router-list fallback), `public_ip`,
   `speedtests`, `wifi`, `wifi_scan`, `topology_checks`.
   Schema changes go in BOTH guarded-ALTER migration lists (monitor.py
   init_db AND dashboard.py's defensive mirror).
@@ -274,7 +293,20 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
     deleted routers must not resurrect from router_pings history (they
     used to); the history-derived fallback only applies when the file
     is missing/empty.
-  - `devices.json` — {mac: friendly name}.
+  - `devices.json` — {mac: friendly name} OR {mac: {name, type?,
+    watch?}} for IoT devices (types camera/intercom/printer/light/plug/
+    speaker/tv/other; Settings → Devices has the Type dropdown + Watch
+    checkbox). Typed devices render in the dashboard's "IoT devices"
+    section grouped by type (watched rows show live ladder status with
+    the same "Online · web"/"Online · silent" decoding as routers,
+    sage .status-silent-pill; unwatched rows are "scan only" — census
+    online/away) and get a muted type tag in the main devices table
+    (which they deliberately stay in, so scan counts still match).
+    normalize_devices writes the COMPACT form back (plain string when
+    no type and watch off) so untouched entries stay byte-identical;
+    the string-or-object normalizer is mirrored in monitor.py
+    (_device_meta_from_value/IOT_TYPES), dashboard.py, and
+    settings_api.py — update together.
   - `config.json` — {title, floors[], underground_floors[],
     main_router_floor} + optional `hide_ip_prefixes` (deliberately has
     NO Settings-UI field — it confused users; hand-edit only, README
@@ -301,9 +333,11 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
     line's fault),
     `alerts`
     (see config.example.json; email password is plaintext — app
-    passwords only), `intervals` ({check: seconds} overriding
+    passwords only; events.iot_outage is the separate default-off
+    opt-in for watched-IoT outages — kind='outage' scope='iot' maps
+    onto it in enabled_for so it can't ride the plain outage toggle), `intervals` ({check: seconds} overriding
     monitor.py's INTERVAL_DEFAULTS — keys ping/router/dns/wifi/devices/
-    speedtest/public_ip; hot-reloaded per loop pass via the stamp-cached
+    iot/speedtest/public_ip; hot-reloaded per loop pass via the stamp-cached
     check_interval(), clamped to INTERVAL_BOUNDS, edited from the
     Settings General tab; bounds are mirrored in settings_api's
     validator and dashboard.py — update all three together).

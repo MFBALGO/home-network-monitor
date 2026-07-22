@@ -645,8 +645,10 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
 <div id="tab-devices" style="display:none">
   <div class="card">
     <div class="sub" style="margin-bottom:10px">Friendly names shown on the dashboard's device
-    table and in new-device alerts, keyed by MAC address.</div>
-    <table id="dTable"><tr><th>MAC address</th><th>Name</th><th></th></tr></table>
+    table and in new-device alerts, keyed by MAC address. Give a device a type (camera,
+    printer, ...) to group it in the dashboard's IoT section; tick Watch to actively check
+    it every ~30s and log outages when it stops answering.</div>
+    <table id="dTable"><tr><th>MAC address</th><th>Name</th><th>Type</th><th>Watch</th><th></th></tr></table>
     <div class="row" style="margin-top:10px"><button class="small" id="dAdd">+ Add device</button></div>
   </div>
   <div class="msg" id="dMsg"></div>
@@ -668,6 +670,7 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
       <label style="display:flex;align-items:center;gap:6px" title="Repeated micro-drops (each too short to be an outage) within an hour"><input type="checkbox" id="aEvInstability"> Flapping</label>
       <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="aEvNewDevice" checked> New devices</label>
       <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="aEvIpChange"> Public IP changes</label>
+      <label style="display:flex;align-items:center;gap:6px" title="Watched devices from the Devices tab (cameras, printers, ...) going unreachable"><input type="checkbox" id="aEvIot"> IoT devices (watched)</label>
     </div>
     <div class="row" style="margin-top:10px">
       <div><label>Min duration before alerting (seconds)</label>
@@ -759,6 +762,7 @@ const INTERVAL_CHECKS = [
   ['dns',       'DNS lookup',                              60,   [15, 30, 60, 120, 300, 900]],
   ['wifi',      'Wi-Fi signal snapshot',                   300,  [60, 120, 300, 600, 1800, 3600]],
   ['devices',   'Device scan',                             300,  [60, 120, 300, 600, 1800, 3600]],
+  ['iot',       'IoT device watch',                        30,   [10, 15, 30, 60, 120, 300, 600]],
   ['speedtest', 'Speed test',                              1800, [900, 1800, 3600, 10800, 21600, 43200, 86400]],
   ['public_ip', 'Public IP check',                         600,  [120, 300, 600, 1800, 3600]],
 ];
@@ -854,6 +858,7 @@ function loadAlerts() {
   document.getElementById('aEvInstability').checked = !!ev.instability;
   document.getElementById('aEvNewDevice').checked = ev.new_device !== false;
   document.getElementById('aEvIpChange').checked = !!ev.ip_change;
+  document.getElementById('aEvIot').checked = !!ev.iot_outage;
   document.getElementById('aMinDur').value = a.min_duration_sec != null ? a.min_duration_sec : '';
   document.getElementById('aCooldown').value = a.cooldown_minutes != null ? a.cooldown_minutes : '';
   document.getElementById('aQuietStart').value = (a.quiet_hours || {}).start || '';
@@ -882,6 +887,7 @@ function collectAlerts() {
     instability: document.getElementById('aEvInstability').checked,
     new_device: document.getElementById('aEvNewDevice').checked,
     ip_change: document.getElementById('aEvIpChange').checked,
+    iot_outage: document.getElementById('aEvIot').checked,
   };
   const md = parseFloat(document.getElementById('aMinDur').value);
   if (!isNaN(md)) a.min_duration_sec = md;
@@ -1127,16 +1133,26 @@ document.getElementById('rScan').onclick = async () => {
 };
 
 // ---- devices ----
-function deviceRow(mac, name) {
+// devices.json values: a plain name string, or {name, type, watch} for IoT
+// devices — mirrors monitor.py / settings_api.py IOT_TYPES.
+const IOT_TYPES = ['camera', 'intercom', 'printer', 'light', 'plug', 'speaker', 'tv', 'other'];
+function deviceRow(mac, value) {
+  const v = typeof value === 'string' ? {name: value} : (value || {});
+  const opts = ['<option value="">(none)</option>'].concat(IOT_TYPES.map(t =>
+    '<option value="' + t + '"' + (v.type === t ? ' selected' : '') + '>' +
+    t.charAt(0).toUpperCase() + t.slice(1) + '</option>')).join('');
   return '<tr>' +
     '<td><input type="text" class="d-mac mono" placeholder="aa:bb:cc:dd:ee:ff" value="' + esc(mac) + '"></td>' +
-    '<td><input type="text" class="d-name" value="' + esc(name) + '"></td>' +
+    '<td><input type="text" class="d-name" value="' + esc(v.name || '') + '"></td>' +
+    '<td><select class="d-type">' + opts + '</select></td>' +
+    '<td style="text-align:center"><input type="checkbox" class="d-watch"' + (v.watch ? ' checked' : '') +
+      ' title="Actively check every ~30s and log outages when it stops answering"></td>' +
     '<td><button class="small danger d-del">&#10005;</button></td></tr>';
 }
 function renderDevices() {
   document.getElementById('dTable').innerHTML =
-    '<tr><th>MAC address</th><th>Name</th><th></th></tr>' +
-    Object.entries(S.devices).map(([m, n]) => deviceRow(m, n)).join('');
+    '<tr><th>MAC address</th><th>Name</th><th>Type</th><th>Watch</th><th></th></tr>' +
+    Object.entries(S.devices).map(([m, v]) => deviceRow(m, v)).join('');
 }
 document.getElementById('dTable').onclick = (e) => {
   if (e.target.classList.contains('d-del')) e.target.closest('tr').remove();
@@ -1151,8 +1167,20 @@ document.getElementById('dSave').onclick = async () => {
   for (const tr of document.querySelectorAll('#dTable tr')) {
     const mac = tr.querySelector('.d-mac');
     if (!mac) continue;
-    if (mac.value.trim() || tr.querySelector('.d-name').value.trim()) {
-      devices[mac.value.trim()] = tr.querySelector('.d-name').value.trim();
+    const name = tr.querySelector('.d-name').value.trim();
+    const type = tr.querySelector('.d-type').value;
+    const watch = tr.querySelector('.d-watch').checked;
+    if (mac.value.trim() || name) {
+      // compact form: plain string unless IoT fields are set (the server
+      // normalizes the same way — keeps untouched entries byte-identical)
+      if (type || watch) {
+        const v = {name};
+        if (type) v.type = type;
+        if (watch) v.watch = true;
+        devices[mac.value.trim()] = v;
+      } else {
+        devices[mac.value.trim()] = name;
+      }
     }
   }
   const {status, data} = await api('/api/config', {devices});

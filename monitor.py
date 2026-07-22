@@ -87,6 +87,7 @@ INTERVAL_DEFAULTS = {
     "speedtest": SPEEDTEST_INTERVAL_SEC,
     "public_ip": PUBLIC_IP_CHECK_INTERVAL_SEC,
     "dns": DNS_CHECK_INTERVAL_SEC,
+    "iot": 30,                      # watched IoT device liveness cadence
 }
 INTERVAL_BOUNDS = {         # seconds: (min, max)
     "ping": (5, 300),
@@ -96,6 +97,7 @@ INTERVAL_BOUNDS = {         # seconds: (min, max)
     "speedtest": (600, 24 * 3600),  # a test moves real data — don't spam
     "public_ip": (120, 3600),
     "dns": (15, 900),
+    "iot": (10, 600),
 }
 
 # Domains used to test DNS resolution (rotated one per check). Large,
@@ -276,6 +278,9 @@ def init_db():
             hostname TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_devices_ts ON devices(ts);
+        -- iot_loop resolves each watched MAC's latest IP every ~30s; without
+        -- this the MAX(id) GROUP BY mac subquery scans the whole snapshot log
+        CREATE INDEX IF NOT EXISTS idx_devices_mac ON devices(mac);
 
         CREATE TABLE IF NOT EXISTS wifi (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -321,6 +326,24 @@ def init_db():
             failed_checks INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_blips_ts ON blips(ts);
+
+        -- watched-IoT-device liveness samples (devices.json entries with
+        -- "watch": true). Keyed by MAC — the stable identity — with the
+        -- IP resolved per pass, so DHCP drift doesn't fork history.
+        -- Deliberately NOT router_pings: that table is name-keyed and the
+        -- dashboard derives a fallback router list from its history, so
+        -- IoT rows there would resurrect as phantom routers.
+        CREATE TABLE IF NOT EXISTS iot_pings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            mac TEXT NOT NULL,
+            name TEXT,
+            ip TEXT,
+            success INTEGER NOT NULL,
+            latency_ms REAL,
+            method TEXT              -- icmp/tcp/probe/arp, like router_pings
+        );
+        CREATE INDEX IF NOT EXISTS idx_iot_pings_ts ON iot_pings(ts);
 
         -- daily traceroute-based double-NAT check (~1 row/day, kept forever)
         CREATE TABLE IF NOT EXISTS topology_checks (
@@ -437,23 +460,55 @@ def load_routers():
         return []
 
 
-def load_device_names():
-    """Optional user-editable devices.json: a plain {"mac": "Friendly name"}
-    mapping used to label devices on the dashboard and in new-device
-    events. Returns {} if missing/malformed — names are nice-to-have."""
+# devices.json values are either a plain friendly-name string (the original
+# format) or an object {"name": ..., "type": "camera", "watch": true} for
+# IoT categorization / active watching. This normalizer is mirrored in
+# dashboard.py and settings_api.py (the three deliberately don't import
+# each other — partial installs run any one alone); update all together.
+IOT_TYPES = ("camera", "intercom", "printer", "light", "plug", "speaker", "tv", "other")
+
+
+def _device_meta_from_value(value):
+    """One devices.json value -> {"name", "type", "watch"} or None."""
+    if isinstance(value, str):
+        name = value.strip()
+        return {"name": name, "type": None, "watch": False} if name else None
+    if isinstance(value, dict):
+        name = str(value.get("name") or "").strip()
+        if not name:
+            return None
+        typ = str(value.get("type") or "").strip().lower() or None
+        return {"name": name,
+                "type": typ if typ in IOT_TYPES else None,
+                "watch": bool(value.get("watch"))}
+    return None
+
+
+def load_device_meta():
+    """Optional user-editable devices.json, normalized to
+    {mac: {"name", "type", "watch"}}. Returns {} if missing/malformed —
+    names/types are nice-to-have, and iot_loop treats {} as 'watch nothing'."""
     if not os.path.exists(DEVICE_NAMES_PATH):
         return {}
     try:
         with open(DEVICE_NAMES_PATH, encoding="utf-8") as f:
             raw = json.load(f)
-        return {
-            _normalize_mac(str(mac).strip().lower()): str(name).strip()
-            for mac, name in raw.items()
-            if str(name).strip()
-        }
+        meta = {}
+        for mac, value in raw.items():
+            m = _device_meta_from_value(value)
+            if m:
+                meta[_normalize_mac(str(mac).strip().lower())] = m
+        return meta
     except Exception as e:
         log_error(f"failed to load devices.json ({e}) — friendly device names disabled")
         return {}
+
+
+def load_device_names():
+    """Name-only view over load_device_meta() — keeps new-device event
+    labels working unchanged (a raw dict value must never reach a note as
+    its Python repr)."""
+    return {mac: m["name"] for mac, m in load_device_meta().items()}
 
 
 # ---------------------------------------------------------------------------
@@ -1218,6 +1273,33 @@ def scan_devices():
     return devices
 
 
+def arp_table():
+    """Quick {mac: ip} snapshot of the live ARP cache — the same parsing as
+    scan_devices() minus hostname resolution, cheap enough to run on demand.
+    Used by iot_loop to catch DHCP drift: a watched MAC that stopped
+    answering at its last-known IP may simply have leased a new one."""
+    table = {}
+    arp_cmd = ["arp", "-a"] if IS_WINDOWS else ["arp", "-an"]
+    try:
+        result = subprocess.run(arp_cmd, capture_output=True, text=True, timeout=15, **SUBPROCESS_EXTRA)
+        for line in result.stdout.splitlines():
+            if IS_WINDOWS:
+                m = re.match(r"\s*(\d+\.\d+\.\d+\.\d+)\s+(([0-9a-fA-F]{2}-){5}[0-9a-fA-F]{2})\s", line)
+                if m:
+                    ip, mac = m.group(1), m.group(2).replace("-", ":")
+                    if not _is_multicast_or_broadcast(ip, mac):
+                        table[_normalize_mac(mac)] = ip
+                continue
+            m = re.match(r"(\S+)?\s*\(([\d.]+)\)\s+at\s+([0-9a-fA-F:]+)", line)
+            if m:
+                ip, mac = m.group(2), m.group(3)
+                if not _is_multicast_or_broadcast(ip, mac):
+                    table[_normalize_mac(mac)] = ip
+    except Exception as e:
+        log_error(f"arp_table failed: {e!r}")
+    return table
+
+
 # ---------------------------------------------------------------------------
 # Speed test (optional)
 # ---------------------------------------------------------------------------
@@ -1875,6 +1957,150 @@ def router_loop(conn, routers, gateway=None):
 
 
 # ---------------------------------------------------------------------------
+# Watched IoT devices (devices.json entries with "watch": true)
+# ---------------------------------------------------------------------------
+
+def _devices_file_stamp():
+    """(mtime, size) of devices.json for hot reload — same idiom as
+    _routers_file_stamp; the settings UI writes the file atomically."""
+    try:
+        st = os.stat(DEVICE_NAMES_PATH)
+        return (st.st_mtime, st.st_size)
+    except OSError:
+        return None
+
+
+def _watched_devices():
+    """The devices.json entries to actively watch: {mac: meta}."""
+    return {mac: m for mac, m in load_device_meta().items() if m["watch"]}
+
+
+def iot_loop(conn, gateway=None):
+    """Actively liveness-check watched IoT devices (cameras, intercoms, ...)
+    the way router_loop checks APs: the same 4-tier icmp→tcp→probe→arp
+    ladder (cameras are often ping-deaf but answer on their RTSP/web TCP
+    ports), per-device consecutive-fail tracking, and outage events with
+    scope='iot' (router_name carries the device's display name).
+
+    Devices are keyed by MAC (the stable identity); the IP is resolved each
+    pass from the latest device-scan snapshot, with a live ARP re-check on
+    failure to catch DHCP drift before counting a real fail. A MAC that has
+    never been seen anywhere is not probed and never events — a typo'd MAC
+    must not page forever.
+
+    False-positive guard: when a device crosses the open threshold, the
+    gateway is pinged first — if the monitor PC's own link is down, every
+    watched device "fails" at once, and that story belongs to the
+    gateway-outage event, not N bogus IoT outages. Fails keep counting
+    during the hold, so the event opens promptly once the gateway is back."""
+    watched = _watched_devices()
+    state = {}   # mac -> {"consecutive_fail", "open_event_id", "ip"}
+    stamp = _devices_file_stamp()
+    if watched:
+        desc = ", ".join(f"{m['name']}={mac}" for mac, m in watched.items())
+        log(f"iot watch starting: [{desc}]")
+
+    while True:
+        new_stamp = _devices_file_stamp()
+        if new_stamp != stamp:
+            stamp = new_stamp
+            new_watched = _watched_devices()
+            # Un-watching/deleting a device mid-outage would leave a
+            # permanent "Ongoing" event — close it out, noting why.
+            for mac, st in state.items():
+                if mac not in new_watched and st["open_event_id"] is not None:
+                    db_execute(
+                        conn,
+                        "UPDATE events SET end_ts=?, note = note || ' [watch removed]' WHERE id=?",
+                        (now_iso(), st["open_event_id"]),
+                    )
+            state = {mac: state.get(mac, {"consecutive_fail": 0, "open_event_id": None, "ip": None})
+                     for mac in new_watched}
+            watched = new_watched
+            desc = ", ".join(f"{m['name']}={mac}" for mac, m in watched.items()) if watched else "none"
+            log(f"devices.json changed — iot watch now: [{desc}]")
+
+        if not watched:
+            time.sleep(check_interval("iot"))
+            continue
+
+        # Resolve MAC -> IP from the device-scan census (one query for all;
+        # the mac IN filter inside the subquery keeps it on idx_devices_mac
+        # instead of aggregating the whole 90-day snapshot log).
+        placeholders = ",".join("?" * len(watched))
+        macs = tuple(watched.keys())
+        try:
+            rows = db_query(
+                conn,
+                f"SELECT mac, ip FROM devices WHERE id IN "
+                f"(SELECT MAX(id) FROM devices WHERE mac IN ({placeholders}) GROUP BY mac)",
+                macs)
+            known_ips = {r[0]: r[1] for r in rows if r[1]}
+        except sqlite3.Error as e:
+            log_error(f"iot ip resolution query failed: {e!r}")
+            known_ips = {}
+
+        # At most one live `arp -a` per pass, fetched lazily on first need.
+        live_arp = None
+
+        def _live_arp():
+            nonlocal live_arp
+            if live_arp is None:
+                live_arp = arp_table()
+            return live_arp
+
+        for mac, meta in watched.items():
+            st = state.setdefault(mac, {"consecutive_fail": 0, "open_event_id": None, "ip": None})
+            ip = known_ips.get(mac) or st["ip"]
+            if not ip:
+                # Never seen by any scan yet — check the live ARP cache
+                # (covers a brand-new device between sweeps), else skip:
+                # no rows, no events, dashboard shows "Never seen".
+                ip = _live_arp().get(mac)
+                if not ip:
+                    continue
+            if gateway and ip == gateway:
+                # Someone watch-flagged the house router itself — the
+                # gateway ping thread already covers it (combo-box analog);
+                # probing here would double every outage.
+                continue
+            ts = now_iso()
+            ok, latency, method = check_router(ip)
+            if not ok:
+                # DHCP drift check: did the MAC move to a different IP?
+                fresh_ip = _live_arp().get(mac)
+                if fresh_ip and fresh_ip != ip:
+                    ip = fresh_ip
+                    ok, latency, method = check_router(ip)
+            st["ip"] = ip
+            db_execute(
+                conn,
+                "INSERT INTO iot_pings (ts, mac, name, ip, success, latency_ms, method) VALUES (?,?,?,?,?,?,?)",
+                (ts, mac, meta["name"], ip, int(ok), latency, method),
+            )
+
+            if ok:
+                st["consecutive_fail"] = 0
+                if st["open_event_id"] is not None:
+                    db_execute(conn, "UPDATE events SET end_ts=? WHERE id=?", (ts, st["open_event_id"]))
+                    st["open_event_id"] = None
+            else:
+                st["consecutive_fail"] += 1
+                if st["consecutive_fail"] >= detection("outage_fails") and st["open_event_id"] is None:
+                    if gateway and not ping_once(gateway)[0]:
+                        continue   # hold: our own link is down, not the device
+                    note = f"{meta['name']} ({ip}, {mac}) unreachable"
+                    cur = db_execute(
+                        conn,
+                        "INSERT INTO events (start_ts, kind, scope, note, router_name) VALUES (?,?,?,?,?)",
+                        (ts, "outage", "iot", note, meta["name"]),
+                    )
+                    st["open_event_id"] = cur.lastrowid
+
+        time.sleep(check_interval("iot"))
+
+
+# ---------------------------------------------------------------------------
 # Command rail (web -> monitor) and on-demand tests
 #
 # The web process (serve.py/settings_api) and this monitor share no memory
@@ -2338,7 +2564,7 @@ ALERT_DEFAULTS = {
     "cooldown_minutes": 5,      # per-(kind,scope,router) repeat suppression
     "quiet_hours": None,        # {"start": "23:00", "end": "07:00"} local
     "events": {"outage": True, "degraded": False, "new_device": True, "ip_change": False,
-               "instability": False},
+               "instability": False, "iot_outage": False},
     "channels": {
         "toast": {"enabled": True},
         "webhook": {"enabled": False, "url": "", "format": "json"},
@@ -2486,7 +2712,8 @@ def _event_headline(row):
         return {"gateway": "Main router is unreachable — local problem, not the ISP",
                 "internet": "Internet is DOWN (router is fine — ISP side)",
                 "dns": "DNS is failing — websites won't load by name",
-                "target": f'"{rn or "?"}" is unreachable (your custom target — their end, not your line)'}.get(
+                "target": f'"{rn or "?"}" is unreachable (your custom target — their end, not your line)',
+                "iot": f'IoT device "{rn or "?"}" is down'}.get(
                     scope, f'Access point "{rn or "?"}" is down')
     if kind == "degraded":
         return "Connection is up but degraded (high latency or packet loss)"
@@ -2524,8 +2751,12 @@ def alert_loop(conn):
     cfg = load_alerts_config()
     cfg_stamp = _file_stamp(CONFIG_PATH)
 
-    def enabled_for(kind):
-        return cfg.get("enabled") and cfg.get("events", {}).get(kind, False)
+    def enabled_for(row):
+        """Takes the event row, not just the kind: IoT-device outages have
+        kind='outage' but their own opt-in key, so a dead lightbulb can't
+        ride the 'Outages' checkbox meant for the internet/APs."""
+        key = "iot_outage" if row["kind"] == "outage" and row["scope"] == "iot" else row["kind"]
+        return cfg.get("enabled") and cfg.get("events", {}).get(key, False)
 
     def notify(title, message, meta, event_id=None, kind="open"):
         quiet = in_quiet_hours(cfg)
@@ -2581,7 +2812,7 @@ def alert_loop(conn):
                        "scope": r[4], "note": r[5], "router_name": r[6]}
                 last_max_id = max(last_max_id, row["id"])
                 if row["kind"] in ("new_device", "ip_change", "wifi_roam"):
-                    if enabled_for(row["kind"]):
+                    if enabled_for(row):
                         if row["kind"] == "new_device":
                             new_devices.append(row)   # batched below
                         else:
@@ -2606,7 +2837,7 @@ def alert_loop(conn):
                 key = (ev["kind"], ev["scope"], ev["router_name"])
                 if end_ts is None:
                     # still open: alert once it has outlived min_duration
-                    if (not st["open_alerted"] and enabled_for(ev["kind"])
+                    if (not st["open_alerted"] and enabled_for(ev)
                             and age >= cfg.get("min_duration_sec", 60)
                             and time.time() - cooldowns.get(key, 0) > cfg.get("cooldown_minutes", 5) * 60):
                         st["open_alerted"] = True
@@ -2624,7 +2855,7 @@ def alert_loop(conn):
                     for item in list(queue):
                         if item["event_id"] == eid and item["kind"] == "open":
                             queue.remove(item)
-                    if st["open_alerted"] and enabled_for(ev["kind"]):
+                    if st["open_alerted"] and enabled_for(ev):
                         local_s = start.astimezone().strftime("%H:%M")
                         local_e = datetime.fromisoformat(end_ts).astimezone().strftime("%H:%M")
                         notify("Home Network Monitor — recovered",
@@ -2648,7 +2879,7 @@ def retention_loop(conn):
     ~23k rows/day (~8M rows/year) — without pruning the DB grows without
     bound and dashboard queries slowly degrade. Events and speedtests are
     small and kept forever."""
-    tables = ["pings", "router_pings", "wifi", "devices", "public_ip", "dns_checks", "wifi_scan", "blips"]
+    tables = ["pings", "router_pings", "wifi", "devices", "public_ip", "dns_checks", "wifi_scan", "blips", "iot_pings"]
     while True:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).isoformat()
         for table in tables:
@@ -2676,6 +2907,7 @@ def main():
         threading.Thread(target=speedtest_loop, args=(conn,), daemon=True),
         threading.Thread(target=public_ip_loop, args=(conn,), daemon=True),
         threading.Thread(target=router_loop, args=(conn, routers, gateway), daemon=True),
+        threading.Thread(target=iot_loop, args=(conn, gateway), daemon=True),
         threading.Thread(target=dns_loop, args=(conn, gateway), daemon=True),
         threading.Thread(target=retention_loop, args=(conn,), daemon=True),
         threading.Thread(target=command_loop, args=(conn,), daemon=True),

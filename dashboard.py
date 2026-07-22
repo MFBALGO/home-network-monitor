@@ -1319,6 +1319,9 @@ def build_html(data):
      (stacked on phones; left card takes the full row when no IoT
      devices are tagged) */
   .dev-cols { display:grid; grid-template-columns: 1fr 1fr; gap:12px; align-items:start; }
+  /* dev-cols isn't a .chart-card, so the card+card margin rule skips it —
+     without this the devices-online chart sat flush against the tables */
+  .chart-card + .dev-cols { margin-top: 12px; }
   .dev-cols.no-iot { grid-template-columns: 1fr; }
   @media (max-width: 940px) { .dev-cols { grid-template-columns: 1fr; } }
   /* MAC gets its own column on wide screens; on phones the column (and

@@ -811,7 +811,6 @@ const INTERVAL_CHECKS = [
   ['ping',      'Internet ping (uptime, latency, jitter)', 15,   [5, 10, 15, 30, 60, 120, 300]],
   ['router',    'Router / access point checks',            15,   [10, 15, 30, 60, 120, 300]],
   ['dns',       'DNS lookup',                              60,   [15, 30, 60, 120, 300, 900]],
-  ['wifi',      'Wi-Fi signal snapshot',                   300,  [60, 120, 300, 600, 1800, 3600]],
   ['devices',   'Device scan',                             300,  [60, 120, 300, 600, 1800, 3600]],
   ['iot',       'IoT device watch',                        30,   [10, 15, 30, 60, 120, 300, 600]],
   ['speedtest', 'Speed test',                              1800, [900, 1800, 3600, 10800, 21600, 43200, 86400]],
@@ -1158,7 +1157,14 @@ document.getElementById('gSave').onclick = async () => {
     if (Object.keys(entry).length) th[key] = entry;
   }
   if (Object.keys(th).length) cfg.thresholds = th; else delete cfg.thresholds;
+  // carry through interval keys with no UI row (e.g. wifi — the monitor
+  // still honors it, the row was just dropped from the page): rebuilding
+  // from the rows alone would silently delete them
   const iv = {};
+  const existingIv = S.config.intervals || {};
+  for (const k of Object.keys(existingIv)) {
+    if (!INTERVAL_CHECKS.some(c => c[0] === k)) iv[k] = existingIv[k];
+  }
   for (const [key] of INTERVAL_CHECKS) {
     const v = parseInt(document.getElementById('iv-' + key).value, 10);
     if (!isNaN(v)) iv[key] = v;   // empty = use the default, stored as absent

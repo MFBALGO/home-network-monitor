@@ -204,11 +204,14 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   in the tooltip); Chart.js
   charts (vendored) with threshold reference lines and the speed chart
   pinned to 0..plan+100 so the plan lines stay visible — chart ranges
-  are PER-CHART (`chartRange` map + `rangeFor(key)`, a mini 24h/7d
+  are PER-CHART (`chartRange` map + `rangeFor(key)`, a mini 3h/24h/7d
   toggle in each card's `.card-tools` corner) plus a topbar
   `#globalRange` toggle that sets them all (lit only while every chart
-  agrees); ONE `RANGE_CHARTS` registry feeds both the toggles and
-  rerenderCharts (replaces the two hand-maintained renderer lists);
+  agrees); the load-time default is config `default_range_hours`
+  (3|24|168, Settings → General select, omitted when 3 = built-in
+  default; served in the payload → `DEFAULT_RANGE`); ONE `RANGE_CHARTS`
+  registry feeds both the toggles and rerenderCharts (replaces the two
+  hand-maintained renderer lists);
   `timeScale(hours)`/`rangeWord(hours)` take params. The Wi-Fi signal
   chart was REMOVED (his call; monitor still collects wifi snapshots —
   roam events/timeline category stay; a legacy thresholds.wifi config
@@ -216,11 +219,14 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   cards have "Check now" buttons riding the one-test-at-a-time command
   rail (quick = ping+DNS, speed = full test; on-demand results are
   written to the SAME DB tables, so they appear on the charts on the
-  next regen; inline note is instant) — chart TOOLTIPS are
-  enabled:false + an external handler rendering the tooltip model into
-  ONE `.chart-tip` panel FIXED to the viewport's right edge, vertical
-  rows (phones: bottom-right; per-chart label callbacks still
-  apply); the
+  next regen; inline note is instant), and the devices section head has
+  a "Scan now" button → POST /api/devices/scan (in serve.py's LAN_API
+  carve-out; 60s cooldown/409 server-side) polling the shared status
+  file — chart TOOLTIPS are enabled:false + an external handler
+  rendering the tooltip model into a per-card `.chart-tip` panel that
+  TRACKS THE CURSOR's x (caretX, clamped) while pinned BELOW the
+  `.chart-box`, so it never covers the plot (per-chart label callbacks
+  still apply); the
   timeline is CLICKABLE (rows and timeline marks share a startMs|cat
   `data-ev` key → scroll+flash the row, auto-reset filter / expand
   "older"), summary chips click through to their filter pill, log rows
@@ -230,18 +236,22 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   cards accept the mouse while shown — hide is on a 250ms delay), a
   plain-language <title> decoder on the status line, and the map
   re-renders on resize across the 520px compact threshold
-  (renderHouseMap is a named function); a fixed `.quick-nav` jump bar
-  (Map/Charts/Outages/Devices → `#sec-*` ids) slides in past 480px
-  scroll; devices table with friendly names from
+  (renderHouseMap is a named function); TWO `.quick-nav` jump bars
+  share delegated clicks — a static always-visible one under the topbar
+  and the fixed one sliding in past 480px scroll
+  (Map/Latency/Speed/Outages/Devices → `#sec-*` ids incl. `sec-speed`);
+  devices table with friendly names from
   devices.json (online rows first, away rows collapsed behind a toggle;
   a `#devSearch` live filter matches name/hostname/IP/MAC and shows
   away matches too; first_seen within 24h ⇒ green "new" tag;
   MAC as a muted mono sub-line under the device name — NOT a column,
   which was the widest cell and forced phone side-scroll; phone tables
   must fit without side-scroll since scrollbars are invisible),
-  `hide_ip_prefixes` drops matching devices; "IoT devices" section
-  between the outage log and the devices table (hidden when nothing is
-  typed/watched; a dense `.iot-grid` chip grid — one compact chip per
+  `hide_ip_prefixes` drops matching devices; IoT devices live INSIDE
+  the devices section as the right column of `.dev-cols` (devices chart
+  on top, all-devices table left 3fr / `#iotCard` right 2fr; right card
+  hidden + `no-iot` full-width left when nothing is typed/watched;
+  stacked <940px; a dense `.iot-grid` chip grid — one compact chip per
   device with type tag + status pill, MAC/IP in the hover title;
   own outage-log category cat='iot'/"IoT" chip — hardDown filters
   cat outage|dns so IoT is auto-excluded from the downtime chips; NOT
@@ -272,7 +282,11 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   GET /api/config for the Devices tab, plus `device_scan_cmd()` (the
   human-readable scan command shown by the Devices tab's scan button —
   mirrors monitor.py's nmap-else-ping-sweep decision, served as
-  meta.scan_cmd) and POST /api/devices/scan → writes an
+  meta.scan_cmd; `router_scan_cmd()` similarly discloses the Routers-tab
+  scan pipeline as meta.router_scan_cmd, both sharing `_subnet_label()`
+  built on scan_routers.get_own_ip_and_prefix) and POST
+  /api/devices/scan (LAN-reachable via serve.py's LAN_API; guarded like
+  start_test — 409 while running, 60s cooldown → 429) → writes an
   action:"scan_now" command; monitor.py's command_loop runs
   run_device_scan (the extracted device_loop body, state-dict + lock so
   the scheduled cycle and on-demand path share the new-device baseline
@@ -289,7 +303,10 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   row-button clicks set a dirty flag (amber dot on the tab,
   beforeunload warning; saves/test-alert/scan/filter box exempt),
   cleared by that tab's successful save. The Devices tab renders the
-  CENSUS union: one row per seen device (numeric-IP-ascending sort;
+  CENSUS union — KNOWN devices by default (entry/manual/typed rows),
+  "Show all N seen devices" or any search query reveals the full census
+  (visibility-based, not a re-render, so unsaved edits survive): one
+  row per seen device (numeric-IP-ascending sort;
   hostname as name-input placeholder, mono context line; the ✕ renders
   only when the row HAS an entry, and clearing fades the row + "entry
   forgotten on save" note — reversed by typing) + a Scan-for-devices-now
@@ -394,7 +411,10 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
     (see config.example.json; email password is plaintext — app
     passwords only; events.iot_outage is the separate default-off
     opt-in for watched-IoT outages — kind='outage' scope='iot' maps
-    onto it in enabled_for so it can't ride the plain outage toggle), `intervals` ({check: seconds} overriding
+    onto it in enabled_for so it can't ride the plain outage toggle),
+    `default_range_hours` (3|24|168 — the dashboard charts' load-time
+    range; Settings → General select; omitted when 3, the built-in
+    default), `intervals` ({check: seconds} overriding
     monitor.py's INTERVAL_DEFAULTS — keys ping/router/dns/wifi/devices/
     iot/speedtest/public_ip; hot-reloaded per loop pass via the stamp-cached
     check_interval(), clamped to INTERVAL_BOUNDS, edited from the

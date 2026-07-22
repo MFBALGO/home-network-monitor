@@ -169,6 +169,20 @@ def check_for_update(site_config):
                     release = json.loads(resp.read().decode("utf-8", errors="ignore"))
                 state["latest_tag"] = release.get("tag_name")
                 state["html_url"] = release.get("html_url")
+                # extras for the banner's what's-new section and update.py's
+                # one-click download (same cache file; update.py refreshes
+                # the same keys on its own checks)
+                state["notes"] = (release.get("body") or "")[:8000]
+                state["published_at"] = release.get("published_at") or ""
+                state["zip_url"] = ""
+                for asset in release.get("assets") or []:
+                    name = (asset.get("name") or "").lower()
+                    url = asset.get("browser_download_url") or ""
+                    if name == "netmon-share.zip" and url:
+                        state["zip_url"] = url
+                        break
+                    if name.endswith(".zip") and url and not state["zip_url"]:
+                        state["zip_url"] = url
             except Exception:
                 pass  # offline, rate-limited, or no releases yet (404) — keep old info
             try:
@@ -182,7 +196,8 @@ def check_for_update(site_config):
         current = _parse_version(__version__)
         if latest and current and latest > current:
             return {"latest": ".".join(str(p) for p in latest),
-                    "url": state.get("html_url") or ""}
+                    "url": state.get("html_url") or "",
+                    "notes": state.get("notes") or ""}
         return None
     except Exception:
         return None
@@ -1558,6 +1573,12 @@ def build_html(data):
   .update-banner b { display:inline; margin:0; }
   .update-banner a { color: var(--accent); font-weight: 600; text-decoration: none; }
   .update-banner a:hover { text-decoration: underline; }
+  .update-banner details { margin-top: 7px; }
+  .update-banner summary { cursor: pointer; color: var(--accent); font-weight: 600; font-size: 12px; }
+  .upd-notes { font-family: var(--font-mono); font-size: 11.5px; white-space: pre-wrap;
+    margin: 6px 0 0; max-height: 220px; overflow-y: auto; color: var(--text-secondary); }
+  .upd-howto { font-size: 12.5px; margin: 6px 0 0; color: var(--text-secondary); }
+  .upd-howto code { font-family: var(--font-mono); font-size: 11.5px; }
 
   /* "What's wrong right now" verdict — one plain-language line + a
      recommended action, colored by severity. The single most important
@@ -1992,9 +2013,30 @@ if (DATA.update && DATA.update.latest) {
   const ub = document.getElementById('updateBanner');
   if (ub) {
     const link = DATA.update.url
-      ? ' <a href="' + escapeHtml(DATA.update.url) + '" target="_blank" rel="noopener">See what’s new &rarr;</a>' : '';
-    ub.innerHTML = 'This monitor is running v' + escapeHtml(DATA.version || '?')
+      ? ' <a href="' + escapeHtml(DATA.update.url) + '" target="_blank" rel="noopener">Release page &rarr;</a>' : '';
+    let html = 'This monitor is running v' + escapeHtml(DATA.version || '?')
       + ' — <b>v' + escapeHtml(DATA.update.latest) + ' is available.</b>' + link;
+    // release notes straight in the banner, so "should I bother?" doesn't
+    // require a trip to GitHub
+    if (DATA.update.notes) {
+      html += '<details><summary>What’s new</summary><div class="upd-notes">'
+        + escapeHtml(DATA.update.notes) + '</div></details>';
+    }
+    // updating only works from the monitor PC (Settings is localhost-only),
+    // so the instructions depend on where this page is being viewed
+    const isLocal = location.protocol === 'file:'
+      || ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+    const how = isLocal
+      ? 'Open <a href="/settings">Settings</a> → General → Updates → <b>Update now</b>.'
+        + ' The previous version is kept in <code>data/backup</code>, your settings and'
+        + ' history stay untouched, and the services restart themselves.'
+      : 'On the computer running the monitor, open <code>http://localhost:8080/settings</code>'
+        + ' → General → Updates → <b>Update now</b> (updating is deliberately not possible'
+        + ' from other devices). Or, in the monitor’s folder on that computer, double-click'
+        + ' <code>update-windows.bat</code> (Windows) / run <code>bash update.sh</code> (Mac).';
+    html += '<details><summary>How to update</summary><div class="upd-howto">'
+      + how + '</div></details>';
+    ub.innerHTML = html;
     ub.style.display = 'block';
   }
 }

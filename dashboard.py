@@ -1050,8 +1050,8 @@ def build_html(data):
     --glow-silent: rgba(81,143,104,0.22);
     --status-warning: #fab219;
     --status-warning-bg: rgba(250,178,25,0.15);
-    --status-serious: #ec835a;
-    --status-serious-bg: rgba(236,131,90,0.13);
+    --status-serious: #c94e1d;   /* vermilion: kept 25°+ of hue from amber --status-warning */
+    --status-serious-bg: rgba(201,78,29,0.10);
     --status-critical: #d03b3b;
     --status-critical-bg: rgba(208,59,59,0.10);
     --success-text: #006300;
@@ -1100,8 +1100,8 @@ def build_html(data):
       --glow-silent: rgba(99,169,126,0.28);
       --status-warning: #fab219;
       --status-warning-bg: rgba(250,178,25,0.12);
-      --status-serious: #ec835a;
-      --status-serious-bg: rgba(236,131,90,0.14);
+      --status-serious: #f4703c;   /* vermilion: kept 25°+ of hue from amber --status-warning */
+      --status-serious-bg: rgba(244,112,60,0.14);
       --status-critical: #e66767;
       --status-critical-bg: rgba(230,103,103,0.14);
       --success-text: #0ca30c;
@@ -1148,8 +1148,8 @@ def build_html(data):
     --status-good-bg: rgba(12,163,12,0.14);
     --status-warning: #fab219;
     --status-warning-bg: rgba(250,178,25,0.12);
-    --status-serious: #ec835a;
-    --status-serious-bg: rgba(236,131,90,0.14);
+    --status-serious: #f4703c;   /* vermilion: kept 25°+ of hue from amber --status-warning */
+    --status-serious-bg: rgba(244,112,60,0.14);
     --status-critical: #e66767;
     --status-critical-bg: rgba(230,103,103,0.14);
     --success-text: #0ca30c;
@@ -1505,7 +1505,7 @@ def build_html(data):
   .diag-banner .diag-also { flex-basis: 100%; font-size: 12px; color: var(--muted); }
   .diag-ok      { border-left-color: var(--status-good);     background: var(--status-good-bg); }
   .diag-warn    { border-left-color: var(--status-warning);  background: var(--status-warning-bg); }
-  .diag-serious { border-left-color: var(--status-serious);  background: var(--status-warning-bg); }
+  .diag-serious { border-left-color: var(--status-serious);  background: var(--status-serious-bg); }
   .diag-crit    { border-left-color: var(--status-critical); background: var(--status-critical-bg); }
   .diag-ok .diag-head { color: var(--status-good); }
   .diag-serious .diag-head { color: var(--status-serious); }

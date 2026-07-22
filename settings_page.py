@@ -879,10 +879,12 @@ for (const name of ['general','routers','devices','alerts']) {
     markDirty(name);
   });
   // row add/delete/reorder are button clicks, not input events. Saves,
-  // the test-alert button, and the read-only network scan stay clean.
+  // the test-alert button, the scans, and the show-all view toggle edit
+  // nothing — they must not trip the unsaved-changes dot.
+  const CLEAN_BUTTONS = ['aTest', 'rScan', 'dScan', 'dShowAll'];
   panel.addEventListener('click', (e) => {
     const b = e.target.closest ? e.target.closest('button') : null;
-    if (b && !b.classList.contains('primary') && b.id !== 'aTest' && b.id !== 'rScan') markDirty(name);
+    if (b && !b.classList.contains('primary') && CLEAN_BUTTONS.indexOf(b.id) === -1) markDirty(name);
   });
 }
 window.addEventListener('beforeunload', (e) => {
@@ -1356,14 +1358,17 @@ function manualDeviceRow() {
 function renderDevices() {
   const seen = Object.keys(S.census);
   const unseen = Object.keys(S.devices).filter(m => !S.census[m]);
-  // numeric IP ascending (his call — a stable, guessable order);
-  // vanished-but-named entries follow, sorted by MAC
+  // known devices first, then numeric IP ascending within each group —
+  // so "Show all" appends the unknowns below the entries instead of
+  // interleaving them; vanished-but-named entries follow, sorted by MAC
   const ipKey = (ip) => {
     const parts = String(ip || '').split('.').map(n => parseInt(n, 10));
     while (parts.length < 4) parts.push(999);
     return parts.map(n => isNaN(n) ? 999 : n);
   };
   seen.sort((a, b) => {
+    const knownA = S.devices[a] ? 0 : 1, knownB = S.devices[b] ? 0 : 1;
+    if (knownA !== knownB) return knownA - knownB;
     const ka = ipKey(S.census[a].ip), kb = ipKey(S.census[b].ip);
     for (let i = 0; i < 4; i++) { if (ka[i] !== kb[i]) return ka[i] - kb[i]; }
     return a.localeCompare(b);

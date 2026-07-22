@@ -76,7 +76,7 @@ a guess.
   seconds. Rate-limited, and only reachable from your own LAN.
 - **Alerts (optional)** — desktop notifications on the monitor PC,
   webhook push (ntfy.sh / Slack / Discord-style), or email (one or
-  several recipients, comma-separated) when an
+  several recipients — add them one per row in Settings) when an
   outage outlasts a minimum duration, plus a recovery message with the
   total downtime ("Internet was down 02:14–02:31, 17m"). Configured in
   Settings → Alerts; alerts that can't leave the house during an

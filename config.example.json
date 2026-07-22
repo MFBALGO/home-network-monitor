@@ -64,7 +64,10 @@
         "username": "",
         "password": "",
         "from": "",
-        "to": "you@example.com, family@example.com"
+        "to": [
+          "you@example.com",
+          "family@example.com"
+        ]
       }
     }
   }

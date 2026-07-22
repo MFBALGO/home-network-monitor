@@ -726,8 +726,10 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
     </div>
     <div class="row">
       <div><label>From</label><input type="text" id="aEmailFrom" placeholder="netmon@home" style="width:200px"></div>
-      <div><label>To (comma-separated for several)</label><input type="text" id="aEmailTo" placeholder="you@example.com, family@example.com" style="width:280px"></div>
     </div>
+    <label>Send to</label>
+    <div id="aEmailToList"></div>
+    <div class="row" style="margin-top:6px"><button class="small" id="aEmailToAdd">+ Add recipient</button></div>
   </div>
   <div class="msg" id="aMsg"></div>
   <div class="row" style="justify-content:flex-end">
@@ -876,10 +878,12 @@ function loadAlerts() {
   document.getElementById('aEmailUser').value = em.username || '';
   document.getElementById('aEmailPass').value = em.password || '';
   document.getElementById('aEmailFrom').value = em.from || '';
-  // hand-edited configs may hold a JSON array of addresses — show it
-  // comma-joined; the save writes the string form back, which the
-  // monitor accepts equally
-  document.getElementById('aEmailTo').value = Array.isArray(em.to) ? em.to.join(', ') : (em.to || '');
+  // one input row per recipient (hand-edited configs may hold a JSON
+  // array OR a comma/semicolon string — both render as rows; the save
+  // writes the array form back, which the monitor accepts equally)
+  const tos = Array.isArray(em.to) ? em.to
+    : String(em.to || '').split(/[,;]/).map(s => s.trim()).filter(Boolean);
+  renderEmailTo(tos.length ? tos : ['']);
 }
 
 function collectAlerts() {
@@ -914,11 +918,35 @@ function collectAlerts() {
       username: document.getElementById('aEmailUser').value.trim(),
       password: document.getElementById('aEmailPass').value,
       from: document.getElementById('aEmailFrom').value.trim(),
-      to: document.getElementById('aEmailTo').value.trim(),
+      to: emailToValues(),
     },
   };
   return a;
 }
+
+// ---- email recipient rows ----
+function emailToRow(addr) {
+  return '<div class="row" style="margin-bottom:6px;align-items:center">' +
+    '<input type="email" class="a-email-to" placeholder="you@example.com" value="' + esc(addr) + '" style="width:260px">' +
+    '<button class="small danger a-email-to-del" title="Remove this recipient">&#10005;</button></div>';
+}
+function renderEmailTo(list) {
+  document.getElementById('aEmailToList').innerHTML = list.map(emailToRow).join('');
+}
+function emailToValues() {
+  return [...document.querySelectorAll('.a-email-to')].map(i => i.value.trim()).filter(Boolean);
+}
+document.getElementById('aEmailToList').onclick = (e) => {
+  if (!e.target.classList.contains('a-email-to-del')) return;
+  e.target.closest('.row').remove();
+  // never leave zero inputs — an empty row is the "type here" affordance
+  if (!document.querySelectorAll('.a-email-to').length) renderEmailTo(['']);
+};
+document.getElementById('aEmailToAdd').onclick = () => {
+  document.getElementById('aEmailToList').insertAdjacentHTML('beforeend', emailToRow(''));
+  const rows = document.querySelectorAll('.a-email-to');
+  rows[rows.length - 1].focus();
+};
 
 document.getElementById('aSave').onclick = async () => {
   const msg = document.getElementById('aMsg');

@@ -2836,7 +2836,16 @@ def send_email(cfg, title, message, meta=None):
     import smtplib
     from email.message import EmailMessage
     msg = EmailMessage()
-    msg["Subject"] = title
+    # Subject carries the event headline when the meta has one (the inbox
+    # list is where subjects earn their keep — every mail saying just
+    # "Home Network Monitor" made scanning useless). Email-only: toast and
+    # webhook titles are untouched. "Recovered:" prefix so the good news
+    # reads at a glance; test alerts keep the explicit test title.
+    head = (meta or {}).get("headline")
+    if head and (meta or {}).get("severity") == "recovered":
+        msg["Subject"] = f"Recovered: {head}"
+    else:
+        msg["Subject"] = head or title
     msg["From"] = cfg.get("from") or cfg.get("username") or "netmon@localhost"
     msg["To"] = email_recipients(cfg.get("to"))
     url = dashboard_url()
@@ -2983,15 +2992,18 @@ def alert_loop(conn):
                         if row["kind"] == "new_device":
                             new_devices.append(row)   # batched below
                         else:
-                            notify("Home Network Monitor", _event_headline(row),
-                                   {"kind": row["kind"], "severity": "info"}, kind="info")
+                            head = _event_headline(row)
+                            notify("Home Network Monitor", head,
+                                   {"kind": row["kind"], "severity": "info",
+                                    "headline": head}, kind="info")
                 else:
                     tracked[row["id"]] = {"row": row, "open_alerted": False}
             if new_devices:
                 # a scan can find several unknowns at once — one message, not five
                 msg = (_event_headline(new_devices[0]) if len(new_devices) == 1
                        else f"{len(new_devices)} never-seen devices joined the network (see dashboard)")
-                notify("Home Network Monitor", msg, {"kind": "new_device", "severity": "info"}, kind="info")
+                notify("Home Network Monitor", msg,
+                       {"kind": "new_device", "severity": "info", "headline": msg}, kind="info")
 
             # open/close transitions for duration events
             now_utc = datetime.now(timezone.utc)
@@ -3009,10 +3021,11 @@ def alert_loop(conn):
                             and time.time() - cooldowns.get(key, 0) > cfg.get("cooldown_minutes", 5) * 60):
                         st["open_alerted"] = True
                         cooldowns[key] = time.time()
-                        notify("Home Network Monitor", _event_headline(ev)
+                        head = _event_headline(ev)
+                        notify("Home Network Monitor", head
                                + f" — ongoing for {_fmt_secs(age)}",
                                {"kind": ev["kind"], "scope": ev["scope"], "router": ev["router_name"],
-                                "start": ev["start_ts"], "severity": "down"},
+                                "start": ev["start_ts"], "severity": "down", "headline": head},
                                event_id=eid, kind="open")
                 else:
                     # closed: recovery message (with the full story), and drop
@@ -3025,13 +3038,15 @@ def alert_loop(conn):
                     if st["open_alerted"] and enabled_for(ev):
                         local_s = start.astimezone().strftime("%H:%M")
                         local_e = datetime.fromisoformat(end_ts).astimezone().strftime("%H:%M")
+                        # "is down/failing/unreachable" -> past tense for
+                        # every headline shape (first " is " only)
+                        head = (_event_headline(ev)
+                                .replace(" is DOWN", " was down").replace(" is ", " was "))
                         notify("Home Network Monitor — recovered",
-                               # "is down/failing/unreachable" -> past tense for
-                               # every headline shape (first " is " only)
-                               _event_headline(ev).replace(" is DOWN", " was down").replace(" is ", " was ")
-                               + f" — {local_s}–{local_e}, {_fmt_secs(dur)}. Back to normal.",
+                               head + f" — {local_s}–{local_e}, {_fmt_secs(dur)}. Back to normal.",
                                {"kind": ev["kind"], "scope": ev["scope"], "router": ev["router_name"],
-                                "start": ev["start_ts"], "end": end_ts, "severity": "recovered"},
+                                "start": ev["start_ts"], "end": end_ts, "severity": "recovered",
+                                "headline": head},
                                event_id=eid, kind="recovery")
                     del tracked[eid]
 

@@ -786,7 +786,6 @@ const THRESH_METRICS = [
   ['loss', 'Loss %', 1, 2.5],
   ['plan_pct', 'Speed, % of plan', 90, 80],
   ['uptime', 'Uptime %', 99.9, 99],
-  ['wifi', 'Wi-Fi dBm', -60, -70],
 ];
 // [key, label, default seconds, preset choices] — defaults and the
 // allowed range mirror monitor.py's INTERVAL_DEFAULTS/INTERVAL_BOUNDS
@@ -1113,7 +1112,13 @@ document.getElementById('gSave').onclick = async () => {
     if (name || host) tgs.push({name: name, host: host});
   }
   if (tgs.length) cfg.custom_targets = tgs; else delete cfg.custom_targets;
+  // carry through threshold keys that no longer have a UI row (e.g. a
+  // legacy wifi entry) — rebuilding from the rows alone would drop them
   const th = {};
+  const existingTh = S.config.thresholds || {};
+  for (const k of Object.keys(existingTh)) {
+    if (!THRESH_METRICS.some(m => m[0] === k)) th[k] = existingTh[k];
+  }
   for (const [key] of THRESH_METRICS) {
     const good = parseFloat(document.getElementById('th-' + key + '-good').value);
     const fair = parseFloat(document.getElementById('th-' + key + '-fair').value);

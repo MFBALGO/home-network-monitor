@@ -453,14 +453,7 @@ def main():
     except Exception as e:
         print(f"report generation failed (dashboard unaffected): {e}")
 
-    # Latest neighbor-Wi-Fi snapshot (all rows sharing the newest ts) for
-    # the channel-congestion advice, plus the newest topology check.
-    try:
-        wifi_neighbors = q(conn,
-                           "SELECT ssid, bssid, channel, band, signal_pct FROM wifi_scan"
-                           " WHERE ts = (SELECT MAX(ts) FROM wifi_scan)")
-    except sqlite3.OperationalError:
-        wifi_neighbors = []
+    # Newest topology check (double-NAT verdict for the map note).
     try:
         topo_rows = q(conn, "SELECT ts, private_hops, hop_ips, double_nat, cgnat FROM topology_checks"
                       " ORDER BY id DESC LIMIT 1")
@@ -849,7 +842,6 @@ def main():
     sparkline = [p["v"] for p in latency_series[-12:] if p["v"] is not None]
 
     speed_series = [s for s in speedtests if s.get("download_mbps") is not None]
-    wifi_series = [w for w in wifi if w.get("rssi_dbm") not in (None, "")]
     # Failed speed-test runs, EXCLUDING the standing "no tool installed"
     # message — that's an empty-state, not an incident, and would paint a
     # mark every 30 minutes forever.
@@ -958,10 +950,6 @@ def main():
                          for s in speed_series],
         "speed_failures": speed_failures,
         "public_ip_health": {"checks": ip_health.get("checks") or 0, "failures": ip_health.get("failures") or 0},
-        "wifi_series": [{"t": w["ts"], "rssi": w["rssi_dbm"], "channel": w["channel"]} for w in wifi_series],
-        "wifi_neighbors": wifi_neighbors,
-        "own_wifi": ({"channel": wifi[-1].get("channel"), "band": wifi[-1].get("band"),
-                      "ssid": wifi[-1].get("ssid")} if wifi else None),
         "topology": topology,
         "devices": devices,
         "last_device_scan_ts": last_scan_ts,
@@ -1344,6 +1332,7 @@ def build_html(data):
      corner of a chart card; labels get right padding so they can't run
      underneath it */
   .card-tools { position:absolute; top:12px; right:14px; display:flex; gap:8px; align-items:center; z-index:2; }
+  .ghost-btn.mini { font-size:11px; padding:4px 10px; border-radius:6px; }
   .range-toggle.mini { padding:2px; gap:2px; background: var(--surface-2); }
   .range-toggle.mini button { font-size:11px; padding:3px 8px; border-radius:5px; }
   .chart-card.with-tools > .chart-label { padding-right: 130px; }
@@ -1805,15 +1794,17 @@ def build_html(data):
     </div>
     <div class="chart-grid">
       <div class="chart-card with-tools">
-        <div class="card-tools"><span class="range-toggle mini" data-chart="latency"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
+        <div class="card-tools"><button class="ghost-btn mini" data-checknow="quick" data-checknote="latency" style="display:none" title="Run a live ping + DNS check right now (~10s) — the result is recorded like any scheduled check">Check now</button><span class="range-toggle mini" data-chart="latency"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
         <div class="chart-label">Average latency (ms)</div>
         <div class="chart-box"><canvas id="latencyChart"></canvas></div>
+        <div class="stat-sub" id="ck-latency" style="display:none"></div>
         <div class="check-foot" id="cfLatencyChart"></div>
       </div>
       <div class="chart-card with-tools">
-        <div class="card-tools"><span class="range-toggle mini" data-chart="loss"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
+        <div class="card-tools"><button class="ghost-btn mini" data-checknow="quick" data-checknote="loss" style="display:none" title="Run a live ping + DNS check right now (~10s) — the result is recorded like any scheduled check">Check now</button><span class="range-toggle mini" data-chart="loss"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
         <div class="chart-label">Packet loss (%)</div>
         <div class="chart-box sm"><canvas id="lossChart"></canvas></div>
+        <div class="stat-sub" id="ck-loss" style="display:none"></div>
         <div class="check-foot" id="cfLossChart"></div>
       </div>
     </div>
@@ -1821,13 +1812,14 @@ def build_html(data):
 
   <section>
     <div class="section-head">
-      <h2>Speed test &amp; Wi-Fi</h2>
+      <h2>Speed</h2>
     </div>
     <div class="chart-card with-tools">
-      <div class="card-tools"><span class="range-toggle mini" data-chart="speed"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
+      <div class="card-tools"><button class="ghost-btn mini" data-checknow="speed" data-checknote="speed" style="display:none" title="Run a full speed test right now (~1 min) — it briefly loads the line and is recorded like any scheduled test">Check now</button><span class="range-toggle mini" data-chart="speed"><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
       <div class="chart-label">Speed test (Mbps)<span id="speedVantage" class="chart-sublabel"></span></div>
       <div class="chart-box"><canvas id="speedChart"></canvas></div>
       <div id="speedEmpty" class="empty" style="display:none">No speed test data yet — install a speed test tool (see README) and it will appear here automatically.</div>
+      <div class="stat-sub" id="ck-speed" style="display:none"></div>
       <div id="speedFailNote" class="stat-sub" style="display:none"></div>
       <div class="check-foot" id="cfSpeed"></div>
     </div>
@@ -1840,13 +1832,6 @@ def build_html(data):
         <div id="loadedLatencyEmpty" class="empty" style="display:none">No latency-under-load data yet — it needs the official Ookla speedtest CLI (see README) and appears after the next test.</div>
         <div id="bufferbloatHint" class="stat-sub" style="display:none"></div>
         <div class="check-foot" id="cfBufferbloat"></div>
-      </div>
-      <div class="chart-card">
-        <div class="chart-label">Wi-Fi signal (dBm, higher is better)</div>
-        <div class="chart-box sm"><canvas id="wifiChart"></canvas></div>
-        <div id="wifiEmpty" class="empty" style="display:none">No Wi-Fi signal data yet.</div>
-        <div id="wifiAdvice" class="stat-sub" style="display:none"></div>
-        <div class="check-foot" id="cfWifi"></div>
       </div>
     </div>
   </section>
@@ -2139,7 +2124,7 @@ safely('speed vantage', function() {
 safely('check footers', function() {
   const C = DATA.checks || {};
   const ping = checkEff('ping'), dns = checkEff('dns'), spd = checkEff('speed'),
-        wifi = checkEff('wifi'), pip = checkEff('public_ip'), dev = checkEff('devices');
+        pip = checkEff('public_ip'), dev = checkEff('devices');
   setCheckFoot('cfStatus',       'ping', C.ping, ping.freq, ping.approx);
   setCheckFoot('cfUptime24',     'ping', C.ping, ping.freq, ping.approx);
   setCheckFoot('cfUptime7',      'ping', C.ping, ping.freq, ping.approx);
@@ -2152,7 +2137,6 @@ safely('check footers', function() {
   setCheckFoot('cfSpeed',        'ookla speedtest cli', C.speed, spd.freq, spd.approx);
   setCheckFoot('cfSpeedCard',    'ookla speedtest cli', C.speed, spd.freq, spd.approx);
   setCheckFoot('cfBufferbloat',  'ookla speedtest cli', C.speed, spd.freq, spd.approx);
-  setCheckFoot('cfWifi',         C.wifi_cmd || 'wi-fi snapshot', C.wifi, wifi.freq, wifi.approx);
   setCheckFoot('cfDevices',      C.device_cmd || 'device scan', C.devices, dev.freq, dev.approx);
   // only when something is watched — an empty freq would render "no data"
   if ((DATA.iot_devices || []).some(d => d.watch)) {
@@ -2217,7 +2201,6 @@ const THRESHOLDS = {
   dns:     { good: 40,   fair: 100,  dir: 'low',  unit: 'ms', labels: ['GOOD', 'FAIR', 'SLOW'] },
   loss:    { good: 1,    fair: 2.5,  dir: 'low',  unit: '%',  labels: ['GOOD', 'FAIR', 'HIGH'] },
   uptime:  { good: 99.9, fair: 99,   dir: 'high', unit: '%',  labels: ['GOOD', 'FAIR', 'LOW']  },
-  wifi:    { good: -60,  fair: -70,  dir: 'high', unit: 'dBm', labels: ['STRONG', 'OK', 'WEAK'] },
   // Bufferbloat = how much latency CLIMBS while the line is saturated
   // (loaded minus idle). Boundaries follow Waveform's widely-used grading:
   // ≤30ms added is an A, 100ms+ is where calls/games visibly suffer.
@@ -2279,40 +2262,6 @@ safely('metric ratings', function() {
 });
 
 // ---------- wifi channel advice + double-NAT hint ----------
-safely('wifi advice', function() {
-  const el = document.getElementById('wifiAdvice');
-  const own = DATA.own_wifi;
-  const nb = DATA.wifi_neighbors || [];
-  if (!el || !own || !own.channel || nb.length === 0) return;
-  const ownCh = String(own.channel).match(/[0-9]+/);
-  if (!ownCh) return;
-  const ch = parseInt(ownCh[0], 10);
-  const band24 = ch <= 14;
-  // count neighbors on our channel (dedupe by bssid||ssid so mesh nodes
-  // of one network don't inflate the number too much)
-  const sameCh = nb.filter(n => n.channel && parseInt(n.channel, 10) === ch);
-  if (band24) {
-    // 2.4 GHz: only 1/6/11 don't overlap — recommend the quietest of those
-    const counts = {1: 0, 6: 0, 11: 0};
-    nb.forEach(n => {
-      const c = parseInt(n.channel, 10);
-      if (c in counts) counts[c] += 1;
-    });
-    if (sameCh.length >= 3) {
-      const best = [1, 6, 11].reduce((a, b) => counts[a] <= counts[b] ? a : b);
-      el.style.display = '';
-      el.textContent = 'Your 2.4 GHz channel ' + ch + ' is shared with ' + sameCh.length
-        + ' neighboring networks' + (best !== ch
-          ? ' — channel ' + best + ' looks quieter (' + counts[best] + '). Change it in the router’s Wi-Fi settings.'
-          : ' — but it’s still the quietest of 1/6/11. Nothing to do.');
-    }
-  } else if (sameCh.length >= 3) {
-    // 5 GHz: DFS/regulatory rules make specific recommendations unreliable
-    el.style.display = '';
-    el.textContent = 'Your 5 GHz channel ' + ch + ' is shared with ' + sameCh.length
-      + ' neighboring networks — worth trying a different channel in the router settings.';
-  }
-});
 
 // ---------- diagnosis banner: "what's wrong right now, in plain words" ----------
 // Rule table, first match wins. Order mirrors the monitor's own causal
@@ -3640,7 +3589,7 @@ function refLines(lines) {
 // topbar's global toggle sets them all at once. Keys must match the
 // data-chart attrs in the markup AND the RANGE_CHARTS registry below.
 const chartRange = { latency: 168, loss: 168, routers: 168, targets: 168,
-                     speed: 168, loaded: 168, wifi: 168, devcount: 168 };
+                     speed: 168, loaded: 168, devcount: 168 };
 function rangeFor(key) { return chartRange[key] || 168; }
 
 function renderLatencyChart() {
@@ -3868,7 +3817,7 @@ function renderTargetsChart() {
 const RANGE_CHARTS = {
   latency: renderLatencyChart, loss: renderLossChart, routers: renderRoutersChart,
   targets: renderTargetsChart, speed: renderSpeedChart, loaded: renderLoadedLatencyChart,
-  wifi: renderWifiChart, devcount: renderDevCountChart,
+  devcount: renderDevCountChart,
 };
 function syncRangeToggles() {
   document.querySelectorAll('.range-toggle.mini').forEach(tg => {
@@ -4031,43 +3980,6 @@ function renderLoadedLatencyChart() {
   });
 }
 
-// ---------- wifi chart (range-aware) ----------
-function renderWifiChart() {
-  const canvas = document.getElementById('wifiChart');
-  const emptyEl = document.getElementById('wifiEmpty');
-  const showEmpty = (msg) => {
-    if (chartInstances.wifi) { chartInstances.wifi.destroy(); chartInstances.wifi = null; }
-    canvas.style.display = 'none'; emptyEl.style.display = 'block'; emptyEl.textContent = msg;
-  };
-  if (!DATA.wifi_series || DATA.wifi_series.length === 0) return showEmpty('No Wi-Fi signal data yet.');
-  const hours = rangeFor('wifi');
-  const series = filterByRange(DATA.wifi_series, hours);
-  if (series.length === 0) return showEmpty('No Wi-Fi data in the last ' + rangeWord(hours) + '.');
-  canvas.style.display = ''; emptyEl.style.display = 'none';
-  const orange = catColor(5);
-  if (chartInstances.wifi) chartInstances.wifi.destroy();
-  chartInstances.wifi = new Chart(canvas, {
-    type: 'line',
-    plugins: [ refLines([
-      { value: THRESHOLDS.wifi.good, color: cssVar('--status-good'), label: 'strong ' + THRESHOLDS.wifi.good },
-      { value: THRESHOLDS.wifi.fair, color: cssVar('--status-critical'), label: 'weak ' + THRESHOLDS.wifi.fair },
-    ]) ],
-    data: {
-      labels: series.map(p => new Date(p.t)),
-      datasets: [
-        { label: 'Signal (dBm)', data: series.map(p => p.rssi), borderColor: orange, backgroundColor: hexToRgba(orange, 0.10), fill: true, borderWidth: 2, pointRadius: 0, pointHoverRadius: 5, pointHoverBackgroundColor: orange, pointHoverBorderColor: surfaceColor(), pointHoverBorderWidth: 2, tension: 0.2 },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      scales: { x: timeScale(hours), y: yScale('dBm (higher is better)', { beginAtZero: false }) },
-      plugins: { legend: legendOpts(false), tooltip: tooltipBase() },
-    },
-  });
-}
-
 // ---------- devices online over time (range-aware) ----------
 function renderDevCountChart() {
   const canvas = document.getElementById('devCountChart');
@@ -4152,18 +4064,35 @@ safely('refresh controls', function() {
 // appears once a probe of the status endpoint answers.
 safely('test now', function() {
   if (location.protocol === 'file:') return;
-  const btn = document.getElementById('testNowBtn');
+  const topBtn = document.getElementById('testNowBtn');
   const out = document.getElementById('testNowResult');
+  // per-chart "Check now" buttons ride the same one-test-at-a-time rail:
+  // data-checknow = 'quick' (ping+DNS, ~10s) or 'speed' (full test).
+  // Results are ALSO written to the DB by the monitor, so they land on
+  // the charts on the next regen — the inline note is just instant.
+  const cardBtns = Array.from(document.querySelectorAll('button[data-checknow]'));
+  const allBtns = [topBtn].concat(cardBtns).filter(Boolean);
   let polling = null;
+  let active = null;   // the button that started (or adopted) the run
 
-  function setBusy(phase) {
-    btn.disabled = true;
-    btn.textContent = 'Testing: ' + (phase || '…');
+  function noteFor(btn) {
+    if (!btn || btn === topBtn) return out;
+    return document.getElementById('ck-' + btn.dataset.checknote) || out;
   }
-  function setIdle(label) {
-    btn.disabled = false;
-    btn.textContent = label || 'Test now';
+  function setBusy(phase) {
+    allBtns.forEach(b => { b.disabled = true; });
+    (active || topBtn).textContent = 'Testing: ' + (phase || '…');
+  }
+  function setIdle() {
+    allBtns.forEach(b => { b.disabled = false; });
+    if (topBtn) topBtn.textContent = 'Test now';
+    cardBtns.forEach(b => { b.textContent = 'Check now'; });
     if (polling) { clearInterval(polling); polling = null; }
+  }
+  function showNote(txt) {
+    const el = noteFor(active);
+    el.style.display = '';
+    el.textContent = txt;
   }
   function showResult(res) {
     if (!res) return;
@@ -4171,9 +4100,8 @@ safely('test now', function() {
     if (res.gateway) bits.push('router ' + (res.gateway.ok ? (res.gateway.avg_ms != null ? res.gateway.avg_ms + 'ms' : 'ok') : ('FAIL ' + res.gateway.ok + '/5')));
     if (res.external) bits.push('internet ' + (res.external.ok ? (res.external.avg_ms != null ? res.external.avg_ms + 'ms' : 'ok') : 'FAIL'));
     if (res.dns) bits.push('DNS ' + (res.dns.ok ? (res.dns.ms != null ? Math.round(res.dns.ms) + 'ms' : 'ok') : 'FAIL'));
-    if (res.speedtest) bits.push(res.speedtest.error ? 'speed test failed' : ('↓' + Math.round(res.speedtest.down) + ' ↑' + Math.round(res.speedtest.up)));
-    out.style.display = '';
-    out.textContent = bits.join(' · ') + ' — charts update on the next refresh';
+    if (res.speedtest) bits.push(res.speedtest.error ? 'speed test failed' : ('↓' + Math.round(res.speedtest.down) + ' ↑' + Math.round(res.speedtest.up) + ' Mbps'));
+    showNote(bits.join(' · ') + ' — on the charts after the next refresh (~1 min)');
   }
   function poll(sinceLoad) {
     let waited = 0;
@@ -4182,33 +4110,37 @@ safely('test now', function() {
       fetch('/api/test/status').then(r => r.json()).then(st => {
         if (st.state === 'running') { setBusy(st.phase); }
         else if (st.state === 'done') { setIdle(); showResult(st.results); }
-        else if (st.state === 'error') { setIdle(); out.style.display = ''; out.textContent = 'test failed: ' + (st.error || 'unknown'); }
-        else if (waited > 10 && !sinceLoad) { setIdle(); out.style.display = ''; out.textContent = 'no response — is the monitor service running?'; }
+        else if (st.state === 'error') { setIdle(); showNote('test failed: ' + (st.error || 'unknown')); }
+        else if (waited > 10 && !sinceLoad) { setIdle(); showNote('no response — is the monitor service running?'); }
       }).catch(() => {});
       if (waited > 180) setIdle();   // hard stop: never spin forever
     }, 1500);
   }
 
-  btn.addEventListener('click', () => {
-    out.style.display = 'none';
+  function start(btn) {
+    active = btn;
+    const el = noteFor(btn);
+    el.style.display = 'none';
     setBusy('starting');
-    fetch('/api/test/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+    const body = btn.dataset && btn.dataset.checknow === 'speed' ? '{"speedtest": true}' : '{}';
+    fetch('/api/test/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body })
       .then(r => {
         if (r.status === 202) { poll(false); }
         else if (r.status === 409) { setIdle(); poll(true); }  // someone else started one — watch it
-        else if (r.status === 429) { setIdle(); out.style.display = ''; out.textContent = 'please wait a minute between tests'; }
-        else { setIdle(); out.style.display = ''; out.textContent = 'test unavailable (' + r.status + ')'; }
+        else if (r.status === 429) { setIdle(); showNote('please wait a minute between tests'); }
+        else { setIdle(); showNote('test unavailable (' + r.status + ')'); }
       })
-      .catch(() => { setIdle(); out.style.display = ''; out.textContent = 'could not reach the server'; });
-  });
+      .catch(() => { setIdle(); showNote('could not reach the server'); });
+  }
+  allBtns.forEach(b => b.addEventListener('click', () => start(b)));
 
-  // only show the button where the endpoint actually answers (from LAN or
+  // only show the buttons where the endpoint actually answers (from LAN or
   // localhost via serve.py); resume watching a test already in flight if
   // the 60s auto-refresh reloaded the page mid-run
   fetch('/api/test/status').then(r => {
     if (!r.ok) return;
-    btn.style.display = '';
-    return r.json().then(st => { if (st.state === 'running') { setBusy(st.phase); poll(true); } });
+    allBtns.forEach(b => { b.style.display = ''; });
+    return r.json().then(st => { if (st.state === 'running') { active = topBtn; setBusy(st.phase); poll(true); } });
   }).catch(() => {});
 });
 

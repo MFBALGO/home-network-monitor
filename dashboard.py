@@ -1354,8 +1354,13 @@ def build_html(data):
   .range-toggle.mini button { font-size:11px; padding:3px 8px; border-radius:5px; }
   .chart-card.with-tools > .chart-label { padding-right: 130px; }
 
+  /* overflow VISIBLE, not auto: with scrollbars hidden globally an auto
+     card silently becomes wheel-scrollable the moment anything (e.g. the
+     hover readout) pokes past its edge — the charts felt draggy. Wide
+     content scrolls in its own wrapper (#devicesTableWrap etc.), never
+     on the card itself. */
   .chart-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 18px;
-    box-shadow: var(--shadow); overflow-x:auto; position:relative; }
+    box-shadow: var(--shadow); overflow: visible; position:relative; }
   /* hover readout: tracks the cursor's x but sits BELOW the plot area
      (never covering the lines being read); transiently overlays the
      card footer, which is fine — it only exists while hovering */

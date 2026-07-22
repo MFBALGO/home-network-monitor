@@ -202,12 +202,25 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   killed the whole page's script once); DNS card sub-line shows the
   direct per-resolver verdict (router vs 1.1.1.1 vs 8.8.8.8, details
   in the tooltip); Chart.js
-  charts (vendored) with threshold reference lines, a
-  synced 24h/7d toggle, and the speed chart pinned to 0..plan+100 so the
-  plan lines stay visible — chart TOOLTIPS are enabled:false + an
-  external handler rendering the tooltip model into a `.chart-tip`
-  readout strip pinned to the card's top-right (the floating box
-  covered the plot; per-chart label callbacks still apply); the
+  charts (vendored) with threshold reference lines and the speed chart
+  pinned to 0..plan+100 so the plan lines stay visible — chart ranges
+  are PER-CHART (`chartRange` map + `rangeFor(key)`, a mini 24h/7d
+  toggle in each card's `.card-tools` corner) plus a topbar
+  `#globalRange` toggle that sets them all (lit only while every chart
+  agrees); ONE `RANGE_CHARTS` registry feeds both the toggles and
+  rerenderCharts (replaces the two hand-maintained renderer lists);
+  `timeScale(hours)`/`rangeWord(hours)` take params. The Wi-Fi signal
+  chart was REMOVED (his call; monitor still collects wifi snapshots —
+  roam events/timeline category stay; a legacy thresholds.wifi config
+  key is carried through General saves untouched). Latency/Loss/Speed
+  cards have "Check now" buttons riding the one-test-at-a-time command
+  rail (quick = ping+DNS, speed = full test; on-demand results are
+  written to the SAME DB tables, so they appear on the charts on the
+  next regen; inline note is instant) — chart TOOLTIPS are
+  enabled:false + an external handler rendering the tooltip model into
+  ONE `.chart-tip` panel FIXED to the viewport's right edge, vertical
+  rows (phones: bottom-right; per-chart label callbacks still
+  apply); the
   timeline is CLICKABLE (rows and timeline marks share a startMs|cat
   `data-ev` key → scroll+flash the row, auto-reset filter / expand
   "older"), summary chips click through to their filter pill, log rows
@@ -228,7 +241,8 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   must fit without side-scroll since scrollbars are invisible),
   `hide_ip_prefixes` drops matching devices; "IoT devices" section
   between the outage log and the devices table (hidden when nothing is
-  typed/watched, one group header per type, 4 columns so phones fit;
+  typed/watched; a dense `.iot-grid` chip grid — one compact chip per
+  device with type tag + status pill, MAC/IP in the hover title;
   own outage-log category cat='iot'/"IoT" chip — hardDown filters
   cat outage|dns so IoT is auto-excluded from the downtime chips; NOT
   in the diagnosis banner, whose rules are all scope-filtered). Chart colors
@@ -255,20 +269,33 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   `load_device_census()` — read-only mac→{ip, hostname, first/last
   seen, online} from the DB's devices table (30d window, respects
   hide_ip_prefixes, {} on fresh install/busy DB) served as `census` on
-  GET /api/config for the Devices tab.
+  GET /api/config for the Devices tab, plus `device_scan_cmd()` (the
+  human-readable scan command shown by the Devices tab's scan button —
+  mirrors monitor.py's nmap-else-ping-sweep decision, served as
+  meta.scan_cmd) and POST /api/devices/scan → writes an
+  action:"scan_now" command; monitor.py's command_loop runs
+  run_device_scan (the extracted device_loop body, state-dict + lock so
+  the scheduled cycle and on-demand path share the new-device baseline
+  and can't sweep concurrently) and reports via test_status.json.
 - `settings_page.py` — `WIZARD_HTML` (auto-scan → floors → routers →
   review, 409-guarded overwrite, double-NAT heads-up from the
   piggybacked topology check) and `SETTINGS_HTML` (General/Routers/
   Devices/Alerts tabs; Alerts has a Send-test-alert button riding the
   command rail) as Python strings served from memory, styled to match
   the dashboard. Tabs are a real ARIA tablist (roving tabindex,
-  Arrow/Home/End). Per-tab unsaved-changes guard: input/change +
+  Arrow/Home/End) and persist across refresh via the URL hash
+  (activateTab writes history.replaceState('#name'), restored after
+  load()). Per-tab unsaved-changes guard: input/change +
   row-button clicks set a dirty flag (amber dot on the tab,
   beforeunload warning; saves/test-alert/scan/filter box exempt),
   cleared by that tab's successful save. The Devices tab renders the
-  CENSUS union: one row per seen device (online first, then last_seen;
-  hostname as name-input placeholder, mono context line, ✕ clears the
-  entry but keeps the row) + "Named, but not seen in 30 days" group +
+  CENSUS union: one row per seen device (numeric-IP-ascending sort;
+  hostname as name-input placeholder, mono context line; the ✕ renders
+  only when the row HAS an entry, and clearing fades the row + "entry
+  forgotten on save" note — reversed by typing) + a Scan-for-devices-now
+  button (shows the real command from meta.scan_cmd, polls
+  /api/test/status, re-pulls the census on done) + "Named, but not
+  seen in 30 days" group +
   manual add-by-MAC; save collects only rows with name/type/watch and
   keeps the compact string-or-object form. Quiet hours are
   `<input type=time>` (loadAlerts pads legacy "7:00" → "07:00" or the

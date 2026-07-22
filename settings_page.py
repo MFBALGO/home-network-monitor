@@ -130,6 +130,8 @@ _SHARED_HEAD = """<!DOCTYPE html>
      and the divider before named-but-vanished entries */
   .d-ctx { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-top: 3px; }
   .d-ctx .on { color: var(--status-good); font-weight: 600; }
+  .d-row.d-cleared .d-name { opacity: 0.5; }
+  .d-forgot { color: var(--status-warning); font-weight: 600; }
   .d-group td { padding-top: 14px; color: var(--muted); font-size: 11px; text-transform: uppercase;
     letter-spacing: 0.4px; border-bottom: none; font-weight: 600; }
   .thresh-grid { display: grid; grid-template-columns: 110px 1fr 1fr; gap: 8px 12px; align-items: center; }
@@ -819,6 +821,8 @@ function activateTab(b) {
   for (const name of ['general','routers','devices','alerts']) {
     document.getElementById('tab-' + name).style.display = name === b.dataset.tab ? '' : 'none';
   }
+  // remember the tab in the URL so a refresh doesn't bounce to General
+  try { history.replaceState(null, '', '#' + b.dataset.tab); } catch (e) {}
 }
 document.querySelector('.tabs').onclick = (e) => {
   const b = e.target.closest('button'); if (!b) return;
@@ -1307,14 +1311,19 @@ function deviceRow(mac, value, ctx) {
   } else {
     bits.push('not seen in 30 days');
   }
+  // the ✕ only shows when there is something to forget — on a bare census
+  // row it was a silent no-op that read as "the button is broken"
+  const hasEntry = !!(v.name || v.type || v.watch);
   return '<tr class="d-row" data-mac="' + esc(mac) + '">' +
     '<td><input type="text" class="d-name" value="' + esc(v.name || '') +
       '" placeholder="' + esc(ctx && ctx.hostname ? ctx.hostname : 'name this device') + '">' +
-    '<div class="d-ctx">' + esc(mac) + ' · ' + bits.join(' · ') + '</div></td>' +
+    '<div class="d-ctx">' + esc(mac) + ' · ' + bits.join(' · ') +
+    '<span class="d-forgot" style="display:none"> — entry forgotten on save</span></div></td>' +
     '<td><select class="d-type">' + typeOpts(v.type) + '</select></td>' +
     '<td style="text-align:center"><input type="checkbox" class="d-watch"' + (v.watch ? ' checked' : '') +
       ' title="Actively check every ~30s and log outages when it stops answering"></td>' +
-    '<td><button class="small danger d-del" title="Forget the name/type/watch">&#10005;</button></td></tr>';
+    '<td><button class="small danger d-del" title="Forget the name/type/watch"' +
+      (hasEntry ? '' : ' style="visibility:hidden"') + '>&#10005;</button></td></tr>';
 }
 // manual escape hatch for a device the scanner has never seen (e.g. a
 // printer that's been off for months): editable MAC field
@@ -1329,12 +1338,19 @@ function manualDeviceRow() {
 function renderDevices() {
   const seen = Object.keys(S.census);
   const unseen = Object.keys(S.devices).filter(m => !S.census[m]);
-  // online first, then most recently seen; vanished-but-named entries last
+  // numeric IP ascending (his call — a stable, guessable order);
+  // vanished-but-named entries follow, sorted by MAC
+  const ipKey = (ip) => {
+    const parts = String(ip || '').split('.').map(n => parseInt(n, 10));
+    while (parts.length < 4) parts.push(999);
+    return parts.map(n => isNaN(n) ? 999 : n);
+  };
   seen.sort((a, b) => {
-    const ca = S.census[a], cb = S.census[b];
-    if (!!ca.online !== !!cb.online) return ca.online ? -1 : 1;
-    return (cb.last_seen || '').localeCompare(ca.last_seen || '');
+    const ka = ipKey(S.census[a].ip), kb = ipKey(S.census[b].ip);
+    for (let i = 0; i < 4; i++) { if (ka[i] !== kb[i]) return ka[i] - kb[i]; }
+    return a.localeCompare(b);
   });
+  unseen.sort();
   let html = '<tr><th>Device</th><th>Type</th><th>Watch</th><th></th></tr>';
   html += seen.map(m => deviceRow(m, S.devices[m], S.census[m])).join('');
   if (seen.length && unseen.length) {
@@ -1359,11 +1375,29 @@ document.getElementById('dTable').onclick = (e) => {
   const tr = e.target.closest('tr');
   if (tr.dataset.manual) { tr.remove(); return; }
   // census-backed rows stay listed - clearing the fields just drops the
-  // devices.json entry on the next save
+  // devices.json entry on the next save. Make that VISIBLE: fade the row,
+  // say so on the context line, and hide the now-pointless ✕.
   tr.querySelector('.d-name').value = '';
   tr.querySelector('.d-type').value = '';
   tr.querySelector('.d-watch').checked = false;
+  tr.classList.add('d-cleared');
+  const fg = tr.querySelector('.d-forgot');
+  if (fg) fg.style.display = '';
+  e.target.style.visibility = 'hidden';
 };
+// typing in a row un-fades it and brings the ✕ back (there is something
+// to forget again)
+function dRowEdited(e) {
+  const tr = e.target.closest ? e.target.closest('tr.d-row') : null;
+  if (!tr) return;
+  tr.classList.remove('d-cleared');
+  const fg = tr.querySelector('.d-forgot');
+  if (fg) fg.style.display = 'none';
+  const del = tr.querySelector('.d-del');
+  if (del) del.style.visibility = '';
+}
+document.getElementById('dTable').addEventListener('input', dRowEdited);
+document.getElementById('dTable').addEventListener('change', dRowEdited);
 document.getElementById('dAdd').onclick = () => {
   document.getElementById('dTable').insertAdjacentHTML('beforeend', manualDeviceRow());
   const rows = document.querySelectorAll('#dTable tr.d-row');
@@ -1439,6 +1473,14 @@ document.getElementById('dSave').onclick = async () => {
 };
 
 load();
+
+// restore the tab named in the URL hash (written by activateTab) so a
+// refresh inside e.g. Devices lands back on Devices, not General
+(function() {
+  const name = (location.hash || '').replace('#', '');
+  const btn = document.getElementById('tabbtn-' + name);
+  if (btn) activateTab(btn);
+})();
 </script>
 </div></body></html>
 """)

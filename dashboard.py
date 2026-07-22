@@ -1186,6 +1186,10 @@ def build_html(data):
   .quick-nav button { border:none; background:transparent; color: var(--muted); font-size:12px; font-weight:600;
     padding: 5px 13px; border-radius:999px; cursor:pointer; transition: color .12s ease, background .12s ease; }
   .quick-nav button:hover { color: var(--accent); background: var(--accent-soft); }
+  /* always-visible flavor: sits in-flow under the topbar; the fixed bar
+     above still slides in once this one scrolls out of view */
+  .quick-nav-static { position:static; transform:none; justify-content:center;
+    margin: -8px 0 18px; flex-wrap:wrap; }
   /* live filter box over the devices table */
   .search-box { background: var(--surface-1); border:1px solid var(--border); border-radius:8px;
     color: var(--text-primary); font-size:12.5px; padding:6px 11px; width:190px; outline:none;
@@ -1710,13 +1714,22 @@ def build_html(data):
     </div>
   </div>
 
+  <nav class="quick-nav quick-nav-static" aria-label="Sections">
+    <button data-goto="sec-deck">Map</button>
+    <button data-goto="sec-charts">Latency</button>
+    <button data-goto="sec-speed">Speed</button>
+    <button data-goto="sec-outages">Outages</button>
+    <button data-goto="sec-devices">Devices</button>
+  </nav>
+
   <div id="updateBanner" class="warning-banner update-banner"></div>
 
   <div id="diagBanner" class="diag-banner" style="display:none"></div>
 
   <nav id="quickNav" class="quick-nav" aria-label="Jump to section">
     <button data-goto="sec-deck">Map</button>
-    <button data-goto="sec-charts">Charts</button>
+    <button data-goto="sec-charts">Latency</button>
+    <button data-goto="sec-speed">Speed</button>
     <button data-goto="sec-outages">Outages</button>
     <button data-goto="sec-devices">Devices</button>
   </nav>
@@ -1828,7 +1841,7 @@ def build_html(data):
     </div>
   </section>
 
-  <section>
+  <section id="sec-speed">
     <div class="section-head">
       <h2>Speed</h2>
     </div>
@@ -2870,18 +2883,22 @@ safely('devices search', function() {
 // The page is ~5 screens tall; once the command deck is scrolled past, a
 // slim jump bar slides in so Outages/Devices are one click, not a hunt.
 safely('quick nav', function() {
-  const nav = document.getElementById('quickNav');
-  if (!nav) return;
-  nav.addEventListener('click', (e) => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    const sec = document.getElementById(b.dataset.goto);
-    if (sec && sec.scrollIntoView) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // both bars (the always-visible static one under the topbar and the
+  // fixed one that slides in when scrolled) share the click handling
+  document.querySelectorAll('.quick-nav').forEach(nav => {
+    nav.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      const sec = document.getElementById(b.dataset.goto);
+      if (sec && sec.scrollIntoView) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   });
+  const fixedNav = document.getElementById('quickNav');
+  if (!fixedNav) return;
   let shown = false;
   window.addEventListener('scroll', () => {
     const want = (window.scrollY || 0) > 480;
-    if (want !== shown) { shown = want; nav.classList.toggle('show', shown); }
+    if (want !== shown) { shown = want; fixedNav.classList.toggle('show', shown); }
   }, { passive: true });
 });
 

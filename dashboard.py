@@ -1189,6 +1189,24 @@ def build_html(data):
     background: radial-gradient(60% 100% at 50% 0%, var(--accent-soft), transparent 55%); }
   .topline { position:fixed; top:0; left:0; right:0; height:2px; z-index:5;
     background: linear-gradient(90deg, transparent, var(--accent) 25%, var(--accent) 75%, transparent); opacity:.7; }
+  /* slim jump-to-section bar; slides in once the deck is scrolled past */
+  .quick-nav { position:fixed; top:10px; left:50%; transform:translate(-50%,-260%); z-index:6;
+    display:flex; gap:2px; background: var(--surface-1); border:1px solid var(--border);
+    border-radius:999px; padding:4px; box-shadow: var(--shadow); transition: transform .25s ease; }
+  .quick-nav.show { transform:translate(-50%,0); }
+  .quick-nav button { border:none; background:transparent; color: var(--muted); font-size:12px; font-weight:600;
+    padding: 5px 13px; border-radius:999px; cursor:pointer; transition: color .12s ease, background .12s ease; }
+  .quick-nav button:hover { color: var(--accent); background: var(--accent-soft); }
+  /* live filter box over the devices table */
+  .search-box { background: var(--surface-1); border:1px solid var(--border); border-radius:8px;
+    color: var(--text-primary); font-size:12.5px; padding:6px 11px; width:190px; outline:none;
+    font-family: inherit; }
+  .search-box:focus { border-color: var(--accent); }
+  .search-box::placeholder { color: var(--muted); }
+  /* first-seen-in-24h marker in the devices table */
+  .dev-new { display:inline-block; margin-left:7px; padding:1px 6px; border-radius:5px; font-size:9.5px;
+    font-weight:700; font-family: var(--font-mono); letter-spacing:.08em; text-transform:uppercase;
+    color: var(--status-good); background: var(--status-good-bg); vertical-align:1px; }
   /* 1560 (was 1220): on modern wide monitors the old cap left a third of
      the screen empty and crushed the 3-up chart row to ~370px each.
      Content is still capped — full-bleed dashboards get unreadable. */
@@ -1309,7 +1327,7 @@ def build_html(data):
     color:var(--text-secondary); border-bottom:none; }
   #iotTableWrap { overflow-x: auto; }
 
-  section { margin-bottom: 34px; }
+  section { margin-bottom: 34px; scroll-margin-top: 58px; }
   section .section-head { display:flex; align-items:baseline; justify-content:space-between; margin-bottom: 12px;
     flex-wrap:wrap; gap:8px; padding-bottom: 9px; border-bottom: 1px solid var(--border-soft); }
   section h2 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: 0;
@@ -1673,7 +1691,14 @@ def build_html(data):
 
   <div id="diagBanner" class="diag-banner" style="display:none"></div>
 
-  <section>
+  <nav id="quickNav" class="quick-nav" aria-label="Jump to section">
+    <button data-goto="sec-deck">Map</button>
+    <button data-goto="sec-charts">Charts</button>
+    <button data-goto="sec-outages">Outages</button>
+    <button data-goto="sec-devices">Devices</button>
+  </nav>
+
+  <section id="sec-deck">
     <div class="section-head">
       <h2>Routers &amp; access points</h2>
       <span class="section-note">from routers.json</span>
@@ -1756,7 +1781,7 @@ def build_html(data):
     </div>
   </section>
 
-  <section>
+  <section id="sec-charts">
     <div class="section-head">
       <h2>Latency &amp; packet loss</h2>
       <div class="range-toggle" data-rangetoggle>
@@ -1812,7 +1837,7 @@ def build_html(data):
     </div>
   </section>
 
-  <section>
+  <section id="sec-outages">
     <div class="section-head">
       <h2>Outages &amp; degradation log</h2>
       <span class="section-note">last 7 days, most recent first · <a href="report.html" title="Printable outage/speed summary — evidence for ISP complaints">ISP evidence report &rarr;</a></span>
@@ -1850,11 +1875,12 @@ def build_html(data):
     </div>
   </section>
 
-  <section>
+  <section id="sec-devices">
     <div class="section-head">
       <h2>Devices on your network</h2>
       <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
         <span class="section-note" id="devicesNote">most recent scan</span>
+        <input type="search" id="devSearch" class="search-box" placeholder="Filter — name, IP, MAC" autocomplete="off" spellcheck="false">
         <div class="range-toggle" data-rangetoggle title="Applies to the Devices-online chart; the table below always shows the latest scan">
           <button data-range="24">24h</button>
           <button data-range="168" class="active">7d</button>
@@ -2773,9 +2799,12 @@ safely('devices note', function() {
     noteEl.textContent = note;
   }
 });
-if (!DATA.devices || DATA.devices.length === 0) {
-  devWrap.innerHTML = '<div class="empty">No device scan data yet.</div>';
-} else {
+function renderDevices(query) {
+  if (!DATA.devices || DATA.devices.length === 0) {
+    devWrap.innerHTML = '<div class="empty">No device scan data yet.</div>';
+    return;
+  }
+  const NEW_CUTOFF = (Date.parse(DATA.generated_at) || Date.now()) - 24 * 3600 * 1000;
   const deviceRow = (d, hidden) => {
     // friendly name from devices.json wins; hostname as detail or fallback
     const friendly = d.name ? escapeHtml(d.name) : null;
@@ -2798,6 +2827,10 @@ if (!DATA.devices || DATA.devices.length === 0) {
     // also appears in the IoT section above, but stays here so the scan
     // counts and the devices-online chart keep matching the table
     if (d.type) label += `<span class="dev-type">${escapeHtml(d.type)}</span>`;
+    // first_seen inside the last 24h = joined (or returned) recently.
+    // Window-clamped first_seen can't false-positive here: a long-present
+    // device's clamp sits at the 7d edge, far outside 24h.
+    if (d.first_seen && Date.parse(d.first_seen) >= NEW_CUTOFF) label += '<span class="dev-new">new</span>';
     return `<tr${hidden ? ' style="display:none" data-away="1"' : ''}>
     <td><div class="device-name"><span class="device-icon">${deviceIcon}</span><span class="dev-id"><span>${label}</span>${macLine}</span></div></td>
     <td class="mono">${escapeHtml(d.ip)}</td>
@@ -2805,11 +2838,21 @@ if (!DATA.devices || DATA.devices.length === 0) {
     <td>${seen}</td>
   </tr>`;
   };
+  // live filter: name / hostname / IP / MAC substring; a query shows every
+  // match regardless of the away-collapse (an away device is exactly what
+  // a search is usually hunting for)
+  const qn = (query || '').trim().toLowerCase();
+  const match = d => !qn || [d.name, d.hostname, d.ip, d.mac].some(v => v && String(v).toLowerCase().indexOf(qn) !== -1);
+  const shown = DATA.devices.filter(match);
+  if (shown.length === 0) {
+    devWrap.innerHTML = '<div class="empty">No devices match “' + escapeHtml(query) + '”.</div>';
+    return;
+  }
   // online devices up front; away ones collapsed behind a toggle so 20
   // idle phones don't add 900px of table
-  const online = DATA.devices.filter(d => d.online);
-  const away = DATA.devices.filter(d => !d.online);
-  const collapseAway = online.length > 0 && away.length > 0;
+  const online = shown.filter(d => d.online);
+  const away = shown.filter(d => !d.online);
+  const collapseAway = !qn && online.length > 0 && away.length > 0;
   const rows = online.map(d => deviceRow(d, false)).join('')
     + away.map(d => deviceRow(d, collapseAway)).join('');
   const awayBtn = collapseAway
@@ -2826,6 +2869,31 @@ if (!DATA.devices || DATA.devices.length === 0) {
     });
   }
 }
+safely('devices table', function() { renderDevices(''); });
+safely('devices search', function() {
+  const box = document.getElementById('devSearch');
+  if (!box) return;
+  box.addEventListener('input', () => renderDevices(box.value));
+});
+
+// ---------- quick-nav ----------
+// The page is ~5 screens tall; once the command deck is scrolled past, a
+// slim jump bar slides in so Outages/Devices are one click, not a hunt.
+safely('quick nav', function() {
+  const nav = document.getElementById('quickNav');
+  if (!nav) return;
+  nav.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const sec = document.getElementById(b.dataset.goto);
+    if (sec && sec.scrollIntoView) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  let shown = false;
+  window.addEventListener('scroll', () => {
+    const want = (window.scrollY || 0) > 480;
+    if (want !== shown) { shown = want; nav.classList.toggle('show', shown); }
+  }, { passive: true });
+});
 
 // ---------- IoT devices ----------
 safely('iot devices', function() {

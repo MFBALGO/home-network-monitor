@@ -1036,11 +1036,12 @@ def build_html(data):
     --text-primary: #0c1424;
     --text-secondary: #42506b;
     --muted: #7b89a1;
+    --label: #5c6b88;
     --grid: #dfe5ee;
     --baseline: #bfc9d9;
     --border: rgba(15,35,70,0.13);
     --border-soft: rgba(15,35,70,0.07);
-    --shadow: 0 1px 2px rgba(15,35,70,0.05), 0 10px 28px -14px rgba(15,35,70,0.14);
+    --shadow: 0 1px 2px rgba(15,35,70,0.06);
     --accent: #0d6fb8;
     --accent-soft: rgba(13,111,184,0.09);
     --accent-glow: rgba(13,111,184,0.22);
@@ -1080,17 +1081,18 @@ def build_html(data):
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --page: #05080f;
+      --page: #060a12;
       --surface-1: #0c121d;
       --surface-2: #101a2b;
       --text-primary: #e8eef8;
       --text-secondary: #a2b3cb;
       --muted: #5e7290;
+      --label: #6d81a3;
       --grid: #172133;
       --baseline: #273650;
       --border: rgba(130,170,230,0.15);
       --border-soft: rgba(130,170,230,0.07);
-      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 30px -14px rgba(0,0,0,0.6);
+      --shadow: 0 1px 2px rgba(0,0,0,0.35);
       --accent: #3fc6ff;
       --accent-soft: rgba(63,198,255,0.09);
       --accent-glow: rgba(63,198,255,0.30);
@@ -1099,19 +1101,19 @@ def build_html(data):
       --series-blue: #3987e5;
       --series-green: #008300;
       --series-orange: #d95926;
-      --status-good: #0ca30c;
-      --status-good-bg: rgba(12,163,12,0.14);
-      --status-silent: #63a97e;   /* muted sage: up, but only via the ARP cache */
-      --glow-silent: rgba(99,169,126,0.28);
+      --status-good: #2fc662;
+      --status-good-bg: rgba(47,198,98,0.13);
+      --status-silent: #7ab28e;   /* muted sage: up, but only via the ARP cache */
+      --glow-silent: rgba(122,178,142,0.28);
       --status-warning: #fab219;
       --status-warning-bg: rgba(250,178,25,0.12);
       --status-serious: #f4703c;   /* vermilion: kept 25°+ of hue from amber --status-warning */
       --status-serious-bg: rgba(244,112,60,0.14);
-      --status-critical: #e66767;
-      --status-critical-bg: rgba(230,103,103,0.14);
-      --success-text: #0ca30c;
-      --glow-good: rgba(20,200,90,0.30);
-      --glow-bad: rgba(230,103,103,0.35);
+      --status-critical: #e86060;
+      --status-critical-bg: rgba(232,96,96,0.14);
+      --success-text: #2fc662;
+      --glow-good: rgba(47,198,98,0.30);
+      --glow-bad: rgba(232,96,96,0.35);
       --glow-accent: rgba(63,198,255,0.35);
       --scene-sky-top: #030510;
       --scene-sky-bottom: #0a1830;
@@ -1129,17 +1131,18 @@ def build_html(data):
     }
   }
   :root[data-theme="dark"] {
-    --page: #05080f;
+    --page: #060a12;
     --surface-1: #0c121d;
     --surface-2: #101a2b;
     --text-primary: #e8eef8;
     --text-secondary: #a2b3cb;
     --muted: #5e7290;
+    --label: #6d81a3;
     --grid: #172133;
     --baseline: #273650;
     --border: rgba(130,170,230,0.15);
     --border-soft: rgba(130,170,230,0.07);
-    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 30px -14px rgba(0,0,0,0.6);
+    --shadow: 0 1px 2px rgba(0,0,0,0.35);
     --accent: #3fc6ff;
     --accent-soft: rgba(63,198,255,0.09);
     --accent-glow: rgba(63,198,255,0.30);
@@ -1148,17 +1151,19 @@ def build_html(data):
     --series-blue: #3987e5;
     --series-green: #008300;
     --series-orange: #d95926;
-    --status-good: #0ca30c;
-    --status-good-bg: rgba(12,163,12,0.14);
+    --status-good: #2fc662;
+    --status-good-bg: rgba(47,198,98,0.13);
+    --status-silent: #7ab28e;   /* muted sage: up, but only via the ARP cache */
+    --glow-silent: rgba(122,178,142,0.28);
     --status-warning: #fab219;
     --status-warning-bg: rgba(250,178,25,0.12);
     --status-serious: #f4703c;   /* vermilion: kept 25°+ of hue from amber --status-warning */
     --status-serious-bg: rgba(244,112,60,0.14);
-    --status-critical: #e66767;
-    --status-critical-bg: rgba(230,103,103,0.14);
-    --success-text: #0ca30c;
-    --glow-good: rgba(20,200,90,0.30);
-    --glow-bad: rgba(230,103,103,0.35);
+    --status-critical: #e86060;
+    --status-critical-bg: rgba(232,96,96,0.14);
+    --success-text: #2fc662;
+    --glow-good: rgba(47,198,98,0.30);
+    --glow-bad: rgba(232,96,96,0.35);
     --glow-accent: rgba(63,198,255,0.35);
     --scene-sky-top: #030510;
     --scene-sky-bottom: #0a1830;
@@ -1192,8 +1197,8 @@ def build_html(data):
      growing the page by 30+ rows. Scrollbars are hidden globally, so the
      toggle button below the box stays the visible affordance. */
   .list-scroll.expanded { max-height: 55vh; overflow-y: auto; }
-  body::after { content:""; position:fixed; left:0; right:0; top:0; height:220px; pointer-events:none; z-index:0;
-    background: radial-gradient(60% 100% at 50% 0%, var(--accent-soft), transparent 55%); }
+  /* the 2px topline is the one signature flourish left — the page glow
+     and per-card gradients went with the 1a "flat surfaces" pass */
   .topline { position:fixed; top:0; left:0; right:0; height:2px; z-index:5;
     background: linear-gradient(90deg, transparent, var(--accent) 25%, var(--accent) 75%, transparent); opacity:.7; }
   /* slim jump-to-section bar; slides in once the deck is scrolled past */
@@ -1288,10 +1293,14 @@ def build_html(data):
     .deck-l { grid-column: 1; }
     .deck-r { grid-column: 3; }
   }
-  .card { position:relative; background: linear-gradient(180deg, var(--surface-2), var(--surface-1) 58%);
-    border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px 16px; box-shadow: var(--shadow); }
-  .card h3 { margin: 0 0 8px 0; font-size: 13px; letter-spacing: 0; color: var(--text-secondary);
-    font-weight: 600; }
+  /* flat elevation: surface tint + one hairline border; the data is the
+     brightest thing on the card, not the card chrome */
+  .card { position:relative; background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px 12px; box-shadow: var(--shadow); }
+  /* card titles borrowed the table-header voice: 11px caps, muted — the
+     sentence-case 13px titles competed with the sub-lines */
+  .card h3 { margin: 0 0 10px 0; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--label); font-weight: 600; }
   .card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
   .card-head h3 { margin:0; }
   /* upper bound matters: in the ≥1200px deck the hero lives in a single
@@ -1309,7 +1318,10 @@ def build_html(data):
   .rating { font-family: var(--font-mono); font-size: 10px; font-weight: 800; letter-spacing: .1em;
     padding: 3px 8px; border-radius: 5px; display: none; white-space: nowrap; flex-shrink: 0; cursor: help; }
   .rating.show { display: inline-block; }
-  .rating.good { color: var(--status-good); background: var(--status-good-bg); box-shadow: inset 0 0 0 1px var(--glow-good); }
+  /* GOOD collapses to a quiet dot — a page of green GOOD pills is alarm
+     fatigue; only FAIR/LOW/POOR/HIGH keep a pill, so amber means something */
+  .rating.good { width: 7px; height: 7px; padding: 0; border-radius: 50%; font-size: 0;
+    background: var(--status-good); box-shadow: 0 0 5px var(--glow-good); vertical-align: middle; }
   .rating.fair { color: color-mix(in srgb, var(--status-warning) 80%, black); background: var(--status-warning-bg); }
   .rating.poor { color: var(--status-critical); background: var(--status-critical-bg); box-shadow: inset 0 0 0 1px var(--glow-bad); }
   .delta { font-size: 12px; font-weight: 600; display:inline-flex; align-items:center; gap:2px; font-variant-numeric: tabular-nums; }
@@ -1414,11 +1426,13 @@ def build_html(data):
   /* check-cadence footer: command · age · frequency. Deliberately dimmer
      than everything else on the card — it's metadata, not a stat. Turns
      amber when a check runs way past its cadence (per-card stall tell). */
-  .check-foot { margin-top: 10px; padding-top: 7px; border-top: 1px solid var(--border);
-    font-size: 11px; color: var(--muted); font-family: var(--font-mono);
+  .check-foot { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border-soft);
+    font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
     font-variant-numeric: tabular-nums; }
   .check-foot.stale { color: var(--status-warning); font-weight: 700; }
-  .chart-label { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); margin-bottom: 10px; }
+  .chart-label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--label); margin-bottom: 10px; }
+  .chart-label .chart-sublabel, .chart-label .chart-focus { text-transform: none; letter-spacing: 0; }
   /* "Focused: <router> ✕" chip on the per-router chart while a map link
      has the chart narrowed to one line */
   .chart-focus { margin-left: 10px; font-size: 11.5px; font-weight: 600; color: var(--accent);
@@ -2180,23 +2194,20 @@ function setCheckFoot(id, cmd, ts, freqSec, approx) {
 function tickCheckFoots() {
   document.querySelectorAll('[data-checkfoot]').forEach(el => {
     const freq = +el.dataset.freq;
-    // fmt: long = "ping · 6s ago · every ~30s" (HTML cards),
-    //      mid  = "ping · 6s ago · ~30s"       (hover cards — 176px wide),
-    //      min  = "ping · 6s · ~30s"           (internet node — 124px wide)
-    const fmt = el.dataset.fmt || 'long';
+    // one tight format everywhere: "ping · 6s · ~30s" (cmd · age · freq) —
+    // the "ago"/"every" words repeated on every card said nothing
     // "~" marks a MEASURED cadence (median gap in the actual data); a bare
     // value is the configured interval (no data to measure yet)
     const tilde = el.dataset.approx ? '~' : '';
     let mid = 'no data yet', stale = false;
     if (el.dataset.ts) {
       const secs = (Date.now() - new Date(el.dataset.ts).getTime()) / 1000;
-      mid = agoShort(secs) + (fmt === 'min' ? '' : ' ago');
+      mid = agoShort(secs);
       // generous slack: the page itself only regenerates every 60s, so a
       // 15s check legitimately reads up to ~75s old right before a refresh
       stale = secs > freq * 2 + 150;
     }
-    el.textContent = el.dataset.cmd + ' · ' + mid + ' · '
-      + (fmt === 'long' ? 'every ' : '') + tilde + freqShort(freq);
+    el.textContent = el.dataset.cmd + ' · ' + mid + ' · ' + tilde + freqShort(freq);
     el.classList.toggle('stale', stale);
   });
 }
@@ -3595,17 +3606,19 @@ function monoFont() { return cssVar('--font-mono') || 'ui-monospace, Menlo, mono
 function catColor(i) { return cssVar('--cat-' + ((i % 8) + 1)) || '#3987e5'; }
 
 function baseTicks() { return { color: tickColor(), font: { family: monoFont(), size: 11 } }; }
+// horizontal gridlines only: the hover readout owns precise x, so vertical
+// gridlines were noise under every line
 function timeScale(hours) {
   return { type: 'time', time: { unit: hours <= 24 ? 'hour' : 'day' },
-    grid: { color: gridColor() }, border: { display: false }, ticks: baseTicks() };
+    grid: { display: false }, border: { display: false }, ticks: baseTicks() };
 }
 function fixedTimeScale(unit) {
   return { type: 'time', time: { unit: unit },
-    grid: { color: gridColor() }, border: { display: false }, ticks: baseTicks() };
+    grid: { display: false }, border: { display: false }, ticks: baseTicks() };
 }
 function yScale(titleText, extra) {
+  // the unit lives in the tooltip/readout; an axis title ate ~20px per chart
   return Object.assign({
-    title: { display: true, text: titleText, color: tickColor(), font: { family: monoFont(), size: 11 } },
     grid: { color: gridColor() }, border: { display: false }, ticks: baseTicks(), beginAtZero: true,
   }, extra || {});
 }
@@ -3696,13 +3709,13 @@ function refLines(lines) {
         ctx.moveTo(chartArea.left, py);
         ctx.lineTo(chartArea.right, py);
         ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
-        ctx.globalAlpha = 0.45;
+        ctx.setLineDash([3, 4]);
+        ctx.globalAlpha = 0.55;
         ctx.strokeStyle = L.color;
         ctx.stroke();
         if (L.label) {
           ctx.setLineDash([]);
-          ctx.globalAlpha = 0.9;
+          ctx.globalAlpha = 0.8;
           ctx.fillStyle = L.color;
           ctx.textAlign = 'right';
           ctx.textBaseline = 'bottom';
@@ -3742,9 +3755,9 @@ function renderLatencyChart() {
     label: 'Avg latency',
     data: series.map(p => p.v),
     borderColor: blue,
-    backgroundColor: hexToRgba(blue, 0.10),
+    backgroundColor: hexToRgba(blue, 0.08),
     fill: true,
-    borderWidth: 2,
+    borderWidth: 1.5,
     pointRadius: 0,
     pointHoverRadius: 5,
     pointHoverBackgroundColor: blue,
@@ -3763,8 +3776,9 @@ function renderLatencyChart() {
     type: 'line',
     data: { labels: series.map(p => new Date(p.t)), datasets },
     plugins: [ refLines([
-      { value: THRESHOLDS.latency.fair, color: cssVar('--status-critical'), label: 'high ' + THRESHOLDS.latency.fair + 'ms' },
-      { value: THRESHOLDS.latency.good, color: cssVar('--status-good'), label: 'good ' + THRESHOLDS.latency.good + 'ms' },
+      // one amber line that explains itself — a green "good" line under it
+      // was chart furniture (below-the-line IS good)
+      { value: THRESHOLDS.latency.fair, color: cssVar('--status-warning'), label: 'fair ' + THRESHOLDS.latency.fair + 'ms' },
     ]) ],
     options: {
       responsive: true,
@@ -3788,8 +3802,7 @@ function renderLossChart() {
   chartInstances.loss = new Chart(ctx, {
     type: 'line',
     plugins: [ refLines([
-      { value: THRESHOLDS.loss.fair, color: cssVar('--status-critical'), label: 'high ' + THRESHOLDS.loss.fair + '%' },
-      { value: THRESHOLDS.loss.good, color: cssVar('--status-good'), label: 'good ' + THRESHOLDS.loss.good + '%' },
+      { value: THRESHOLDS.loss.fair, color: cssVar('--status-warning'), label: 'fair ' + THRESHOLDS.loss.fair + '%' },
     ]) ],
     data: {
       labels: series.map(p => new Date(p.t)),
@@ -3797,9 +3810,9 @@ function renderLossChart() {
         label: 'Packet loss',
         data: series.map(p => p.v),
         borderColor: orange,
-        backgroundColor: hexToRgba(orange, 0.10),
+        backgroundColor: hexToRgba(orange, 0.08),
         fill: true,
-        borderWidth: 2,
+        borderWidth: 1.5,
         pointRadius: 0,
         pointHoverRadius: 5,
         pointHoverBackgroundColor: orange,

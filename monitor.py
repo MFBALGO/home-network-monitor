@@ -627,29 +627,78 @@ def find_nmap_binary():
 
 
 def nmap_sweep_subnet(own_ip, prefix, nmap_bin):
-    """Host-discovery sweep via nmap (-sn: no port scan). Serves the same
-    purpose as ping_sweep_subnet — populating the ARP cache before it's
-    read — but probes each host several ways (ICMP echo + TCP 80/443),
-    so devices that filter ping get caught more reliably, and nmap's
-    parallelism finishes the /24 faster. Unprivileged mode is fine for
-    this; no root needed. Returns True if the sweep ran."""
+    """Host-discovery sweep via nmap (-sn: no port scan): probes each host
+    several ways (ARP when privileged, else ICMP echo + TCP 80/443), so
+    devices that filter ping get caught reliably, and nmap's parallelism
+    finishes the /24 in seconds.
+
+    Returns the PARSED device list on success (possibly empty of MACs when
+    unprivileged — the ARP-cache read still covers that case), or None when
+    the sweep didn't run (caller falls back to ping_sweep_subnet). The
+    output must be parsed, not discarded: privileged nmap speaks ARP
+    through its own raw sockets, and the Linux kernel ignores ARP replies
+    to requests it never sent — so unlike Windows, the sweep leaves NO
+    trace in the ARP cache. Relying on the cache side effect alone made
+    the Docker install's census collapse to just the routers the monitor
+    itself pings (the "12 devices" bug)."""
     if not own_ip:
-        return False
+        return None
     try:
         network = ipaddress.ip_network(f"{own_ip}/{prefix}", strict=False)
     except Exception:
-        return False
+        return None
     try:
-        subprocess.run(
+        result = subprocess.run(
             [nmap_bin, "-sn", "-T4", "--max-retries", "1", str(network)],
             capture_output=True, text=True, timeout=180, **SUBPROCESS_EXTRA,
         )
-        return True
+        return _parse_nmap_report(result.stdout)
     except subprocess.TimeoutExpired:
         log_error("nmap sweep timed out after 180s — using built-in ping sweep this cycle")
     except Exception as e:
         log_error(f"nmap sweep failed ({e!r}) — using built-in ping sweep this cycle")
-    return False
+    return None
+
+
+def _parse_nmap_report(out):
+    """Extract {ip, mac, hostname} rows from `nmap -sn` text output:
+
+        Nmap scan report for LINKSYS95170 (192.168.1.2)
+        Host is up (0.0010s latency).
+        MAC Address: 14:91:82:A3:D8:E6 (Belkin International)
+
+    The report line comes with or without a reverse-DNS name; the MAC line
+    only exists in privileged (ARP-scan) runs and never for the scanning
+    host itself. Hosts without a MAC are skipped — the census is MAC-keyed
+    and the ARP-cache read supplies anything the kernel does know."""
+    devices, cur_ip, cur_name = [], None, None
+    for line in out.splitlines():
+        m = re.match(r"Nmap scan report for (?:(\S+) \(([\d.]+)\)|([\d.]+))\s*$", line)
+        if m:
+            cur_name, cur_ip = m.group(1), (m.group(2) or m.group(3))
+            continue
+        m = re.match(r"MAC Address:\s+(([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})", line)
+        if m and cur_ip:
+            mac = _normalize_mac(m.group(1).lower())
+            if not _is_multicast_or_broadcast(cur_ip, mac):
+                devices.append({"ip": cur_ip, "mac": mac, "hostname": cur_name})
+            cur_ip = cur_name = None
+    return devices
+
+
+def _merge_device_lists(primary, secondary):
+    """Union two device lists by MAC. First sighting of a MAC wins the row;
+    a later duplicate only donates its hostname when the kept row has none
+    (nmap rows carry nmap's own reverse-DNS names, arp rows get names from
+    _resolve_hostnames — either side may know one the other doesn't)."""
+    by_mac = {}
+    for d in primary + secondary:
+        cur = by_mac.get(d["mac"])
+        if cur is None:
+            by_mac[d["mac"]] = dict(d)
+        elif not cur.get("hostname") and d.get("hostname"):
+            cur["hostname"] = d["hostname"]
+    return list(by_mac.values())
 
 
 def ping_sweep_subnet(own_ip, prefix, max_workers=64):
@@ -1815,11 +1864,17 @@ def run_device_scan(conn):
         if mode != st["last_sweep_mode"]:
             log(f"device discovery via {mode}")
             st["last_sweep_mode"] = mode
-        swept = nmap_sweep_subnet(own_ip, prefix, nmap_bin) if nmap_bin else False
-        if not swept:
+        nmap_devs = nmap_sweep_subnet(own_ip, prefix, nmap_bin) if nmap_bin else None
+        if nmap_devs is None:   # nmap missing or failed ([] = ran fine, just no MAC rows)
             ping_sweep_subnet(own_ip, prefix)
         ts = now_iso()
         devices = scan_devices()
+        if nmap_devs:
+            # nmap's own report is the primary source — on Linux its ARP
+            # harvest never reaches the kernel cache that scan_devices()
+            # reads, so without this merge the census is just the routers
+            # the monitor pings itself
+            devices = _merge_device_lists(nmap_devs, devices)
         if not devices:
             log_error("device scan returned 0 devices — not writing an empty snapshot "
                       "(the ARP cache should never be truly empty; see stderr above for the cause)")

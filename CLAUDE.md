@@ -156,7 +156,14 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   - Device scan: nmap `-sn` sweep when installed (checked every cycle),
     else built-in ping sweep, then `arp -an`/`arp -a` (NOT plain `arp -a`
     on mac — reverse-DNS blew the timeout: the old "0 devices" bug), then
-    bounded reverse-DNS.
+    bounded reverse-DNS. nmap's OUTPUT IS PARSED (_parse_nmap_report →
+    _merge_device_lists union-by-MAC with the arp read), not just run for
+    its cache side effect: privileged nmap ARPs via its own raw sockets
+    and the Linux kernel ignores replies to requests it didn't send, so
+    on Linux the sweep leaves NO ARP-cache trace — census collapsed to
+    the ~12 router entries the monitor itself pings (the Docker "fewer
+    devices" bug). Windows happened to cache them, which hid the design
+    flaw.
   - New-device events (baseline = all MACs ever; first scan absorbs
     unknowns silently). SQLite WAL + busy_timeout.
 - `dashboard.py` — reads DB, writes `dashboard.html`. Dark-first "Mission

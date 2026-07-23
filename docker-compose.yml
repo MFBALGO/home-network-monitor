@@ -26,6 +26,12 @@ services:
       NETMON_WEB_PORT: "8090"   # the dashboard's LAN port (default 8080 —
                                 # overridden here to stay clear of other stacks)
       TZ: "Asia/Riyadh"         # set to your timezone (email/report times)
+      # Headless server: there's no "localhost" browser to run the wizard /
+      # settings from, so optionally open the admin surface to the whole
+      # private LAN (anyone on it can then read AND change the config,
+      # including any alert email password). Without this, admin works via
+      # an SSH tunnel: ssh -L 8090:127.0.0.1:8090 you@server
+      # NETMON_ADMIN_LAN: "1"
     volumes:
       - ./app:/app              # ALL mutable state + seeded code
     cap_add:

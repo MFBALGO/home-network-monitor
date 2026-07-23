@@ -568,7 +568,12 @@ Things to know:
   `ssh -L 8090:127.0.0.1:8090 you@server` then browse
   `http://localhost:8090/setup`. Alternatively pre-place your
   `config.json` / `routers.json` / `devices.json` into `app/` before the
-  first start.
+  first start. Or — if you're comfortable with every device on your LAN
+  being able to read and change the monitor's config — set
+  `NETMON_ADMIN_LAN: "1"` in the compose file (there's a commented line
+  ready): the wizard, settings and their API then answer to any
+  private-IP device, and the dashboard shows its Settings button to
+  those devices. The anti-rebinding/CSRF guards stay active either way.
 - **Updates happen by rebuilding the image** (`git pull` in `src/`, then
   `docker compose build && docker compose up -d`). The in-app "Update now"
   button is a no-op in the container: the entrypoint re-seeds the image's

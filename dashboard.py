@@ -1739,7 +1739,7 @@ def build_html(data):
         <button data-theme="dark">Dark</button>
         <button data-theme="auto">Auto</button>
       </div>
-      <a id="settingsLink" style="display:none" title="Configure routers, floors, and device names (only available on the monitor PC)">Settings</a>
+      <a id="settingsLink" style="display:none" title="Configure routers, floors, device names, and alerts (shown only where the server allows settings access)">Settings</a>
     </div>
   </div>
 
@@ -2041,9 +2041,11 @@ if (DATA.update && DATA.update.latest) {
   }
 }
 
-// Settings only work from the machine running the monitor (serve.py rejects
-// everyone else), so only surface the link where it will actually work:
-// viewed via http://localhost:8080 or opened as a local file on that machine.
+// Settings normally answer only on the machine running the monitor, but a
+// headless/Docker install can opt the LAN in (serve.py NETMON_ADMIN_LAN) —
+// so for LAN viewers ASK the server instead of guessing from the hostname:
+// a cheap HEAD /settings comes back 200 exactly when this viewer would get
+// in, 403 when it would not (link stays hidden — same as before the opt-in).
 (() => {
   const link = document.getElementById('settingsLink');
   if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
@@ -2052,6 +2054,10 @@ if (DATA.update && DATA.update.latest) {
   } else if (location.protocol === 'file:') {
     link.href = 'http://localhost:8080/settings';
     link.style.display = '';
+  } else if (location.protocol === 'http:' || location.protocol === 'https:') {
+    fetch('/settings', { method: 'HEAD', cache: 'no-store' })
+      .then(r => { if (r.ok) { link.href = '/settings'; link.style.display = ''; } })
+      .catch(() => {});
   }
 })();
 if (DATA.version) {

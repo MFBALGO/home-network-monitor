@@ -281,7 +281,14 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   private-IP literal). Localhost additionally gets `/setup` (first-run
   wizard), `/settings`, and the `/api/*` config endpoints — POSTs are
   guarded against CSRF/DNS-rebinding (Host/Origin/Content-Type checks,
-  256KB body cap). `/` 302s to the wizard on a fresh install and serves a
+  256KB body cap). Env `NETMON_ADMIN_LAN=1` (headless/Docker installs;
+  default off) widens the whole admin surface — wizard, settings, all
+  /api/* incl. the update endpoints — from localhost-only to any
+  private-IP PEER, still requiring a private-IP-literal Host + Origin
+  (the rebinding/CSRF guards apply to the wider audience unchanged);
+  `_is_admin()` is the one gate helper. The dashboard's topbar Settings
+  link probes `HEAD /settings` for non-localhost viewers and shows
+  itself only on 200, so the link tracks the server's actual policy. `/` 302s to the wizard on a fresh install and serves a
   "warming up" page until dashboard.html first exists. Port 8080
   (`NETMON_WEB_PORT` to override), no-store on HTML, 503 + Retry-After
   if the file is mid-rewrite.
@@ -369,7 +376,10 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   it. The Settings poll treats fetch failures as "web server
   restarting, keep waiting" and declares success when the reported
   version CHANGES; update endpoints are localhost-only (NOT in
-  serve.py's LAN_API — a phone must not update the house monitor).
+  serve.py's LAN_API — a phone must not update the house monitor;
+  NETMON_ADMIN_LAN=1 deliberately lifts this along with the rest of
+  the admin surface, and in a container "Update now" is a no-op anyway
+  — the entrypoint reseeds image code on restart).
 - `diagnose.py` — builds `netmon-diagnostics-*.zip` (report + logs tail
   + configs) for remote troubleshooting; `build_bundle()` is importable.
 - SQLite tables: `pings` (+sent/received burst counts), `router_pings`,

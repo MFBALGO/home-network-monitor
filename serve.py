@@ -9,7 +9,10 @@ The LAN sees ONLY dashboard.html and the two vendored chart libraries -
 the database, logs, and config files are not reachable from the network.
 The setup wizard (/setup) and settings pages (/settings), plus the
 /api/* endpoints that read and write the config files, answer ONLY to
-this machine itself (127.0.0.1); other devices get a polite 403.
+this machine itself (127.0.0.1); other devices get a polite 403. On a
+headless install (Docker, a server in a closet) set NETMON_ADMIN_LAN=1
+to open that admin surface to every private-IP device on your LAN -
+see the comment at ADMIN_LAN below for what that trade means.
 
 Stdlib only; runs on Windows, macOS, and Linux. On Windows, setup.ps1
 registers it as the "NetMon Web" scheduled task and opens TCP 8080 on
@@ -29,6 +32,18 @@ except ImportError:  # partially-copied install
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("NETMON_WEB_PORT", "8080"))
+
+# Opt-in for headless installs (Docker / a server in a closet where nobody
+# can browse from localhost): NETMON_ADMIN_LAN=1 opens the wizard, settings
+# pages and config API to any device with a PRIVATE address, not just this
+# machine. The DNS-rebinding and CSRF guards below still apply (Host and
+# Origin must be private-IP literals, POSTs must be JSON) — this widens WHO
+# may connect, on the theory that a home LAN's occupants are the household.
+# Know what you're opting into: every LAN device can then read and change
+# the config, including any alert email password stored in it. Leave it off
+# on a machine you sit at — settings already work there via localhost.
+ADMIN_LAN = (os.environ.get("NETMON_ADMIN_LAN") or "").strip().lower() in (
+    "1", "true", "yes", "on")
 
 # Under pythonw.exe (no console) stdout/stderr are None - send them to logs/
 # like monitor.py does, so crashes are visible somewhere.
@@ -126,6 +141,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except ValueError:
             return False
 
+    def _peer_is_private(self):
+        try:
+            return ipaddress.ip_address(self.client_address[0]).is_private
+        except ValueError:
+            return False
+
+    def _is_admin(self):
+        """Who may use the settings surface: the machine itself, or — with
+        NETMON_ADMIN_LAN set (headless/Docker installs) — any private-IP
+        peer whose Host header is also a private-IP literal (the same
+        anti-rebinding rule the LAN API carve-out uses)."""
+        if self._is_local():
+            return True
+        return ADMIN_LAN and self._peer_is_private() and self._host_is_private_ip()
+
     def _send(self, status, body, ctype="text/html; charset=utf-8", extra=None):
         data = body.encode("utf-8") if isinstance(body, str) else body
         self.send_response(status)
@@ -146,9 +176,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _serve(self, send_body):
         path = self.path.split("?", 1)[0].split("#", 1)[0]
 
-        # Localhost-only surface: wizard, settings, and their API.
+        # Admin surface: wizard, settings, and their API. Localhost-only
+        # unless NETMON_ADMIN_LAN opted the whole private LAN in.
         if settings_api and path in ("/settings", "/setup") :
-            if not self._is_local():
+            if not self._is_admin():
                 self._send(403, LOCAL_ONLY_HTML % (PORT, path))
                 return
             self._send(200, settings_page.SETTINGS_HTML if path == "/settings"
@@ -156,7 +187,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if settings_api and path.startswith("/api/"):
             lan_ok = path in LAN_API["GET"] and self._host_is_private_ip()
-            if not self._is_local() and not lan_ok:
+            if not self._is_admin() and not lan_ok:
                 self._send_json(403, {"ok": False, "error": "settings are only available on the monitor PC"})
                 return
             try:
@@ -165,9 +196,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 status, payload = 500, {"ok": False, "error": f"{type(e).__name__}: {e}"}
             self._send_json(status, payload)
             return
-        # Fresh install, browsed from the machine itself: walk them into
-        # the wizard instead of showing an empty dashboard.
-        if settings_api and path == "/" and self._is_local() and settings_api.wizard_needed():
+        # Fresh install, browsed from an admin-capable client: walk them
+        # into the wizard instead of showing an empty dashboard.
+        if settings_api and path == "/" and self._is_admin() and settings_api.wizard_needed():
             self._send(302, "", extra={"Location": "/setup"})
             return
 
@@ -224,22 +255,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"ok": False, "error": "unknown endpoint"})
             return
         # There is deliberately no password on the settings API, so these
-        # guards do the work instead: only the machine itself may connect,
-        # and a browser page from some random website must not be able to
-        # ride along on that (CSRF / DNS rebinding). The LAN_API paths get
-        # a deliberate carve-out: any LAN client, but the Host header must
-        # be a private-IP literal (and the JSON Content-Type below forces a
+        # guards do the work instead: only the machine itself may connect
+        # (or, with NETMON_ADMIN_LAN, any private-IP peer), and a browser
+        # page from some random website must not be able to ride along on
+        # that (CSRF / DNS rebinding). The LAN_API paths get a deliberate
+        # carve-out: any LAN client, but the Host header must be a
+        # private-IP literal (and the JSON Content-Type below forces a
         # CORS preflight this server never answers, killing cross-site
         # fetches from the internet).
         lan_ok = path in LAN_API["POST"] and self._host_is_private_ip()
-        if not lan_ok and (not self._is_local() or not self._host_is_local()):
+        local_ok = self._is_local() and self._host_is_local()
+        adminlan_ok = ADMIN_LAN and self._peer_is_private() and self._host_is_private_ip()
+        if not (lan_ok or local_ok or adminlan_ok):
             self._send_json(403, {"ok": False, "error": "settings are only available on the monitor PC"})
             return
         origin = self.headers.get("Origin")
         if origin:
             origin_host = origin.split("//", 1)[-1].split(":", 1)[0].strip("[]").lower()
             origin_ok = origin_host in ("localhost", "127.0.0.1")
-            if not origin_ok and lan_ok:
+            if not origin_ok and (lan_ok or adminlan_ok):
                 # LAN carve-out: same-origin fetches from the dashboard page
                 # carry the dashboard's own private-IP origin
                 try:

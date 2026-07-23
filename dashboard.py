@@ -1209,10 +1209,10 @@ def build_html(data):
   .quick-nav button { border:none; background:transparent; color: var(--muted); font-size:12px; font-weight:600;
     padding: 5px 13px; border-radius:999px; cursor:pointer; transition: color .12s ease, background .12s ease; }
   .quick-nav button:hover { color: var(--accent); background: var(--accent-soft); }
-  /* always-visible flavor: sits in-flow under the topbar; the fixed bar
-     above still slides in once this one scrolls out of view */
-  .quick-nav-static { position:static; transform:none; justify-content:center;
-    margin: -8px 0 18px; flex-wrap:wrap; }
+  /* the in-topbar flavor: sits in the topbar's flex row, centered; the
+     fixed bar above still slides in once the topbar scrolls out of view */
+  .topbar-nav { position:static; transform:none; margin:0 auto; box-shadow:none; }
+  @media (max-width: 940px) { .topbar-nav { display:none; } }
   /* live filter box over the devices table */
   .search-box { background: var(--surface-1); border:1px solid var(--border); border-radius:8px;
     color: var(--text-primary); font-size:12.5px; padding:6px 11px; width:190px; outline:none;
@@ -1230,7 +1230,7 @@ def build_html(data):
 
   .topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom: 26px; gap: 16px; flex-wrap: wrap; }
   .brand { display:flex; align-items:center; gap:14px; }
-  .brand-mark { position:relative; width:46px; height:46px; border-radius:50%; border:1px solid var(--border);
+  .brand-mark { position:relative; width:38px; height:38px; border-radius:50%; border:1px solid var(--border);
     background: radial-gradient(circle at 50% 50%, var(--accent-soft), transparent 72%); overflow:hidden; flex-shrink:0;
     box-shadow: var(--shadow); }
   .brand-mark svg { position:absolute; inset:0; }
@@ -1240,7 +1240,7 @@ def build_html(data):
   @keyframes sweep { to { transform: rotate(360deg); } }
   .brand-mark .core { position:absolute; left:50%; top:50%; width:6px; height:6px; margin:-3px 0 0 -3px; border-radius:50%;
     background: var(--accent); box-shadow: 0 0 8px 2px var(--accent-glow); }
-  h1 { font-size: 20px; margin: 0 0 5px 0; letter-spacing: -.01em; font-weight: 650; }
+  h1 { font-size: 17px; margin: 0 0 3px 0; letter-spacing: -.01em; font-weight: 650; }
   .subtitle { color: var(--text-secondary); font-size: 12px; display:flex; align-items:center; gap:7px; font-family: var(--font-mono); }
   .live-dot { width:7px; height:7px; border-radius:50%; background: var(--status-good); display:inline-block;
     box-shadow: 0 0 6px var(--glow-good); animation: pulse 2.2s infinite; }
@@ -1274,25 +1274,63 @@ def build_html(data):
     #testNowResult { text-align:left; }
   }
 
-  /* the "command deck": house map front and center, stat cards flanking
-     it left/right on wide screens. Below 1200px it degrades to map first,
-     then cards in the old auto-fit grid (source order = map first). */
-  .deck { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 14px;
+  /* the "command deck": two heroes + two row-list cards flanking the map.
+     Below 1200px it degrades to map first (DOM order), then the four
+     cards in a 2-up grid — summary-first on every width. */
+  .deck { display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
     margin-bottom: 12px; /* breathing room before the per-router chart */ }
   .deck-map { grid-column: 1 / -1; }
   /* flex-column cards so the cadence footer pins to the bottom when the
      side columns stretch to match the map's height */
   .deck .card { display: flex; flex-direction: column; }
-  .deck .card .check-foot { margin-top: auto; padding-top: 7px; }
+  .deck .card .check-foot { margin-top: auto; padding-top: 8px; }
   @media (min-width: 1200px) {
-    /* dense: without it the auto-placement cursor, having filled the left
-       column to row 4, would start the right column at row 4 too */
-    .deck { grid-template-columns: minmax(230px, 300px) minmax(0, 1fr) minmax(230px, 300px);
-      grid-auto-flow: row dense; }
-    .deck-map { grid-column: 2; grid-row: 1 / span 4; }
+    .deck { grid-template-columns: minmax(240px, 290px) minmax(0, 1fr) minmax(240px, 290px);
+      grid-template-rows: auto 1fr; }
+    .deck-map { grid-column: 2; grid-row: 1 / span 2; }
     .deck-l { grid-column: 1; }
     .deck-r { grid-column: 3; }
   }
+  /* hero value line: the one number the household feels */
+  .hero-row { display: flex; align-items: center; gap: 10px; }
+  .hero-row .sparkline { margin-left: auto; }
+  .hero-value { font-size: 36px; font-weight: 650; letter-spacing: -.02em; line-height: 1;
+    font-variant-numeric: tabular-nums; }
+  .hero-value .unit { font-size: 14px; color: var(--muted); font-weight: 600; margin-left: 3px; }
+  /* rail rows: label · spark · value · verdict — cards became rows */
+  .qrow { display: flex; align-items: center; gap: 8px; padding: 9px 0;
+    border-bottom: 1px solid var(--border-soft); }
+  .qrow:last-child, .qrow.qrow-tail { border-bottom: none; }
+  .qrow .q-label { font-size: 12.5px; color: var(--text-secondary); flex: 1; min-width: 0; }
+  .qrow .q-spark { flex-shrink: 0; color: var(--baseline); }
+  .qrow .q-val { font-size: 13.5px; font-weight: 640; color: var(--text-primary);
+    font-variant-numeric: tabular-nums; min-width: 58px; text-align: right; white-space: nowrap; }
+  .qrow .rating { font-size: 9px; padding: 2px 6px; }
+  .q-subline { font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
+    padding: 0 0 6px; }
+  /* mini progress bars (plan delivery, uptime) */
+  .mini-bar { position: relative; height: 4px; border-radius: 2px; background: var(--grid);
+    overflow: hidden; flex-shrink: 0; }
+  .mini-bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px;
+    background: var(--status-good); opacity: .85; }
+  .plan-bars { display: flex; flex-direction: column; gap: 7px; margin-top: 12px; }
+  .plan-bar { display: flex; align-items: center; gap: 8px; }
+  .plan-bar .mini-bar { flex: 1; height: 5px; }
+  .plan-bar .plan-cap { font-family: var(--font-mono); font-size: 9.5px; color: var(--muted);
+    min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
+  /* map card header: caps title + the status-color legend */
+  .map-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin-bottom: 4px; flex-wrap: wrap; }
+  .map-title { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--label); }
+  .map-legend { display: flex; gap: 14px; font-family: var(--font-mono); font-size: 9.5px;
+    color: var(--muted); }
+  .map-legend .mlk { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .map-legend .mlk i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  /* nat / info flag pills (Public IP row) */
+  .flag-pill { font-family: var(--font-mono); font-size: 9px; font-weight: 800; letter-spacing: .06em;
+    color: var(--status-warning); background: var(--status-warning-bg); padding: 2px 6px;
+    border-radius: 5px; text-transform: uppercase; white-space: nowrap; }
   /* flat elevation: surface tint + one hairline border; the data is the
      brightest thing on the card, not the card chrome */
   .card { position:relative; background: var(--surface-1);
@@ -1303,9 +1341,6 @@ def build_html(data):
     color: var(--label); font-weight: 600; }
   .card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
   .card-head h3 { margin:0; }
-  /* upper bound matters: in the ≥1200px deck the hero lives in a single
-     side column — a 2-column span there would overlap the map */
-  @media (min-width: 940px) and (max-width: 1199px) { .card-hero { grid-column: span 2; } }
   .stat-row { display:flex; align-items:flex-end; justify-content:space-between; gap: 10px; }
   .stat-value { font-size: 30px; font-weight: 650; letter-spacing: -.01em; line-height:1;
     font-variant-numeric: tabular-nums; }
@@ -1449,10 +1484,12 @@ def build_html(data):
      viewport — and the 2-line clamp keeps verbose names from stacking
      rows 200px tall. */
   @media (max-width: 480px) {
-    /* two-up stat cards: a single 990px column of cards buried the whole
-       dashboard below a screen and a half of scrolling */
-    .deck { grid-template-columns: 1fr 1fr; gap: 10px; }
-    .deck-map, .card-hero { grid-column: span 2; }
+    /* map + heroes span the row; the two row-list cards sit side by side
+       (their sparks hide so the values keep room) */
+    .deck { gap: 10px; }
+    .deck-map, .deck .card:not(.deck-fill) { grid-column: span 2; }
+    .q-spark { display: none; }
+    .hero-value { font-size: 28px; }
     .stat-value { font-size: 25px; }
     table { font-size: 12px; }
     th, td { padding: 8px 4px; }
@@ -1652,10 +1689,12 @@ def build_html(data):
   .house-svg .bar-fill { fill: currentColor; opacity: .85; }
   .house-svg .linkgrp.up { color: var(--status-good); }
   .house-svg .linkgrp.down { color: var(--status-critical); }
-  .house-svg .link-glow { fill: none; stroke: currentColor; stroke-width: 6; opacity: .10; stroke-linecap: round; }
-  .house-svg .link-core { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; opacity: .6; }
-  .house-svg .linkgrp.up .link-core { stroke-dasharray: 4 9; animation: dashflow 1.2s linear infinite; }
-  .house-svg .linkgrp.down .link-core { stroke-dasharray: 3 6; opacity: .8; }
+  /* quieter link work: 1.4px, slower dashes — the down AP should be the
+     loudest thing on the map, not the healthy links */
+  .house-svg .link-glow { fill: none; stroke: currentColor; stroke-width: 5; opacity: .07; stroke-linecap: round; }
+  .house-svg .link-core { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; opacity: .55; }
+  .house-svg .linkgrp.up .link-core { stroke-dasharray: 4 9; animation: dashflow 1.4s linear infinite; }
+  .house-svg .linkgrp.down .link-core { stroke-dasharray: 3 6; opacity: .75; }
   @keyframes dashflow { to { stroke-dashoffset: -26; } }
   .house-svg .packet { fill: currentColor; }
   .house-svg .ripple { fill: none; stroke: var(--accent); }
@@ -1663,6 +1702,10 @@ def build_html(data):
   .house-svg .pillgrp { cursor: pointer; }
   .house-svg .pill-box { fill: var(--surface-1); stroke: currentColor; stroke-width: 1.5; }
   .house-svg .pill-name { fill: var(--text-primary); font-size: 11px; font-weight: 700; }
+  /* live readout on the pill face: latency when up, state word when not */
+  .house-svg .pill-stat { fill: var(--text-secondary); font-size: 8.5px; font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums; }
+  .house-svg .node-down .pill-stat, .house-svg .node-silent .pill-stat { fill: currentColor; font-weight: 700; }
   .house-svg .isp-sub { fill: var(--muted); font-size: 9px; font-family: var(--font-mono);
     text-transform: uppercase; letter-spacing: .1em; }
   /* compact (phone) map: the viewBox shrinks to ~330 units so labels keep
@@ -1736,6 +1779,16 @@ def build_html(data):
         <div class="subtitle"><span class="live-dot"></span><span id="generatedAt"></span><a id="updatePill" target="_blank" rel="noopener" style="display:none"></a></div>
       </div>
     </div>
+    <!-- quick-nav lives IN the topbar now (the separate static bar + fixed
+         clone was two chromes for one job); the fixed pill bar below still
+         slides in once this scrolls away -->
+    <nav class="quick-nav topbar-nav" aria-label="Sections">
+      <button data-goto="sec-deck">Map</button>
+      <button data-goto="sec-charts">Latency</button>
+      <button data-goto="sec-speed">Speed</button>
+      <button data-goto="sec-outages">Incidents</button>
+      <button data-goto="sec-devices">Devices</button>
+    </nav>
     <div class="topbar-tools">
       <div class="theme-toggle" id="refreshCtl">
         <button id="refreshBtn" title="Reload the page now">
@@ -1760,14 +1813,6 @@ def build_html(data):
     </div>
   </div>
 
-  <nav class="quick-nav quick-nav-static" aria-label="Sections">
-    <button data-goto="sec-deck">Map</button>
-    <button data-goto="sec-charts">Latency</button>
-    <button data-goto="sec-speed">Speed</button>
-    <button data-goto="sec-outages">Outages</button>
-    <button data-goto="sec-devices">Devices</button>
-  </nav>
-
   <div id="updateBanner" class="warning-banner update-banner"></div>
 
   <div id="diagBanner" class="diag-banner" style="display:none"></div>
@@ -1776,78 +1821,55 @@ def build_html(data):
     <button data-goto="sec-deck">Map</button>
     <button data-goto="sec-charts">Latency</button>
     <button data-goto="sec-speed">Speed</button>
-    <button data-goto="sec-outages">Outages</button>
+    <button data-goto="sec-outages">Incidents</button>
     <button data-goto="sec-devices">Devices</button>
   </nav>
 
+  <!-- command deck: two heroes flanking the map, not seven equal cards.
+       DOM order = map first, so sub-1200px layouts read summary-first. -->
   <section id="sec-deck">
-    <div class="section-head">
-      <h2>Routers &amp; access points</h2>
-      <span class="section-note">from routers.json</span>
-    </div>
     <div class="deck">
-      <div class="chart-card panel-hud deck-map">
+      <div class="chart-card deck-map">
+        <div class="map-head">
+          <span class="map-title">Live house map</span>
+          <span class="map-legend">
+            <span class="mlk"><i style="background:var(--status-good)"></i>up</span>
+            <span class="mlk"><i style="background:var(--status-silent)"></i>online · silent</span>
+            <span class="mlk"><i style="background:var(--status-critical)"></i>down</span>
+            <span class="mlk"><i style="background:var(--accent)"></i>gateway</span>
+          </span>
+        </div>
         <div id="houseMapWrap"></div>
         <div id="houseMapNote" class="section-note" style="display:none; text-align:center; margin-top:6px;"></div>
       </div>
-      <div class="card card-hero deck-l">
-        <h3>Current status</h3>
-        <div class="stat-row">
-          <div>
-            <div id="statusPill"></div>
-            <div class="stat-sub" id="currentLatency"></div>
-          </div>
-          <canvas class="sparkline" id="sparkline" width="150" height="44"></canvas>
+      <!-- left rail: the line -->
+      <div class="card deck-l">
+        <div class="card-head"><h3>Internet</h3><span id="statusPill"></span></div>
+        <div class="hero-row">
+          <div class="hero-value" id="liveLatency">—</div>
+          <canvas class="sparkline" id="sparkline" width="86" height="30"></canvas>
         </div>
+        <div class="stat-sub" id="currentLatency"></div>
         <div class="check-foot" id="cfStatus"></div>
       </div>
-      <div class="card deck-l">
-        <div class="card-head"><h3>Uptime · 24h</h3><span class="rating" id="rateUptime24"></span></div>
-        <div class="stat-row">
-          <div class="stat-value" id="uptime24h">—</div>
-          <div class="delta" id="uptimeDelta"></div>
-        </div>
-        <div class="stat-sub" id="loss24h"></div>
-        <div class="check-foot" id="cfUptime24"></div>
+      <div class="card deck-l deck-fill">
+        <h3>Quality · 24h</h3>
+        <div id="qualityRows"></div>
+        <div class="check-foot" id="cfQuality"></div>
       </div>
-      <div class="card deck-l">
-        <div class="card-head"><h3>Uptime · 7d</h3><span class="rating" id="rateUptime7"></span></div>
-        <div class="stat-value" id="uptime7d">—</div>
-        <div class="stat-sub" id="loss7d"></div>
-        <div class="check-foot" id="cfUptime7"></div>
-      </div>
-      <div class="card deck-l">
-        <div class="card-head"><h3>Avg latency · 24h</h3><span class="rating" id="rateLatency"></span></div>
-        <div class="stat-row">
-          <div class="stat-value" id="avgLatency24h">—</div>
-          <div class="delta" id="latencyDelta"></div>
-        </div>
-        <div class="stat-sub">to 1.1.1.1 / 8.8.8.8 / 9.9.9.9</div>
-        <div class="check-foot" id="cfLatency"></div>
-      </div>
+      <!-- right rail: the contract & the house -->
       <div class="card deck-r">
-        <div class="card-head"><h3>DNS · 24h</h3><span class="rating" id="rateDns"></span></div>
-        <div class="stat-value" id="dnsAvg">—</div>
-        <div class="stat-sub" id="dnsSub">name-lookup speed</div>
-        <div class="check-foot" id="cfDns"></div>
-      </div>
-      <div class="card deck-r">
-        <div class="card-head"><h3>Jitter · 24h</h3><span class="rating" id="rateJitter"></span></div>
-        <div class="stat-value" id="jitter24h">—</div>
-        <div class="stat-sub">latency stability — lower is steadier (calls/gaming)</div>
-        <div class="check-foot" id="cfJitter"></div>
-      </div>
-      <div class="card deck-r">
-        <div class="card-head"><h3>Speed · last test</h3><span class="rating" id="rateSpeed"></span></div>
-        <div class="stat-value" id="speedLast">—</div>
+        <div class="card-head"><h3 id="speedCardTitle">Speed vs plan</h3><span class="rating" id="rateSpeed"></span></div>
+        <div class="hero-value" id="speedLast">—</div>
+        <div id="planBars"></div>
         <div class="stat-sub" id="speedLastSub">Mbps down / up</div>
+        <div class="stat-sub" id="bloatRow" style="display:none"></div>
         <div class="check-foot" id="cfSpeedCard"></div>
       </div>
-      <div class="card deck-r">
-        <h3>Public IP</h3>
-        <div class="stat-value stat-value-ip" id="publicIp">—</div>
-        <div class="stat-sub" id="publicIpStable"></div>
-        <div class="check-foot" id="cfPublicIp"></div>
+      <div class="card deck-r deck-fill">
+        <h3>House</h3>
+        <div id="houseRows"></div>
+        <div class="check-foot" id="cfHouse"></div>
       </div>
     </div>
     <div class="chart-card with-tools" id="routersCard">
@@ -2018,7 +2040,8 @@ function cssVar(name) { return getComputedStyle(document.documentElement).getPro
 
 // ---------- header ----------
 document.getElementById('generatedAt').textContent =
-  'Updated ' + new Date(DATA.generated_at).toLocaleString();
+  'updated ' + new Date(DATA.generated_at).toLocaleTimeString()
+  + (DATA.version ? ' · v' + DATA.version : '');
 
 if (DATA.update && DATA.update.latest) {
   const up = document.getElementById('updatePill');
@@ -2081,78 +2104,6 @@ if (DATA.version) {
   document.getElementById('footerNote').textContent =
     'netmon v' + DATA.version + ' — everything on this page stays local, regenerated every minute by dashboard.py. Reload to see the latest.';
 }
-
-const pill = document.getElementById('statusPill');
-if (DATA.current_status === 'up') {
-  pill.innerHTML = '<span class="status-pill status-up"><span class="status-dot"></span>Online</span>';
-} else if (DATA.current_status === 'down') {
-  pill.innerHTML = '<span class="status-pill status-down"><span class="status-dot"></span>Offline</span>';
-} else {
-  pill.innerHTML = '<span class="status-pill">Unknown</span>';
-}
-document.getElementById('currentLatency').textContent =
-  DATA.current_latency != null ? (Math.round(DATA.current_latency * 10) / 10) + ' ms right now' : 'no recent ping';
-
-function setStat(id, value, unit) {
-  const el = document.getElementById(id);
-  if (value == null) { el.textContent = '—'; return; }
-  el.innerHTML = escapeHtml(value) + (unit ? '<span class="unit">' + unit + '</span>' : '');
-}
-setStat('uptime24h', DATA.stats_24h.uptime_pct, '%');
-document.getElementById('loss24h').textContent = DATA.stats_24h.loss_pct != null ? DATA.stats_24h.loss_pct + '% packet loss' : '';
-setStat('uptime7d', DATA.stats_7d.uptime_pct, '%');
-document.getElementById('loss7d').textContent = DATA.stats_7d.loss_pct != null ? DATA.stats_7d.loss_pct + '% packet loss' : '';
-setStat('avgLatency24h', DATA.stats_24h.avg_latency, 'ms');
-setStat('dnsAvg', DATA.dns_24h ? DATA.dns_24h.avg : null, 'ms');
-safely('speed card', function() {
-  // last successful speed test; the sub-line rates it against the plan.
-  // Cutoffs come from thresholds.plan_pct (defaults 90/80) — the same
-  // numbers the ISP evidence report uses for its below-plan list.
-  const s = (DATA.speed_series || []).slice(-1)[0];
-  const el = document.getElementById('speedLast'), sub = document.getElementById('speedLastSub');
-  // where the monitor measures FROM: a speed number without its vantage
-  // point invites blaming the ISP for a bad in-house cable (been there)
-  const via = DATA.monitor_location ? ' · via ' + escapeHtml(DATA.monitor_location) : '';
-  if (!s || s.down == null) { sub.textContent = 'no speed test yet'; return; }
-  el.innerHTML = Math.round(s.down) + '<span class="unit">&#8595;</span> '
-    + (s.up != null ? Math.round(s.up) : '—') + '<span class="unit">&#8593;</span>';
-  const plan = DATA.plan || {};
-  if (plan.down_mbps) {
-    const PP = Object.assign({ good: 90, fair: 80 }, (DATA.thresholds || {}).plan_pct || {});
-    const pct = Math.round(100 * s.down / plan.down_mbps);
-    sub.innerHTML = pct + '% of the ' + plan.down_mbps + ' Mbps plan' + via;
-    const rEl = document.getElementById('rateSpeed');
-    const lvl = pct >= PP.good ? 0 : pct >= PP.fair ? 1 : 2;
-    rEl.className = 'rating show ' + ['good', 'fair', 'poor'][lvl];
-    rEl.textContent = ['GOOD', 'FAIR', 'LOW'][lvl];
-    rEl.title = 'vs your plan: ' + PP.good + '%+ good, ' + PP.fair + '%+ fair';
-    if (lvl === 2) sub.style.color = 'var(--status-warning)';
-  } else {
-    sub.innerHTML = 'Mbps down / up' + via;
-  }
-});
-if (DATA.dns_24h && DATA.dns_24h.checks) {
-  // sub-line: system-resolver health, then the direct per-resolver verdict
-  // (router DNS proxy vs 1.1.1.1 vs 8.8.8.8 — queried separately, so
-  // "router DNS ✗" while the publics answer = reboot the router, not the ISP)
-  let sub = DATA.dns_24h.failures
-    ? DATA.dns_24h.failures + ' failed lookups' : 'all lookups succeeded';
-  const rs = DATA.resolver_status || {};
-  const names = Object.keys(rs);
-  if (names.length) {
-    const label = n => n === 'gateway' ? 'router' : n;
-    const bad = names.filter(n => rs[n] && rs[n].ok === false);
-    sub += bad.length ? ' · ' + bad.map(n => label(n) + ' DNS ✗').join(' · ')
-                      : ' · ' + names.length + ' resolvers ✓';
-    const el = document.getElementById('dnsSub');
-    el.title = names.map(n => label(n) + ': ' + (rs[n].ok ? (rs[n].ms != null ? rs[n].ms + 'ms' : 'ok') : 'FAILING')
-      + (rs[n].fails_1h ? ` (${rs[n].fails_1h}/${rs[n].checks_1h} failed last hour)` : '')).join(' · ');
-    el.textContent = sub;
-  } else {
-    document.getElementById('dnsSub').textContent = sub;
-  }
-}
-setStat('jitter24h', DATA.jitter_24h, 'ms');
 
 function timeSince(ts) {
   const secs = (Date.now() - new Date(ts).getTime()) / 1000;
@@ -2239,18 +2190,18 @@ safely('check footers', function() {
   const ping = checkEff('ping'), dns = checkEff('dns'), spd = checkEff('speed'),
         pip = checkEff('public_ip'), dev = checkEff('devices');
   setCheckFoot('cfStatus',       'ping', C.ping, ping.freq, ping.approx);
-  setCheckFoot('cfUptime24',     'ping', C.ping, ping.freq, ping.approx);
-  setCheckFoot('cfUptime7',      'ping', C.ping, ping.freq, ping.approx);
-  setCheckFoot('cfLatency',      'ping', C.ping, ping.freq, ping.approx);
-  setCheckFoot('cfJitter',       'ping', C.ping, ping.freq, ping.approx);
   setCheckFoot('cfLatencyChart', 'ping', C.ping, ping.freq, ping.approx);
   setCheckFoot('cfLossChart',    'ping', C.ping, ping.freq, ping.approx);
-  setCheckFoot('cfDns',          'dns lookup', C.dns, dns.freq, dns.approx);
-  setCheckFoot('cfPublicIp',     'https query', C.public_ip, pip.freq, pip.approx);
   setCheckFoot('cfSpeed',        'ookla speedtest cli', C.speed, spd.freq, spd.approx);
-  setCheckFoot('cfSpeedCard',    'ookla speedtest cli', C.speed, spd.freq, spd.approx);
+  setCheckFoot('cfSpeedCard',    'ookla', C.speed, spd.freq, spd.approx);
   setCheckFoot('cfBufferbloat',  'ookla speedtest cli', C.speed, spd.freq, spd.approx);
   setCheckFoot('cfDevices',      C.device_cmd || 'device scan', C.devices, dev.freq, dev.approx);
+  setCheckFoot('cfHouse',        C.device_cmd || 'device scan', C.devices, dev.freq, dev.approx);
+  // the Quality card rides two threads at once — a static two-cadence
+  // note beats pretending one footer mechanism fits it
+  const cfQ = document.getElementById('cfQuality');
+  if (cfQ) cfQ.textContent = 'ping ' + (ping.approx ? '~' : '') + freqShort(ping.freq)
+    + ' · dns ' + (dns.approx ? '~' : '') + freqShort(dns.freq);
   // only when something is watched — an empty freq would render "no data"
   if ((DATA.iot_devices || []).some(d => d.watch)) {
     const iot = checkEff('iot');
@@ -2268,41 +2219,6 @@ safely('check footers', function() {
   tickCheckFoots();
   setInterval(tickCheckFoots, 10000);
 });
-document.getElementById('publicIp').textContent = DATA.current_public_ip || '—';
-if (DATA.current_public_ip && DATA.ip_stable_since) {
-  const prefix = DATA.ip_stable_at_least ? 'stable for at least ' : 'stable for ';
-  document.getElementById('publicIpStable').textContent = prefix + timeSince(DATA.ip_stable_since);
-} else {
-  document.getElementById('publicIpStable').textContent = '';
-}
-safely('public ip health', function() {
-  // Repeated public-IP fetch failures usually mean the connection blipped
-  // between ping samples — an ISP-flakiness signal that used to be
-  // collected and then silently dropped. Only warn on a real pattern
-  // (≥3 failures AND >25% of checks), never on a single transient.
-  const h = DATA.public_ip_health || {};
-  if ((h.failures || 0) >= 3 && h.failures / Math.max(1, h.checks) > 0.25) {
-    const el = document.getElementById('publicIpStable');
-    el.innerHTML = escapeHtml(el.textContent)
-      + '<br><span style="color:var(--status-warning); font-weight:600;">⚠ '
-      + h.failures + ' of ' + h.checks + ' IP checks failed in 24h — brief ISP drops can cause this</span>';
-  }
-});
-
-function renderDelta(elId, value, opts) {
-  const el = document.getElementById(elId);
-  if (value == null || value === 0) { el.textContent = ''; return; }
-  const invert = opts && opts.invertGood; // true when a smaller number is the good direction
-  const isUp = value > 0;
-  const isGood = invert ? !isUp : isUp;
-  el.className = 'delta ' + (isGood ? 'good' : 'bad');
-  const arrow = isUp ? '↑' : '↓';
-  el.textContent = arrow + ' ' + Math.abs(value) + (opts && opts.suffix ? opts.suffix : '');
-  el.title = 'vs previous 24h';
-}
-renderDelta('uptimeDelta', DATA.deltas_24h.uptime_pct, { suffix: 'pt' });
-renderDelta('latencyDelta', DATA.deltas_24h.avg_latency, { suffix: 'ms', invertGood: true });
-
 // ---------- "what's normal" ratings + thresholds ----------
 // Each metric has a good/fair boundary and a direction: 'low' = smaller is
 // better (latency, jitter, DNS, loss), 'high' = bigger is better (uptime,
@@ -2352,25 +2268,192 @@ function applyRating(rateId, value, key) {
     rEl.title = hintText(key);
   }
 }
-safely('metric ratings', function() {
-  applyRating('rateUptime24', DATA.stats_24h.uptime_pct, 'uptime');
-  applyRating('rateUptime7',  DATA.stats_7d.uptime_pct,  'uptime');
-  applyRating('rateLatency',  DATA.stats_24h.avg_latency, 'latency');
-  applyRating('rateDns',      DATA.dns_24h ? DATA.dns_24h.avg : null, 'dns');
-  applyRating('rateJitter',   DATA.jitter_24h, 'jitter');
+// ---------- command deck rails ----------
+// Left rail = the line (live latency hero + quality rows), right rail =
+// the contract & the house (speed-vs-plan hero + house rows). Rows, not
+// cards: label · spark · value · verdict — the 7-identical-cards deck
+// said the same things with three cards' worth of chrome each.
+
+// a verdict for a row: quiet dot when good, a small pill only when not
+function verdictHtml(value, key) {
+  const lvl = rateLevel(value, key);
+  if (lvl == null) return '';
+  const cls = ['good', 'fair', 'poor'][lvl];
+  const label = lvl === 0 ? '' : THRESHOLDS[key].labels[lvl];
+  return '<span class="rating show ' + cls + '" title="' + escapeHtml(hintText(key)) + '">' + label + '</span>';
+}
+// tiny inline spark for a rail row — deliberately muted; it shows shape,
+// the value cell shows the number
+function sparkSvg(series, hours) {
+  const cutoff = Date.now() - (hours || 24) * 3600 * 1000;
+  const pts = (series || []).filter(p => p.v != null && Date.parse(p.t) >= cutoff).map(p => p.v);
+  if (pts.length < 2) return '<svg class="q-spark" width="52" height="14"></svg>';
+  const min = Math.min(...pts), max = Math.max(...pts), span = (max - min) || 1;
+  const step = 52 / (pts.length - 1);
+  const poly = pts.map((v, i) => (i * step).toFixed(1) + ',' + (12 - (v - min) / span * 10).toFixed(1)).join(' ');
+  return '<svg class="q-spark" width="52" height="14" viewBox="0 0 52 14"><polyline points="' + poly
+    + '" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+}
+safely('internet hero', function() {
+  const pill = document.getElementById('statusPill');
+  if (DATA.current_status === 'up') {
+    pill.innerHTML = '<span class="status-pill small status-up"><span class="status-dot"></span>Online</span>';
+  } else if (DATA.current_status === 'down') {
+    pill.innerHTML = '<span class="status-pill small status-down"><span class="status-dot"></span>Offline</span>';
+  } else {
+    pill.innerHTML = '<span class="status-pill small">Unknown</span>';
+  }
+  const hero = document.getElementById('liveLatency');
+  hero.innerHTML = DATA.current_latency != null
+    ? (Math.round(DATA.current_latency * 10) / 10) + '<span class="unit">ms</span>'
+    : '—';
+  // sub-line: right now is the hero; the 24h average demotes to here,
+  // with its vs-yesterday delta riding along
+  const d = (DATA.deltas_24h || {}).avg_latency;
+  const deltaTxt = (d != null && d !== 0)
+    ? ' <span style="color:var(--' + (d < 0 ? 'success-text' : 'status-critical')
+      + ');font-weight:600" title="vs previous 24h">' + (d < 0 ? '↓' : '↑') + Math.abs(d) + '</span>'
+    : '';
+  document.getElementById('currentLatency').innerHTML =
+    (DATA.current_latency != null ? 'right now' : 'no recent ping')
+    + (DATA.stats_24h.avg_latency != null ? ' · 24h avg ' + DATA.stats_24h.avg_latency + ' ms' + deltaTxt : '');
+});
+safely('quality rows', function() {
+  const rows = [];
+  const row = (label, spark, val, verdict, tail) =>
+    '<div class="qrow' + (tail ? ' qrow-tail' : '') + '"><span class="q-label">' + label + '</span>'
+    + spark + '<span class="q-val">' + val + '</span>' + verdict + '</div>';
+  const fmt = (v, unit) => v != null ? v + ' ' + unit : '—';
+  rows.push(row('Avg latency', sparkSvg(DATA.latency_series), fmt(DATA.stats_24h.avg_latency, 'ms'),
+    verdictHtml(DATA.stats_24h.avg_latency, 'latency')));
+  rows.push(row('Packet loss', sparkSvg(DATA.loss_series), fmt(DATA.stats_24h.loss_pct, '%'),
+    verdictHtml(DATA.stats_24h.loss_pct, 'loss')));
+  rows.push(row('Jitter', sparkSvg(DATA.jitter_series), fmt(DATA.jitter_24h, 'ms'),
+    verdictHtml(DATA.jitter_24h, 'jitter')));
+  const dnsAvg = DATA.dns_24h ? DATA.dns_24h.avg : null;
+  rows.push(row('DNS lookup', sparkSvg(DATA.dns_series), fmt(dnsAvg, 'ms'),
+    verdictHtml(dnsAvg, 'dns'), true));
+  // the per-resolver verdict sub-line (router DNS proxy vs 1.1.1.1 vs
+  // 8.8.8.8 — queried separately, so "router DNS ✗" while the publics
+  // answer = reboot the router, not the ISP)
+  let dnsSub = '', dnsTip = '';
+  if (DATA.dns_24h && DATA.dns_24h.checks) {
+    dnsSub = DATA.dns_24h.failures ? DATA.dns_24h.failures + ' failed lookups' : 'all lookups ok';
+    const rs = DATA.resolver_status || {};
+    const names = Object.keys(rs);
+    if (names.length) {
+      const label = n => n === 'gateway' ? 'router' : n;
+      const bad = names.filter(n => rs[n] && rs[n].ok === false);
+      dnsSub += bad.length ? ' · ' + bad.map(n => label(n) + ' DNS ✗').join(' · ')
+                           : ' · ' + names.length + ' resolvers ✓';
+      dnsTip = names.map(n => label(n) + ': ' + (rs[n].ok ? (rs[n].ms != null ? rs[n].ms + 'ms' : 'ok') : 'FAILING')
+        + (rs[n].fails_1h ? ` (${rs[n].fails_1h}/${rs[n].checks_1h} failed last hour)` : '')).join(' · ');
+    }
+  }
+  if (dnsSub) rows.push('<div class="q-subline"' + (dnsTip ? ' title="' + escapeHtml(dnsTip) + '"' : '') + '>'
+    + escapeHtml(dnsSub) + '</div>');
+  document.getElementById('qualityRows').innerHTML = rows.join('');
+});
+safely('speed hero', function() {
+  // last successful speed test vs the plan — plan bars make 91-of-500
+  // visceral. Cutoffs come from thresholds.plan_pct (defaults 90/80),
+  // the same numbers the ISP evidence report uses for its below-plan list.
+  const s = (DATA.speed_series || []).slice(-1)[0];
+  const el = document.getElementById('speedLast'), sub = document.getElementById('speedLastSub');
+  // where the monitor measures FROM: a speed number without its vantage
+  // point invites blaming the ISP for a bad in-house cable (been there)
+  const via = DATA.monitor_location ? ' · via ' + escapeHtml(DATA.monitor_location) : '';
+  const plan = DATA.plan || {};
+  if (!plan.down_mbps) document.getElementById('speedCardTitle').textContent = 'Speed · last test';
+  if (!s || s.down == null) { sub.textContent = 'no speed test yet'; return; }
+  el.innerHTML = Math.round(s.down) + '<span class="unit">&#8595;</span>&#8202;&#8202;'
+    + (s.up != null ? Math.round(s.up) : '—') + '<span class="unit">&#8593;</span>'
+    + '<span class="unit" style="margin-left:5px">Mbps</span>';
+  if (plan.down_mbps) {
+    const PP = Object.assign({ good: 90, fair: 80 }, (DATA.thresholds || {}).plan_pct || {});
+    const pct = Math.round(100 * s.down / plan.down_mbps);
+    const lvl = pct >= PP.good ? 0 : pct >= PP.fair ? 1 : 2;
+    const barCol = ['var(--status-good)', 'var(--status-warning)', 'var(--status-critical)'][lvl];
+    const bar = (val, cap, col, arrow) => val == null ? '' :
+      '<div class="plan-bar"><div class="mini-bar"><i style="width:' + Math.min(100, Math.round(100 * val / cap))
+      + '%;background:' + col + '"></i></div><span class="plan-cap">' + cap + arrow + '</span></div>';
+    document.getElementById('planBars').innerHTML = '<div class="plan-bars">'
+      + bar(s.down, plan.down_mbps, barCol, '&#8595;')
+      + (plan.up_mbps ? bar(s.up, plan.up_mbps, 'var(--muted)', '&#8593;') : '')
+      + '</div>';
+    sub.innerHTML = pct + '% of the ' + plan.down_mbps + ' Mbps plan' + via;
+    const rEl = document.getElementById('rateSpeed');
+    rEl.className = 'rating show ' + ['good', 'fair', 'poor'][lvl];
+    rEl.textContent = ['GOOD', 'FAIR', 'LOW'][lvl];
+    rEl.title = 'vs your plan: ' + PP.good + '%+ good, ' + PP.fair + '%+ fair';
+    if (lvl === 2) sub.style.color = 'var(--status-warning)';
+  } else {
+    sub.innerHTML = 'Mbps down / up' + via;
+  }
+});
+safely('house rows', function() {
+  const rows = [];
+  const upBar = pct => {
+    if (pct == null) return '';
+    const lvl = rateLevel(pct, 'uptime');
+    const col = ['var(--status-good)', 'var(--status-warning)', 'var(--status-critical)'][lvl == null ? 0 : lvl];
+    return '<div class="mini-bar" style="width:52px"><i style="width:' + Math.min(100, pct)
+      + '%;background:' + col + '"></i></div>';
+  };
+  const pctTxt = v => v != null ? v + ' %' : '—';
+  rows.push('<div class="qrow"><span class="q-label">Uptime · 24h</span>' + upBar(DATA.stats_24h.uptime_pct)
+    + '<span class="q-val">' + pctTxt(DATA.stats_24h.uptime_pct) + '</span></div>');
+  rows.push('<div class="qrow"><span class="q-label">Uptime · 7d</span>' + upBar(DATA.stats_7d.uptime_pct)
+    + '<span class="q-val">' + pctTxt(DATA.stats_7d.uptime_pct) + '</span></div>');
+  const devs = DATA.devices || [];
+  if (devs.length) {
+    rows.push('<div class="qrow"><span class="q-label">Devices online</span>'
+      + '<span class="q-subline" style="padding:0">' + devs.length + ' this wk</span>'
+      + '<span class="q-val" style="min-width:30px">' + devs.filter(d => d.online).length + '</span></div>');
+  }
+  // Public IP demotes to a row: it's reference data, not a vital sign.
+  // Its flags (double NAT, flaky IP checks) ride a right-aligned sub-row.
+  const flags = [];
+  if (DATA.ip_stable_since) {
+    flags.push('<span class="q-subline" style="padding:0">stable ' + (DATA.ip_stable_at_least ? '&#8805;' : '')
+      + timeSince(DATA.ip_stable_since) + '</span>');
+  }
+  if ((DATA.topology || {}).double_nat) {
+    flags.push('<span class="flag-pill" title="Two routers are each doing NAT. Consoles, VoIP and port forwarding may misbehave — see the house map note.">double nat</span>');
+  }
+  // repeated public-IP fetch failures usually mean the connection blipped
+  // between ping samples — only flag a real pattern, never one transient
+  const h = DATA.public_ip_health || {};
+  if ((h.failures || 0) >= 3 && h.failures / Math.max(1, h.checks) > 0.25) {
+    flags.push('<span class="flag-pill" title="' + h.failures + ' of ' + h.checks
+      + ' IP checks failed in 24h — brief ISP drops can cause this">' + h.failures + ' ip checks failed</span>');
+  }
+  rows.push('<div class="qrow qrow-tail" style="flex-wrap:wrap"><span class="q-label">Public IP</span>'
+    + '<span class="q-val" style="font-family:var(--font-mono);font-size:12px">' + escapeHtml(DATA.current_public_ip || '—') + '</span>'
+    + (flags.length ? '<span style="flex-basis:100%;display:flex;gap:7px;justify-content:flex-end;align-items:center;margin-top:2px">' + flags.join('') + '</span>' : '')
+    + '</div>');
+  document.getElementById('houseRows').innerHTML = rows.join('');
+});
+safely('bufferbloat', function() {
   // Bufferbloat: rated from the newest speed test that has loaded-latency
   // data (Ookla CLI only). delta = worst loaded latency minus idle ping.
+  // Surfaces on the speed hero (it was buried below the fold) AND keeps
+  // its rating on the latency-under-load chart.
   const loaded = (DATA.speed_series || []).filter(s => s.lat_down != null || s.lat_up != null);
-  if (loaded.length) {
-    const s = loaded[loaded.length - 1];
-    const delta = Math.round(Math.max(s.lat_down || 0, s.lat_up || 0) - (s.ping || 0));
-    applyRating('rateBufferbloat', delta, 'bufferbloat');
-    const hintEl = document.getElementById('bufferbloatHint');
-    if (hintEl && rateLevel(delta, 'bufferbloat') >= 1) {
-      hintEl.style.display = '';
-      hintEl.textContent = 'Latency climbs +' + delta + 'ms when the line is busy (bufferbloat) — '
-        + 'enabling SQM / Smart Queue Management (QoS) on the router usually fixes this.';
-    }
+  if (!loaded.length) return;
+  const s = loaded[loaded.length - 1];
+  const delta = Math.round(Math.max(s.lat_down || 0, s.lat_up || 0) - (s.ping || 0));
+  applyRating('rateBufferbloat', delta, 'bufferbloat');
+  const rowEl = document.getElementById('bloatRow');
+  if (rowEl) {
+    rowEl.style.display = '';
+    rowEl.innerHTML = '+' + delta + ' ms under load ' + verdictHtml(delta, 'bufferbloat');
+  }
+  const hintEl = document.getElementById('bufferbloatHint');
+  if (hintEl && rateLevel(delta, 'bufferbloat') >= 1) {
+    hintEl.style.display = '';
+    hintEl.textContent = 'Latency climbs +' + delta + 'ms when the line is busy (bufferbloat) — '
+      + 'enabling SQM / Smart Queue Management (QoS) on the router usually fixes this.';
   }
 });
 
@@ -2517,30 +2600,29 @@ function renderSparkline() {
   const vals = DATA.sparkline;
   if (!vals || vals.length < 2) { c.style.display = 'none'; return; }
   const ctx = c.getContext('2d');
-  const w = c.width, h = c.height, pad = 4;
+  const w = c.width, h = c.height, pad = 3;
   const min = Math.min(...vals), max = Math.max(...vals);
   const span = (max - min) || 1;
-  const accent = cssVar('--accent') || '#3fc6ff';
+  // series voice, not accent — it's a tiny chart, and the glow went with 1a
+  const col = cssVar('--series-blue') || '#3987e5';
   ctx.clearRect(0, 0, w, h);
   ctx.save();
-  ctx.shadowColor = accent;
-  ctx.shadowBlur = REDUCE_MOTION ? 0 : 6;
   ctx.beginPath();
   vals.forEach((v, i) => {
     const x = pad + (i / (vals.length - 1)) * (w - pad * 2);
     const y = h - pad - ((v - min) / span) * (h - pad * 2);
     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   });
-  ctx.strokeStyle = accent;
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 1.5;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   ctx.stroke();
   const lastX = pad + (w - pad * 2);
   const lastY = h - pad - ((vals[vals.length - 1] - min) / span) * (h - pad * 2);
   ctx.beginPath();
-  ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
-  ctx.fillStyle = accent;
+  ctx.arc(lastX, lastY, 2.2, 0, Math.PI * 2);
+  ctx.fillStyle = col;
   ctx.fill();
   ctx.restore();
 }
@@ -3103,7 +3185,16 @@ function renderHouseMap() {
   // (Defined before the floor build — compact floors are sized from pill
   // widths.) Compact bumps the per-char estimate with the CSS font bump.
   const pillLabel = name => name.length > 20 ? name.slice(0, 19) + '…' : name;
-  const pillW = (name, main) => 34 + pillLabel(name).length * (main ? 7.2 : 6.6) * (compact ? 1.1 : 1);
+  // live readout on the pill face (desktop only — compact pills keep every
+  // horizontal unit for the name): latency when up, the state word when not
+  const pillStat = o => {
+    if (compact || o.main || o.__main) return '';
+    if (o.status !== 'up') return 'down';
+    if (o.method === 'arp' || o.method === 'probe') return 'silent';
+    return o.avg_latency != null ? Math.round(o.avg_latency) + 'ms' : '';
+  };
+  const pillW = (name, main, stat) => 34 + pillLabel(name).length * (main ? 7.2 : 6.6) * (compact ? 1.1 : 1)
+    + (stat ? stat.length * 5.4 + 8 : 0);
 
   let FLOORS;
   if (!compact) {
@@ -3298,13 +3389,15 @@ function renderHouseMap() {
 
   function pill(x, y, opts, hcId) {
     const label = pillLabel(opts.name);
-    const w = pillW(opts.name, opts.main), h = (opts.main ? 30 : 26) + (compact ? 4 : 0);
+    const stat = pillStat(opts);
+    const w = pillW(opts.name, opts.main, stat), h = (opts.main ? 30 : 26) + (compact ? 4 : 0);
     const x0 = x - w / 2, y0 = y - h / 2;
     const cls = nodeCls(opts);
     return `<g class="pillgrp ${cls}" data-hc="${hcId}">
       <rect class="pill-box" x="${x0}" y="${y0}" width="${w}" height="${h}" rx="${h / 2}"/>
       <circle class="status-dot-svg" cx="${x0 + 14}" cy="${y}" r="4"/>
       <text class="pill-name" x="${x0 + 24}" y="${y + 4}"${opts.main ? ` style="font-size:${compact ? 13 : 12}px"` : ''}>${escapeHtml(label)}</text>
+      ${stat ? `<text class="pill-stat" x="${x0 + w - 11}" y="${y + 3.5}" text-anchor="end">${escapeHtml(stat)}</text>` : ''}
     </g>`;
   }
   // Hover card position: above the pill when there's room, else below.
@@ -3377,8 +3470,8 @@ function renderHouseMap() {
     svg += `<g class="linkgrp ${up ? 'up' : 'down'}">`;
     svg += `<path class="link-glow" d="${d}"/><path class="link-core" d="${d}"/>`;
     if (up && !REDUCE_MOTION) {
-      svg += `<circle class="packet" r="3" opacity="0.9"><animateMotion dur="${slow || 2.6}s" repeatCount="indefinite" path="${d}"/></circle>`;
-      svg += `<circle class="packet" r="2.4" opacity="0.7"><animateMotion dur="${slow || 2.6}s" begin="-1.3s" repeatCount="indefinite" path="${d}"/></circle>`;
+      // one packet per link — two per link read as busywork
+      svg += `<circle class="packet" r="2.6" opacity="0.9"><animateMotion dur="${slow || 2.6}s" repeatCount="indefinite" path="${d}"/></circle>`;
     }
     svg += `</g>`;
   };
@@ -3589,10 +3682,7 @@ safely('double NAT hint', function() {
     n.textContent = (n.style.display === 'block' && n.textContent) ? n.textContent + ' · ' + extra : extra;
     n.style.display = 'block';
   }
-  const pip = document.getElementById('publicIpStable');
-  if (pip) {
-    pip.innerHTML += '<br><span style="color:var(--status-warning); font-weight:600;">⚠ double NAT detected — see the house map note</span>';
-  }
+  // the Public IP row's DOUBLE NAT flag pill is rendered by 'house rows'
 });
 
 // ---------- shared chart look ----------
@@ -3835,6 +3925,61 @@ function renderLossChart() {
   });
 }
 
+// Outage bands on the per-router chart: a router that stopped answering
+// renders as a labeled band, not a mysteriously missing squiggle. Bands
+// come from the events log — gateway/internet outages always, plus the
+// focused router's own outages while a map link has the chart narrowed.
+function outageBands() {
+  const durTxt = secs => {
+    secs = Math.round(secs);
+    if (secs < 60) return secs + 's';
+    if (secs < 3600) return Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
+    return Math.floor(secs / 3600) + 'h ' + Math.round((secs % 3600) / 60) + 'm';
+  };
+  return {
+    id: 'outageBands',
+    beforeDatasetsDraw(chart) {
+      const x = chart.scales.x, area = chart.chartArea;
+      if (!x || !area) return;
+      const NOW = Date.now();
+      const evs = (DATA.outage_events || []).filter(e =>
+        e.scope === 'gateway' || e.scope === 'internet'
+        || (routerFocusName && e.scope === 'router' && e.router_name === routerFocusName));
+      if (!evs.length) return;
+      const col = cssVar('--status-critical');
+      const { ctx } = chart;
+      ctx.save();
+      ctx.font = '8.5px ' + (cssVar('--font-mono') || 'ui-monospace, monospace');
+      evs.forEach(e => {
+        const s = Date.parse(e.start);
+        const en = e.end ? Date.parse(e.end) : NOW;
+        if (isNaN(s)) return;
+        let x0 = x.getPixelForValue(s), x1 = x.getPixelForValue(en);
+        if (x1 < area.left || x0 > area.right) return;
+        x0 = Math.max(x0, area.left); x1 = Math.min(x1, area.right);
+        ctx.globalAlpha = 0.07;
+        ctx.fillStyle = col;
+        ctx.fillRect(x0, area.top, Math.max(2, x1 - x0), area.bottom - area.top);
+        ctx.globalAlpha = 0.5;
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 4]);
+        [x0, x1].forEach(px => { ctx.beginPath(); ctx.moveTo(px, area.top); ctx.lineTo(px, area.bottom); ctx.stroke(); });
+        if (x1 - x0 > 90) {
+          const who = e.scope === 'gateway' ? 'Gateway' : e.scope === 'router' ? (e.router_name || 'Router') : 'Internet';
+          ctx.setLineDash([]);
+          ctx.globalAlpha = 0.85;
+          ctx.fillStyle = col;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+          ctx.fillText(who + ' down · ' + (e.ongoing ? 'ongoing' : durTxt((en - s) / 1000)), (x0 + x1) / 2, area.top + 4);
+        }
+      });
+      ctx.restore();
+    },
+  };
+}
+
 // ---------- per-router latency chart ----------
 function renderRoutersChart() {
   const rc = DATA.routers_chart;
@@ -3866,6 +4011,7 @@ function renderRoutersChart() {
   if (chartInstances.routers) chartInstances.routers.destroy();
   chartInstances.routers = new Chart(canvas, {
     type: 'line',
+    plugins: [ outageBands() ],
     data: { labels, datasets },
     options: {
       responsive: true,

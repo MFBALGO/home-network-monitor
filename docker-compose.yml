@@ -43,3 +43,10 @@ services:
       timeout: 10s
       retries: 3
       start_period: 45s
+    # stdout is low-volume but a box that runs for years still needs a cap -
+    # Docker's default json-file driver never rotates on its own
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

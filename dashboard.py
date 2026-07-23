@@ -1380,25 +1380,44 @@ def build_html(data):
   .dev-type { display:inline-block; margin-left:7px; padding:1px 6px; border-radius:5px; font-size:9.5px;
     font-weight:700; font-family: var(--font-mono); letter-spacing:.08em; text-transform:uppercase;
     color:var(--muted); background: var(--border-soft); vertical-align:1px; }
-  /* devices: all-devices table left, IoT table right — EQUAL columns
-     (stacked on phones; left card takes the full row when no IoT
-     devices are tagged) */
-  .dev-cols { display:grid; grid-template-columns: 1fr 1fr; gap:12px; align-items:start; }
-  /* dev-cols isn't a .chart-card, so the card+card margin rule skips it —
-     without this the devices-online chart sat flush against the tables */
-  .chart-card + .dev-cols { margin-top: 12px; }
-  .dev-cols.no-iot { grid-template-columns: 1fr; }
-  @media (max-width: 940px) { .dev-cols { grid-template-columns: 1fr; } }
-  /* MAC gets its own column on wide screens; on phones the column (and
-     the IoT IP column) collapse back into the sub-line under the name —
-     a MAC column once forced invisible side-scroll on 375px tables */
-  .col-mac { font-family: var(--font-mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+  /* ---------- devices: strip + chips + pinned tiles + one roster ---------- */
+  .dev-strip { display: flex; align-items: center; gap: 16px; padding: 12px 16px; margin-bottom: 12px; }
+  .dev-strip .strip-value { font-size: 26px; font-weight: 640; letter-spacing: -.015em; line-height: 1.1;
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .dev-strip .strip-value .unit { font-size: 12px; color: var(--muted); font-weight: 600; margin-left: 4px; }
+  .dev-strip-chart { flex: 1; min-width: 0; height: 44px; color: var(--series-blue); }
+  .dev-strip-chart svg { display: block; width: 100%; height: 44px; }
+  .dev-strip .range-toggle.mini { flex-shrink: 0; }
+  .dev-chips { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .watched-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;
+    margin-bottom: 12px; }
+  .wtile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; }
+  .wtile .wt-head { display: flex; align-items: center; gap: 8px; }
+  .wtile .wt-name { font-size: 12.5px; font-weight: 650; color: var(--text-primary); flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wtile .wt-mid { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+  .wtile .wt-ms { font-family: var(--font-mono); font-size: 11px; color: var(--text-primary);
+    margin-left: auto; font-variant-numeric: tabular-nums; }
+  .wtile .wt-foot { font-family: var(--font-mono); font-size: 9.5px; color: var(--muted); margin-top: 7px; }
+  .wtile.wt-hint { background: transparent; border-style: dashed; display: flex; flex-direction: column;
+    justify-content: center; gap: 4px; }
+  .wtile.wt-hint .wt-hint-t { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .wtile.wt-hint .wt-foot { margin-top: 0; }
+  /* roster group headers: ROUTERS & APS / DEVICES / AWAY down the table */
+  tr.group-row td { padding: 12px 10px 6px; border-bottom: none; }
+  tr.group-row .g-name { font-family: var(--font-mono); font-size: 9.5px; font-weight: 800;
+    letter-spacing: .1em; color: var(--label); text-transform: uppercase; }
+  tr.group-row .g-n { font-family: var(--font-mono); font-size: 9.5px; color: var(--muted); margin-left: 8px; }
+  /* offline roster rows get the incident-log red edge */
+  tr.dev-down td { background: color-mix(in srgb, var(--status-critical) 4%, transparent); }
+  tr.dev-down td:first-child { border-left: 3px solid var(--status-critical); }
+  /* MAC + IP get their own columns on wide screens; on phones both
+     collapse back into the sub-line under the name — a MAC column once
+     forced invisible side-scroll on 375px tables */
+  .col-mac, .col-ip { font-family: var(--font-mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .col-ip { color: var(--text-secondary); font-size: 11.5px; }
   @media (min-width: 641px) { .dev-id .dev-mac { display: none; } }
-  @media (max-width: 640px) { .col-mac, .col-ip-iot { display: none; } }
-  /* IoT type groups: the category cell spans its rows down the left */
-  .iot-type-cell { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase;
-    letter-spacing: .06em; vertical-align: top; padding-top: 13px; white-space: nowrap; width: 1%; }
-  #iotTableWrap { overflow-x: auto; }
+  @media (max-width: 640px) { .col-mac, .col-ip { display: none; } }
 
   section { margin-bottom: 34px; scroll-margin-top: 58px; }
   section .section-head { display:flex; align-items:baseline; justify-content:space-between; margin-bottom: 12px;
@@ -1972,26 +1991,25 @@ def build_html(data):
         <input type="search" id="devSearch" class="search-box" placeholder="Filter — name, IP, MAC" autocomplete="off" spellcheck="false">
       </div>
     </div>
-    <div class="chart-card with-tools">
-      <div class="card-tools"><span class="range-toggle mini" data-chart="devcount"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
-      <div class="chart-label">Devices online over time</div>
-      <div class="chart-box sm"><canvas id="devCountChart"></canvas></div>
-      <div id="devCountEmpty" class="empty" style="display:none">No scan history yet.</div>
-      <div class="check-foot" id="cfDevices"></div>
+    <!-- the devices-online chart, shrunk to a 44px strip fused with the
+         live count — it answers one question ("did devices drop off?")
+         and never earned 185px of card -->
+    <div class="card dev-strip">
+      <div class="dev-strip-count">
+        <h3 style="margin:0 0 4px">Online now</h3>
+        <div class="strip-value" id="devOnlineCount">—</div>
+      </div>
+      <div class="dev-strip-chart" id="devCountStrip"></div>
+      <span class="range-toggle mini" data-chart="devcount"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span>
     </div>
-    <!-- chart on top, then all devices left / IoT devices right; the
-         right card hides (and the left goes full width) when nothing is
-         typed/watched in devices.json -->
-    <div class="dev-cols no-iot" id="devCols">
-      <div class="chart-card">
-        <div class="chart-label">All devices</div>
-        <div id="devicesTableWrap"></div>
-      </div>
-      <div class="chart-card" id="iotCard" style="display:none">
-        <div class="chart-label">IoT devices<span class="chart-sublabel" id="iotNote"></span></div>
-        <div id="iotTableWrap"></div>
-        <div class="check-foot" id="cfIot"></div>
-      </div>
+    <!-- count chips ARE the filter -->
+    <div class="dev-chips" id="devChips"></div>
+    <!-- watched devices: pinned tiles with live latency (they stay
+         ordinary rows in the roster too — one species, one table) -->
+    <div class="watched-tiles" id="watchedTiles" style="display:none"></div>
+    <div class="chart-card">
+      <div id="devicesTableWrap"></div>
+      <div class="check-foot" id="cfDevices"></div>
     </div>
   </section>
 
@@ -2197,16 +2215,13 @@ safely('check footers', function() {
   setCheckFoot('cfBufferbloat',  'ookla speedtest cli', C.speed, spd.freq, spd.approx);
   setCheckFoot('cfDevices',      C.device_cmd || 'device scan', C.devices, dev.freq, dev.approx);
   setCheckFoot('cfHouse',        C.device_cmd || 'device scan', C.devices, dev.freq, dev.approx);
+  // (the IoT card's footer went with the card — watched tiles carry their
+  // own checked-ago line)
   // the Quality card rides two threads at once — a static two-cadence
   // note beats pretending one footer mechanism fits it
   const cfQ = document.getElementById('cfQuality');
   if (cfQ) cfQ.textContent = 'ping ' + (ping.approx ? '~' : '') + freqShort(ping.freq)
     + ' · dns ' + (dns.approx ? '~' : '') + freqShort(dns.freq);
-  // only when something is watched — an empty freq would render "no data"
-  if ((DATA.iot_devices || []).some(d => d.watch)) {
-    const iot = checkEff('iot');
-    setCheckFoot('cfIot', 'ping / tcp / arp', C.iot, iot.freq, iot.approx);
-  }
   // per-router chart rides the router thread; freshest check + median of
   // the per-router measured cadences (they move together — one loop)
   const rs = DATA.router_summary || [];
@@ -2954,82 +2969,243 @@ safely('devices note', function() {
     noteEl.textContent = note;
   }
 });
+// One roster, one species: the census joined with the watch list (by MAC)
+// and the routers (by IP) — group headers replace the second table.
+const IOT_BY_MAC = {};
+(DATA.iot_devices || []).forEach(d => { if (d.mac) IOT_BY_MAC[String(d.mac).toLowerCase()] = d; });
+const CENSUS_BY_IP = {};
+(DATA.devices || []).forEach(d => { if (d.ip) CENSUS_BY_IP[d.ip] = d; });
+const ROUTER_IPS = new Set(
+  [...(DATA.router_summary || []).map(r => r.ip), DATA.gateway && DATA.gateway.ip].filter(Boolean));
+const DEV_NEW_CUTOFF = (Date.parse(DATA.generated_at) || Date.now()) - 24 * 3600 * 1000;
+const isNewDev = d => !!(d.first_seen && Date.parse(d.first_seen) >= DEV_NEW_CUTOFF);
+const iotFor = d => d.mac ? IOT_BY_MAC[String(d.mac).toLowerCase()] : null;
+const isWatched = d => { const i = iotFor(d); return !!(i && i.watch); };
+let devFilter = 'all';
+
+// the same plain-language status decoding the map hover cards use
+function liveTip(method) {
+  return method === 'tcp' ? 'Alive via its web port — it ignores pings (common)'
+    : method === 'probe' ? 'Proven alive each check: it refuses a closed-port probe. Ignores pings — normal'
+    : method === 'arp' ? 'Seen answering network-presence (ARP) checks. Ignores pings — normal for stealthy devices'
+    : 'Answers ping normally';
+}
+function rosterPill(kind, method) {
+  if (kind === 'up') {
+    const silent = method === 'probe' || method === 'arp';
+    const txt = method === 'tcp' ? 'Online · web' : silent ? 'Silent' : 'Online';
+    return '<span class="status-pill small ' + (silent ? 'status-silent-pill' : 'status-up')
+      + '" title="' + escapeHtml(liveTip(method)) + '"><span class="status-dot"></span>' + txt + '</span>';
+  }
+  if (kind === 'down') return '<span class="status-pill small status-down"><span class="status-dot"></span>Offline</span>';
+  if (kind === 'online') return '<span class="status-pill small status-up"><span class="status-dot"></span>Online</span>';
+  if (kind === 'never') return '<span class="status-pill small" style="background:var(--border-soft);color:var(--muted)">Never seen</span>';
+  return '<span class="status-pill small" style="background:var(--border-soft);color:var(--muted)"><span class="status-dot"></span>Away</span>';
+}
+// row shape: {label, mac, ip, pill, lat, seen, down, away}
+function rosterRow(o) {
+  const sub = (o.mac || o.ip) ? '<span class="dev-mac">' + escapeHtml([o.mac, o.ip].filter(Boolean).join(' · ')) + '</span>' : '';
+  return '<tr class="' + (o.down ? 'dev-down' : '') + '"' + (o.away ? ' data-away="1" style="display:none"' : '') + '>'
+    + '<td><div class="device-name"><span class="device-icon">' + deviceIcon + '</span>'
+    + '<span class="dev-id"><span>' + o.label + '</span>' + sub + '</span></div></td>'
+    + '<td class="col-mac">' + escapeHtml(o.mac || '—') + '</td>'
+    + '<td class="col-ip">' + escapeHtml(o.ip || '—') + '</td>'
+    + '<td>' + o.pill + '</td>'
+    + '<td class="mono" style="text-align:right">' + o.lat + '</td>'
+    + '<td style="text-align:right; font-size:12px;' + (o.down ? 'color:var(--status-critical);font-weight:600' : '') + '">' + o.seen + '</td></tr>';
+}
+function groupRow(name, note) {
+  return '<tr class="group-row"><td colspan="6"><span class="g-name">' + name + '</span>'
+    + (note ? '<span class="g-n">' + escapeHtml(note) + '</span>' : '') + '</td></tr>';
+}
+function deviceLabel(d) {
+  // friendly name from devices.json wins; hostname as detail or fallback
+  const friendly = d.name ? escapeHtml(d.name) : null;
+  const host = d.hostname ? escapeHtml(d.hostname) : null;
+  let label;
+  if (friendly && host && friendly.toLowerCase() !== host.toLowerCase()) {
+    label = `<b>${friendly}</b> <span class="mono">${host}</span>`;
+  } else {
+    label = friendly ? `<b>${friendly}</b>` : (host || 'Unknown device');
+  }
+  if (d.type) label += `<span class="dev-type">${escapeHtml(d.type)}</span>`;
+  if (isWatched(d)) label += '<span class="dev-type" style="color:var(--accent);background:var(--accent-soft)">watched</span>';
+  // first_seen inside the last 24h = joined (or returned) recently.
+  // Window-clamped first_seen can't false-positive here: a long-present
+  // device's clamp sits at the 7d edge, far outside 24h.
+  if (isNewDev(d)) label += '<span class="dev-new">new</span>';
+  return label;
+}
+// routers join the roster too — every column kept, honest latency
+function routerRoster() {
+  const rows = [];
+  const gw = DATA.gateway;
+  const downSince = name => {
+    const ev = (DATA.outage_events || []).find(e => e.ongoing
+      && (name === '__gw' ? e.scope === 'gateway' : (e.scope === 'router' && e.router_name === name)));
+    return ev ? timeSince(ev.start) + ' ago' : '—';
+  };
+  const mk = (name, ip, status, method, lat, extraTag, dsKey) => {
+    const census = ip ? CENSUS_BY_IP[ip] : null;
+    const up = status === 'up';
+    let label = '<b>' + escapeHtml(name) + '</b>';
+    if (extraTag) label += '<span class="dev-type">' + escapeHtml(extraTag) + '</span>';
+    else if (census && census.hostname) label += '<span class="dev-type">' + escapeHtml(census.hostname) + '</span>';
+    return { label, mac: census ? census.mac : '', ip: ip || '',
+      pill: up ? rosterPill('up', method) : rosterPill('down'),
+      lat: (up && lat != null) ? Math.round(lat) + ' ms' : '—',
+      seen: up ? 'now' : downSince(dsKey), down: !up };
+  };
+  if (gw) rows.push(mk('Main Router' + (gw.isp_name ? ' · ' + gw.isp_name : ''), gw.ip, gw.status, 'ping', gw.avg_latency, null, '__gw'));
+  (DATA.router_summary || []).forEach(r =>
+    rows.push(mk(r.name, r.ip, r.status, r.method, r.avg_latency, r.role === 'isp' ? 'isp box' : null, r.name)));
+  return rows;
+}
 function renderDevices(query) {
-  if (!DATA.devices || DATA.devices.length === 0) {
+  if ((!DATA.devices || DATA.devices.length === 0) && !(DATA.router_summary || []).length) {
     devWrap.innerHTML = '<div class="empty">No device scan data yet.</div>';
     return;
   }
-  const NEW_CUTOFF = (Date.parse(DATA.generated_at) || Date.now()) - 24 * 3600 * 1000;
-  const deviceRow = (d, hidden) => {
-    // friendly name from devices.json wins; hostname as detail or fallback
-    const friendly = d.name ? escapeHtml(d.name) : null;
-    const host = d.hostname ? escapeHtml(d.hostname) : null;
-    let label;
-    if (friendly && host && friendly.toLowerCase() !== host.toLowerCase()) {
-      label = `<b>${friendly}</b> <span class="mono">${host}</span>`;
-    } else {
-      label = friendly ? `<b>${friendly}</b>` : (host || 'Unknown device');
-    }
-    const pill = d.online
-      ? '<span class="status-pill small status-up"><span class="status-dot"></span>Online</span>'
-      : '<span class="status-pill small" style="background:var(--border-soft);color:var(--muted)"><span class="status-dot"></span>Away</span>';
-    const seen = d.online ? 'now' : (d.last_seen ? timeSince(d.last_seen) + ' ago' : '—');
-    // MAC as a muted sub-line under the name — visible without adding a
-    // column (a MAC column was the widest cell and forced side-scrolling
-    // on phones, which is why it was banished to a tooltip for a while)
-    const macLine = d.mac ? `<span class="dev-mac">${escapeHtml(d.mac)}</span>` : '';
-    // devices.json type (camera/printer/...) as a small tag — the device
-    // also appears in the IoT section above, but stays here so the scan
-    // counts and the devices-online chart keep matching the table
-    if (d.type) label += `<span class="dev-type">${escapeHtml(d.type)}</span>`;
-    // first_seen inside the last 24h = joined (or returned) recently.
-    // Window-clamped first_seen can't false-positive here: a long-present
-    // device's clamp sits at the 7d edge, far outside 24h.
-    if (d.first_seen && Date.parse(d.first_seen) >= NEW_CUTOFF) label += '<span class="dev-new">new</span>';
-    return `<tr${hidden ? ' style="display:none" data-away="1"' : ''}>
-    <td><div class="device-name"><span class="device-icon">${deviceIcon}</span><span class="dev-id"><span>${label}</span>${macLine}</span></div></td>
-    <td class="col-mac">${escapeHtml(d.mac || '')}</td>
-    <td class="mono">${escapeHtml(d.ip)}</td>
-    <td>${pill}</td>
-    <td>${seen}</td>
-  </tr>`;
-  };
-  // live filter: name / hostname / IP / MAC substring; a query shows every
-  // match regardless of the away-collapse (an away device is exactly what
-  // a search is usually hunting for)
   const qn = (query || '').trim().toLowerCase();
   const match = d => !qn || [d.name, d.hostname, d.ip, d.mac].some(v => v && String(v).toLowerCase().indexOf(qn) !== -1);
-  const shown = DATA.devices.filter(match);
-  if (shown.length === 0) {
-    devWrap.innerHTML = '<div class="empty">No devices match “' + escapeHtml(query) + '”.</div>';
+  const census = (DATA.devices || []).filter(d => !ROUTER_IPS.has(d.ip));
+  // chip filters: watched/new show their sets regardless of online state;
+  // a search query beats the collapse (an away device is exactly what a
+  // search is usually hunting for)
+  const f = devFilter;
+  const wantRouters = (f === 'all' || f === 'online');
+  let devs;
+  if (f === 'watched') devs = census.filter(isWatched);
+  else if (f === 'new') devs = census.filter(isNewDev);
+  else if (f === 'away') devs = [];
+  else devs = census.filter(d => d.online);
+  devs = devs.filter(match);
+  const routers = wantRouters ? routerRoster().filter(r =>
+    !qn || [r.label, r.ip, r.mac].some(v => v && String(v).toLowerCase().indexOf(qn) !== -1)) : [];
+  const awayAll = (f === 'all' || f === 'away') ? census.filter(d => !d.online).filter(match) : [];
+  const collapseAway = f === 'all' && !qn && awayAll.length > 0;
+
+  const devRow = (d, away) => {
+    const live = isWatched(d) ? iotFor(d) : null;
+    let pill, lat = '—', seen;
+    if (live && live.status === 'up') {
+      pill = rosterPill('up', live.method);
+      if (live.latency != null) lat = Math.round(live.latency) + ' ms';
+      seen = live.last_check ? timeSince(live.last_check) + ' ago' : 'now';
+    } else if (live && live.status === 'down') {
+      pill = rosterPill('down');
+      seen = live.last_check ? timeSince(live.last_check) + ' ago' : '—';
+    } else if (d.online) {
+      pill = rosterPill('online'); seen = 'now';
+    } else {
+      pill = rosterPill('away'); seen = d.last_seen ? timeSince(d.last_seen) + ' ago' : '—';
+    }
+    return rosterRow({ label: deviceLabel(d), mac: d.mac, ip: d.ip, pill, lat, seen,
+      down: !!(live && live.status === 'down'), away });
+  };
+
+  let body = '';
+  if (routers.length) {
+    body += groupRow('Routers &amp; access points', String(routers.length));
+    body += routers.map(rosterRow).join('');
+  }
+  if (devs.length) {
+    body += groupRow('Devices', f === 'all' || f === 'online'
+      ? devs.length + ' online' : String(devs.length));
+    body += devs.map(d => devRow(d, false)).join('');
+  }
+  if (awayAll.length) {
+    if (f === 'away' || qn) {
+      body += groupRow('Away', String(awayAll.length));
+      body += awayAll.map(d => devRow(d, false)).join('');
+    } else {
+      body += awayAll.map(d => devRow(d, true)).join('');
+    }
+  }
+  if (!body) {
+    devWrap.innerHTML = '<div class="empty">' + (qn
+      ? 'No devices match “' + escapeHtml(query) + '”.' : 'Nothing in this view.') + '</div>';
     return;
   }
-  // online devices up front; away ones collapsed behind a toggle so 20
-  // idle phones don't add 900px of table
-  const online = shown.filter(d => d.online);
-  const away = shown.filter(d => !d.online);
-  const collapseAway = !qn && online.length > 0 && away.length > 0;
-  const rows = online.map(d => deviceRow(d, false)).join('')
-    + away.map(d => deviceRow(d, collapseAway)).join('');
   const awayBtn = collapseAway
-    ? `<div style="text-align:center; margin-top:10px;"><button id="awayToggle" class="ghost-btn">Show ${away.length} away device${away.length === 1 ? '' : 's'}</button></div>`
+    ? `<div style="text-align:center; margin:10px 0 2px;"><button id="awayToggle" class="ghost-btn">Show ${awayAll.length} away device${awayAll.length === 1 ? '' : 's'}</button></div>`
     : '';
-  devWrap.innerHTML = `<table><thead><tr><th>Device</th><th class="col-mac">MAC</th><th>IP</th><th>Status</th><th>Last seen</th></tr></thead><tbody>${rows}</tbody></table>${awayBtn}`;
+  devWrap.innerHTML = `<table><thead><tr><th>Device</th><th class="col-mac">MAC</th><th class="col-ip">IP</th><th>Status</th><th style="text-align:right">Latency</th><th style="text-align:right">Last seen</th></tr></thead><tbody>${body}</tbody></table>${awayBtn}`;
   if (collapseAway) {
     let awayShown = false;
     document.getElementById('awayToggle').addEventListener('click', () => {
       awayShown = !awayShown;
       devWrap.querySelectorAll('tr[data-away]').forEach(tr => { tr.style.display = awayShown ? '' : 'none'; });
       document.getElementById('awayToggle').textContent = awayShown
-        ? 'Hide away devices' : `Show ${away.length} away device${away.length === 1 ? '' : 's'}`;
+        ? 'Hide away devices' : `Show ${awayAll.length} away device${awayAll.length === 1 ? '' : 's'}`;
     });
   }
 }
+// count chips ARE the filter — one row replaces the section-note prose
+// and the IoT sub-header
+safely('device chips', function() {
+  const wrap = document.getElementById('devChips');
+  const census = (DATA.devices || []).filter(d => !ROUTER_IPS.has(d.ip));
+  if (!census.length) return;
+  const counts = {
+    all: census.length,
+    online: census.filter(d => d.online).length,
+    watched: census.filter(isWatched).length,
+    new: census.filter(isNewDev).length,
+  };
+  counts.away = counts.all - counts.online;
+  const CHIP_LABELS = { all: 'All', online: 'Online', watched: 'Watched', new: 'New · 24h', away: 'Away' };
+  wrap.innerHTML = Object.keys(CHIP_LABELS)
+    .filter(k => k === 'all' || counts[k])
+    .map(k => `<button class="ofilter${k === 'all' ? ' active' : ''}" data-dev-cat="${k}">${CHIP_LABELS[k]} <span class="cnt">${counts[k]}</span></button>`)
+    .join('');
+  wrap.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-dev-cat]');
+    if (!btn) return;
+    devFilter = btn.dataset.devCat;
+    wrap.querySelectorAll('.ofilter').forEach(b => b.classList.toggle('active', b === btn));
+    renderDevices(document.getElementById('devSearch').value);
+  });
+});
+// watched devices get pinned tiles with live latency — the always-on
+// view the IoT card existed for — while remaining rows in the roster
+safely('watched tiles', function() {
+  const ws = (DATA.iot_devices || []).filter(d => d.watch);
+  const wrap = document.getElementById('watchedTiles');
+  if (!wrap || !ws.length) return;
+  wrap.style.display = '';
+  const iotEff = checkEff('iot');
+  const tile = d => {
+    const up = d.status === 'up';
+    const pill = d.status === 'up' ? rosterPill('up', d.method)
+      : d.status === 'down' ? rosterPill('down') : rosterPill('never');
+    return '<div class="wtile">'
+      + '<div class="wt-head"><span class="wt-name">' + escapeHtml(d.name) + '</span>'
+      + (d.type ? '<span class="dev-type" style="margin-left:0">' + escapeHtml(d.type) + '</span>' : '') + '</div>'
+      + '<div class="wt-mid">' + pill
+      + '<span class="wt-ms">' + (up && d.latency != null ? Math.round(d.latency) + ' ms' : '—') + '</span></div>'
+      + '<div class="wt-foot">' + escapeHtml(d.ip || '—')
+      + (d.last_check ? ' · checked ' + timeSince(d.last_check) + ' ago' : ' · waiting') + '</div>'
+      + '</div>';
+  };
+  wrap.innerHTML = ws.map(tile).join('')
+    + '<div class="wtile wt-hint"><span class="wt-hint-t">+ Watch a device</span>'
+    + '<span class="wt-foot">pings it every ' + (iotEff.approx ? '~' : '') + freqShort(iotEff.freq || 30)
+    + ' · alerts when it drops · Settings &rarr; Devices</span></div>';
+});
 safely('devices table', function() { renderDevices(''); });
 safely('devices search', function() {
   const box = document.getElementById('devSearch');
   if (!box) return;
   box.addEventListener('input', () => renderDevices(box.value));
+});
+// the "Online now" strip count
+safely('devices strip count', function() {
+  const el = document.getElementById('devOnlineCount');
+  const devs = DATA.devices || [];
+  if (!devs.length) { el.textContent = '—'; return; }
+  el.innerHTML = devs.filter(d => d.online).length
+    + '<span class="unit">of ' + devs.length + ' this week</span>';
 });
 
 // ---------- quick-nav ----------
@@ -3055,87 +3231,6 @@ safely('quick nav', function() {
   }, { passive: true });
 });
 
-// ---------- IoT devices ----------
-safely('iot devices', function() {
-  // Typed/watched devices from devices.json. Watched rows carry live
-  // liveness from the iot thread (same 4-tier ladder as routers, so the
-  // same "Online · web" / "Online · silent" decoding applies); unwatched
-  // rows ride the device-scan census. Section hidden when nothing is
-  // tagged — same pattern as the custom-targets card.
-  const list = DATA.iot_devices || [];
-  const card = document.getElementById('iotCard');
-  if (!card || !list.length) return;
-  card.style.display = '';
-  const cols = document.getElementById('devCols');
-  if (cols) cols.classList.remove('no-iot');
-  const watched = list.filter(d => d.watch);
-  const downN = watched.filter(d => d.status === 'down').length;
-  document.getElementById('iotNote').textContent =
-    list.length + ' device' + (list.length === 1 ? '' : 's') + ' · ' + watched.length + ' watched'
-    + (downN ? ' · ' + downN + ' unreachable' : '');
-
-  function pill(d) {
-    if (d.watch) {
-      if (d.status === 'up') {
-        const silent = d.method === 'probe' || d.method === 'arp';
-        const txt = d.method === 'tcp' ? 'Online · web' : silent ? 'Online · silent' : 'Online';
-        // same plain-language decoder as the map hover cards
-        const tip = d.method === 'tcp' ? 'Alive via its web port — it ignores pings (common)'
-          : d.method === 'probe' ? 'Proven alive each check: it refuses a closed-port probe. Ignores pings — normal'
-          : d.method === 'arp' ? 'Seen answering network-presence (ARP) checks. Ignores pings — normal for stealthy devices'
-          : 'Answers ping normally';
-        return '<span class="status-pill small ' + (silent ? 'status-silent-pill' : 'status-up')
-          + '" title="' + escapeHtml(tip) + '"><span class="status-dot"></span>' + txt + '</span>';
-      }
-      if (d.status === 'down') {
-        return '<span class="status-pill small status-down"><span class="status-dot"></span>Down</span>';
-      }
-      return '<span class="status-pill small" style="background:var(--border-soft);color:var(--muted)">Never seen</span>';
-    }
-    return d.online
-      ? '<span class="status-pill small status-up"><span class="status-dot"></span>Online</span>'
-      : '<span class="status-pill small" style="background:var(--border-soft);color:var(--muted)"><span class="status-dot"></span>Away</span>';
-  }
-  function latCol(d) {
-    return (d.watch && d.latency != null) ? Math.round(d.latency) + ' ms' : '—';
-  }
-  function checkedCol(d) {
-    if (d.watch) return d.last_check ? timeSince(d.last_check) + ' ago' : 'waiting';
-    if (d.online) return 'now';
-    return d.last_seen ? timeSince(d.last_seen) + ' ago' : '—';
-  }
-  // Same table anatomy as the all-devices card (aligned columns, MAC in
-  // its own column) with Latency/Last-checked split out; the type label
-  // is a rowspan cell so the categories stack down the left edge.
-  const TYPE_LABEL = { camera: 'Cameras', intercom: 'Intercoms', printer: 'Printers', light: 'Lights',
-                       plug: 'Plugs', speaker: 'Speakers', tv: 'TVs', other: 'Other' };
-  const row = d => {
-    const watchTag = d.watch ? '' : '<span class="dev-type" title="Not actively watched — status comes from the periodic device scan. Tick Watch in Settings → Devices for live checks.">scan only</span>';
-    const sub = '<span class="dev-mac">' + escapeHtml(d.mac + (d.ip ? ' · ' + d.ip : '')) + '</span>';
-    return '<td><div class="device-name"><span class="device-icon">' + deviceIcon + '</span>'
-      + '<span class="dev-id"><span><b>' + escapeHtml(d.name) + '</b>' + watchTag + '</span>' + sub + '</span></div></td>'
-      + '<td class="col-mac">' + escapeHtml(d.mac) + '</td>'
-      + '<td class="mono col-ip-iot">' + escapeHtml(d.ip || '—') + '</td>'
-      + '<td>' + pill(d) + '</td>'
-      + '<td>' + latCol(d) + '</td>'
-      + '<td>' + checkedCol(d) + '</td>';
-  };
-  const byType = {};
-  for (const d of list) {
-    const t = d.type || 'other';
-    (byType[t] = byType[t] || []).push(d);   // server order: type, watch, name
-  }
-  let html = '<table><thead><tr><th></th><th>Device</th><th class="col-mac">MAC</th><th class="col-ip-iot">IP</th><th>Status</th><th>Latency</th><th>Last checked</th></tr></thead><tbody>';
-  Object.keys(byType).forEach(t => {
-    byType[t].forEach((d, i) => {
-      html += '<tr>' + (i === 0
-        ? '<td class="iot-type-cell" rowspan="' + byType[t].length + '">' + escapeHtml(TYPE_LABEL[t] || t) + '</td>'
-        : '') + row(d) + '</tr>';
-    });
-  });
-  html += '</tbody></table>';
-  document.getElementById('iotTableWrap').innerHTML = html;
-});
 
 // ---------- house map ----------
 // Named (not an anonymous safely block) so the resize listener below can
@@ -4274,48 +4369,33 @@ function renderLoadedLatencyChart() {
 }
 
 // ---------- devices online over time (range-aware) ----------
+// A 44px strip fused with the live count — the full chart card answered
+// one question ("did devices drop off?") and never earned 185px.
 function renderDevCountChart() {
-  const canvas = document.getElementById('devCountChart');
-  const emptyEl = document.getElementById('devCountEmpty');
+  const wrap = document.getElementById('devCountStrip');
+  if (!wrap) return;
   const all = DATA.device_count_series || [];
-  const showEmpty = (msg) => {
-    if (chartInstances.devCount) { chartInstances.devCount.destroy(); chartInstances.devCount = null; }
-    canvas.style.display = 'none'; emptyEl.style.display = 'block'; emptyEl.textContent = msg;
-  };
-  if (all.length < 2) return showEmpty('No scan history yet.');
   const hours = rangeFor('devcount');
-  const series = filterByRange(all, hours);
-  if (series.length < 2) return showEmpty('Not enough scans in the last ' + rangeWord(hours) + '.');
-  canvas.style.display = ''; emptyEl.style.display = 'none';
-  const blue = catColor(0);
-  if (chartInstances.devCount) chartInstances.devCount.destroy();
-  chartInstances.devCount = new Chart(canvas, {
-    type: 'line',
-    data: {
-      labels: series.map(p => new Date(p.t)),
-      datasets: [{
-        label: 'Devices',
-        data: series.map(p => p.v),
-        borderColor: blue,
-        backgroundColor: hexToRgba(blue, 0.10),
-        fill: true,
-        stepped: true,
-        borderWidth: 2,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      scales: { x: timeScale(hours), y: yScale('devices', { ticks: Object.assign(baseTicks(), { precision: 0 }) }) },
-      plugins: {
-        legend: legendOpts(false),
-        tooltip: { ...tooltipBase(), callbacks: { label: (c) => c.parsed.y + ' devices online' } },
-      },
-    },
-  });
+  const series = filterByRange(all, hours).filter(p => p.v != null);
+  if (series.length < 2) {
+    wrap.innerHTML = '<div class="q-subline" style="line-height:44px;padding:0">'
+      + (all.length < 2 ? 'no scan history yet' : 'not enough scans in the last ' + rangeWord(hours)) + '</div>';
+    return;
+  }
+  const W = 600, H = 44, PAD = 3;
+  const t0 = Date.parse(series[0].t), t1 = Date.parse(series[series.length - 1].t) || (t0 + 1);
+  const max = Math.max(...series.map(p => p.v)) || 1;
+  const px = t => PAD + (W - 2 * PAD) * ((Date.parse(t) - t0) / Math.max(1, t1 - t0));
+  const py = v => H - PAD - (H - 2 * PAD - 6) * (v / max);
+  const pts = series.map(p => px(p.t).toFixed(1) + ',' + py(p.v).toFixed(1)).join(' ');
+  const last = series[series.length - 1];
+  const title = series.length + ' scans · peak ' + max + ' devices — the count over the last ' + rangeWord(hours);
+  wrap.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none"><title>' + escapeHtml(title) + '</title>'
+    + '<path d="M' + pts.split(' ').join(' L') + ' L' + px(last.t).toFixed(1) + ',' + H + ' L' + PAD + ',' + H + ' Z"'
+    + ' fill="currentColor" opacity="0.10"/>'
+    + '<polyline points="' + pts + '" fill="none" stroke="currentColor" stroke-width="1.5"'
+    + ' stroke-linejoin="round" vector-effect="non-scaling-stroke"/>'
+    + '</svg>';
 }
 
 function rerenderCharts() {

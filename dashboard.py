@@ -1341,12 +1341,6 @@ def build_html(data):
     color: var(--label); font-weight: 600; }
   .card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
   .card-head h3 { margin:0; }
-  .stat-row { display:flex; align-items:flex-end; justify-content:space-between; gap: 10px; }
-  .stat-value { font-size: 30px; font-weight: 650; letter-spacing: -.01em; line-height:1;
-    font-variant-numeric: tabular-nums; }
-  /* the one stat that IS a machine value: the public IP stays mono */
-  .stat-value-ip { font-family: var(--font-mono); font-size: 18px; font-weight: 600; letter-spacing: 0; }
-  .stat-value .unit { font-size: 14px; color: var(--muted); font-weight: 600; margin-left: 2px; }
   .stat-sub { font-size: 12.5px; color: var(--text-secondary); margin-top: 8px; }
   /* rating pill on each metric card; the good/fair thresholds live in its
      hover tooltip — a visible legend on every card was badge fatigue */
@@ -1359,10 +1353,6 @@ def build_html(data):
     background: var(--status-good); box-shadow: 0 0 5px var(--glow-good); vertical-align: middle; }
   .rating.fair { color: color-mix(in srgb, var(--status-warning) 80%, black); background: var(--status-warning-bg); }
   .rating.poor { color: var(--status-critical); background: var(--status-critical-bg); box-shadow: inset 0 0 0 1px var(--glow-bad); }
-  .delta { font-size: 12px; font-weight: 600; display:inline-flex; align-items:center; gap:2px; font-variant-numeric: tabular-nums; }
-  .delta.good { color: var(--success-text); }
-  .delta.bad { color: var(--status-critical); }
-  .delta.flat { color: var(--muted); }
   .sparkline { flex-shrink:0; }
 
   .status-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 11px; border-radius: 8px;
@@ -1439,6 +1429,15 @@ def build_html(data):
   .ghost-btn.mini { font-size:11px; padding:4px 10px; border-radius:6px; }
   .range-toggle.mini { padding:2px; gap:2px; background: var(--surface-2); }
   .range-toggle.mini button { font-size:11px; padding:3px 8px; border-radius:5px; }
+  /* keep the power, lose the noise: per-card range toggles appear on
+     card hover/focus only (pointer devices — the topbar's global
+     3h/24h/7d does the daily work); phones never see them */
+  @media (hover: hover) and (pointer: fine) {
+    .range-toggle.mini { opacity: 0; transition: opacity .15s ease; }
+    .chart-card:hover .range-toggle.mini, .chart-card:focus-within .range-toggle.mini,
+    .card:hover .range-toggle.mini, .card:focus-within .range-toggle.mini { opacity: 1; }
+  }
+  @media (max-width: 640px) { .range-toggle.mini { display: none; } }
   .chart-card.with-tools > .chart-label { padding-right: 130px; }
 
   /* overflow VISIBLE, not auto: with scrollbars hidden globally an auto
@@ -1509,7 +1508,6 @@ def build_html(data):
     .deck-map, .deck .card:not(.deck-fill) { grid-column: span 2; }
     .q-spark { display: none; }
     .hero-value { font-size: 28px; }
-    .stat-value { font-size: 25px; }
     table { font-size: 12px; }
     th, td { padding: 8px 4px; }
     td.mono, .device-name .mono { font-size: 11px; }
@@ -1977,6 +1975,12 @@ def build_html(data):
   <section id="sec-charts">
     <div class="section-head">
       <h2>Latency &amp; packet loss</h2>
+      <!-- ONE quick-check button for the section — the latency and loss
+           cards' buttons triggered the same ping+DNS run twice over -->
+      <span style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <span class="section-note" id="ck-quick" style="display:none"></span>
+        <button class="ghost-btn mini" data-checknow="quick" data-checknote="quick" style="display:none" title="Run a live ping + DNS check right now (~10s) — the result is recorded like any scheduled check">Check now</button>
+      </span>
     </div>
     <!-- phones: the four chart cards act as ONE tabbed card (same chart
          instances, one visible at a time) — six stacked chart cards were
@@ -1989,17 +1993,15 @@ def build_html(data):
     </div>
     <div class="chart-grid">
       <div class="chart-card with-tools" id="latencyCardBox">
-        <div class="card-tools"><button class="ghost-btn mini" data-checknow="quick" data-checknote="latency" style="display:none" title="Run a live ping + DNS check right now (~10s) — the result is recorded like any scheduled check">Check now</button><span class="range-toggle mini" data-chart="latency"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
+        <div class="card-tools"><span class="range-toggle mini" data-chart="latency"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
         <div class="chart-label">Average latency (ms)</div>
         <div class="chart-box"><canvas id="latencyChart"></canvas></div>
-        <div class="stat-sub" id="ck-latency" style="display:none"></div>
         <div class="check-foot" id="cfLatencyChart"></div>
       </div>
       <div class="chart-card with-tools" id="lossCardBox">
-        <div class="card-tools"><button class="ghost-btn mini" data-checknow="quick" data-checknote="loss" style="display:none" title="Run a live ping + DNS check right now (~10s) — the result is recorded like any scheduled check">Check now</button><span class="range-toggle mini" data-chart="loss"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
+        <div class="card-tools"><span class="range-toggle mini" data-chart="loss"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
         <div class="chart-label">Packet loss (%)</div>
         <div class="chart-box sm"><canvas id="lossChart"></canvas></div>
-        <div class="stat-sub" id="ck-loss" style="display:none"></div>
         <div class="check-foot" id="cfLossChart"></div>
       </div>
     </div>
@@ -4801,6 +4803,15 @@ def build_report_html(report):
     color: #5a6474; border-bottom: 1px solid #c9cedb; padding: 6px 8px; }
   td { padding: 6px 8px; border-bottom: 1px solid #e4e7ef; vertical-align: top; }
   tr { page-break-inside: avoid; }
+  /* the verdict strip: the complaint's argument is the FIRST thing a
+     support agent sees — uptime, plan delivered, outage total */
+  .verdict { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 2px solid #1a1f2b;
+    border-bottom: 1px solid #c9cedb; margin: 4px 0 10px; }
+  .verdict .vd { padding: 12px 14px; border-left: 1px solid #e4e7ef; }
+  .verdict .vd:first-child { border-left: none; padding-left: 0; }
+  .verdict .v { font-size: 26px; font-weight: 800; letter-spacing: -.01em; }
+  .verdict .v.bad { color: #b3261e; }
+  .verdict .k { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #5a6474; margin-top: 2px; }
   .totals { display: flex; gap: 28px; flex-wrap: wrap; margin: 14px 0 4px; }
   .tot .v { font-size: 24px; font-weight: 700; }
   .tot .k { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #5a6474; }
@@ -4833,6 +4844,8 @@ def build_report_html(report):
     <button data-days="90">90 days</button>
     <button class="print-btn" onclick="window.print()">Print / save as PDF</button>
   </div>
+
+  <div class="verdict" id="verdict"></div>
 
   <h2>Summary</h2>
   <div class="totals" id="totals"></div>
@@ -4888,6 +4901,32 @@ function render(days) {
   document.getElementById('subline').textContent =
     'Prepared ' + local(R.generated_at) + ' · window: last ' + days + ' days'
     + (R.plan.down_mbps ? ' · plan: ' + R.plan.down_mbps + ' Mbps down / ' + (R.plan.up_mbps || '?') + ' Mbps up' : '');
+
+  // ---- verdict strip: uptime · plan delivered · outages, up top ----
+  // Uptime pairs window-clamped downtime with the measured hours of the
+  // months the window touches — a headline figure; the monthly table
+  // below carries the exact per-month numbers.
+  let measSecs = 0;
+  Object.keys(R.measured_hours || {}).forEach(key => {
+    const monthEnd = new Date(key + '-01T00:00:00');
+    monthEnd.setMonth(monthEnd.getMonth() + 1);
+    if (monthEnd.getTime() >= cut) measSecs += (R.measured_hours[key] || 0) * 3600;
+  });
+  measSecs = Math.min(measSecs, days * 86400);
+  const upPct = measSecs ? Math.max(0, 100 * (1 - downSecs / measSecs)) : null;
+  const winTests = R.speedtests.filter(t => Date.parse(t.ts) >= cut && t.download_mbps != null)
+    .map(t => t.download_mbps).sort((a, b) => a - b);
+  const medDown = winTests.length ? winTests[Math.floor(winTests.length / 2)] : null;
+  const planPct = (R.plan.down_mbps && medDown != null) ? Math.round(100 * medDown / R.plan.down_mbps) : null;
+  const cutPctV = R.plan_pct_fair || 80;
+  document.getElementById('verdict').innerHTML =
+    '<div class="vd"><div class="v' + (upPct != null && upPct < 99 ? ' bad' : '') + '">'
+      + (upPct != null ? upPct.toFixed(2).replace(/\\.?0+$/, '') + '%' : '—') + '</div><div class="k">measured uptime</div></div>'
+    + '<div class="vd"><div class="v' + (planPct != null && planPct < cutPctV ? ' bad' : '') + '">'
+      + (planPct != null ? planPct + '%' : '—') + '</div><div class="k">plan delivered (median test)</div></div>'
+    + '<div class="vd"><div class="v' + (hard.length ? ' bad' : '') + '">' + hard.length
+      + (downSecs ? ' <span style="font-size:15px;font-weight:600">· ' + fmtDur(downSecs) + '</span>' : '')
+      + '</div><div class="k">outages · total downtime</div></div>';
 
   document.getElementById('totals').innerHTML =
     '<div class="tot"><div class="v' + (hard.length ? ' bad' : '') + '">' + hard.length + '</div><div class="k">internet/router outages</div></div>'

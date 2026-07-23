@@ -1795,6 +1795,37 @@ def build_html(data):
   .house-svg .win { stroke: var(--baseline); stroke-opacity: .45; stroke-width: 1; }
   .house-svg .win.lit { fill: var(--scene-sun); opacity: .5; }
   .house-svg .win.off { fill: var(--grid); opacity: .9; }
+  /* ---------- phone chrome: chart tabs + bottom tab bar ---------- */
+  .chart-tabs { display: none; gap: 2px; background: var(--surface-2); border-radius: 8px;
+    padding: 2px; margin-bottom: 12px; }
+  .chart-tabs button { flex: 1; text-align: center; border: none; background: transparent;
+    color: var(--muted); font-size: 11.5px; font-weight: 600; padding: 6px 0; border-radius: 6px;
+    cursor: pointer; }
+  .chart-tabs button.active { background: var(--accent-soft); color: var(--accent); }
+  .bottom-nav { display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 7;
+    grid-template-columns: 1fr 1fr 1fr 1fr; padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(180deg, color-mix(in srgb, var(--page) 0%, transparent), var(--page) 30%);
+    border-top: 1px solid var(--border-soft); }
+  .bottom-nav button { display: flex; flex-direction: column; align-items: center; gap: 4px;
+    border: none; background: transparent; color: var(--muted); font-size: 9.5px; font-weight: 600;
+    cursor: pointer; padding: 0; font-family: inherit; }
+  .bottom-nav button.active { color: var(--accent); font-weight: 700; }
+  .bn-i { display: inline-flex; align-items: flex-end; justify-content: center; height: 12px; }
+  .bn-map { width: 12px; background: currentColor; clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+  .bn-charts { gap: 2px; }
+  .bn-charts i { width: 3px; background: currentColor; display: inline-block; }
+  .bn-charts i:nth-child(1) { height: 7px; } .bn-charts i:nth-child(2) { height: 12px; } .bn-charts i:nth-child(3) { height: 9px; }
+  .bn-inc { width: 12px; background: currentColor; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+  .bn-dev { display: grid; grid-template-columns: 5px 5px; gap: 2px; height: 12px; }
+  .bn-dev i { width: 5px; height: 5px; border-radius: 1.5px; background: currentColor; display: inline-block; }
+  @media (max-width: 640px) {
+    .bottom-nav { display: grid; }
+    .quick-nav { display: none; }        /* the bottom bar replaces the fixed pill clone */
+    .chart-tabs { display: flex; }
+    .wrap { padding-bottom: 96px; }      /* content never hides behind the bar */
+    #speedSectionHead { display: none; } /* the Speed tab owns that heading's job */
+  }
+
   /* the internet uplink node outside the house */
   .house-svg .net-node.up { color: var(--status-good); }
   .house-svg .net-node.down { color: var(--status-critical); }
@@ -1947,15 +1978,24 @@ def build_html(data):
     <div class="section-head">
       <h2>Latency &amp; packet loss</h2>
     </div>
+    <!-- phones: the four chart cards act as ONE tabbed card (same chart
+         instances, one visible at a time) — six stacked chart cards were
+         a minute of scrolling at 375px. Hidden on desktop. -->
+    <div class="chart-tabs" id="chartTabs">
+      <button data-ctab="latency" class="active">Latency</button>
+      <button data-ctab="loss">Loss</button>
+      <button data-ctab="speed">Speed</button>
+      <button data-ctab="loaded">Load</button>
+    </div>
     <div class="chart-grid">
-      <div class="chart-card with-tools">
+      <div class="chart-card with-tools" id="latencyCardBox">
         <div class="card-tools"><button class="ghost-btn mini" data-checknow="quick" data-checknote="latency" style="display:none" title="Run a live ping + DNS check right now (~10s) — the result is recorded like any scheduled check">Check now</button><span class="range-toggle mini" data-chart="latency"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
         <div class="chart-label">Average latency (ms)</div>
         <div class="chart-box"><canvas id="latencyChart"></canvas></div>
         <div class="stat-sub" id="ck-latency" style="display:none"></div>
         <div class="check-foot" id="cfLatencyChart"></div>
       </div>
-      <div class="chart-card with-tools">
+      <div class="chart-card with-tools" id="lossCardBox">
         <div class="card-tools"><button class="ghost-btn mini" data-checknow="quick" data-checknote="loss" style="display:none" title="Run a live ping + DNS check right now (~10s) — the result is recorded like any scheduled check">Check now</button><span class="range-toggle mini" data-chart="loss"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
         <div class="chart-label">Packet loss (%)</div>
         <div class="chart-box sm"><canvas id="lossChart"></canvas></div>
@@ -1966,10 +2006,10 @@ def build_html(data):
   </section>
 
   <section id="sec-speed">
-    <div class="section-head">
+    <div class="section-head" id="speedSectionHead">
       <h2>Speed</h2>
     </div>
-    <div class="chart-card with-tools">
+    <div class="chart-card with-tools" id="speedCardBox">
       <div class="card-tools"><button class="ghost-btn mini" data-checknow="speed" data-checknote="speed" style="display:none" title="Run a full speed test right now (~1 min) — it briefly loads the line and is recorded like any scheduled test">Check now</button><span class="range-toggle mini" data-chart="speed"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
       <div class="chart-label">Speed test (Mbps)<span id="speedVantage" class="chart-sublabel"></span></div>
       <div class="chart-box"><canvas id="speedChart"></canvas></div>
@@ -1979,7 +2019,7 @@ def build_html(data):
       <div class="check-foot" id="cfSpeed"></div>
     </div>
     <div class="chart-grid">
-      <div class="chart-card with-tools">
+      <div class="chart-card with-tools" id="loadedCardBox">
         <div class="card-tools"><span class="range-toggle mini" data-chart="loaded"><button data-range="3">3h</button><button data-range="24">24h</button><button data-range="168">7d</button></span></div>
         <div class="chart-label" style="display:flex; align-items:center; gap:8px;">Latency under load (ms)
           <span class="rating" id="rateBufferbloat"></span></div>
@@ -2056,6 +2096,15 @@ def build_html(data):
 
   <div class="footer-note" id="footerNote">Everything on this page stays local — regenerated every minute by dashboard.py. Reload to see the latest.</div>
 </div>
+
+<!-- phones only: bottom tab bar — top-of-screen pills are unreachable
+     one-handed. The one genuinely new chrome element; ≤640px only. -->
+<nav class="bottom-nav" id="bottomNav" aria-label="Sections">
+  <button data-goto="sec-deck" class="active"><span class="bn-i bn-map"></span>Map</button>
+  <button data-goto="sec-charts"><span class="bn-i bn-charts"><i></i><i></i><i></i></span>Charts</button>
+  <button data-goto="sec-outages"><span class="bn-i bn-inc"></span>Incidents</button>
+  <button data-goto="sec-devices"><span class="bn-i bn-dev"><i></i><i></i><i></i><i></i></span>Devices</button>
+</nav>
 
 <script>
 const DATA = __DATA_JSON__;
@@ -3274,6 +3323,33 @@ safely('quick nav', function() {
   }, { passive: true });
 });
 
+// ---------- bottom tab bar (phones) ----------
+// Top-of-screen pills are unreachable one-handed; ≤640px gets a fixed
+// bottom bar instead (the fixed quick-nav clone hides there via CSS).
+safely('bottom nav', function() {
+  const nav = document.getElementById('bottomNav');
+  if (!nav) return;
+  nav.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const sec = document.getElementById(b.dataset.goto);
+    if (sec && sec.scrollIntoView) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  // scroll spy: light the tab of the section crossing the top third
+  // (sec-speed counts as Charts — its cards ride the Charts tabs)
+  const SECS = [['sec-deck', 'sec-deck'], ['sec-charts', 'sec-charts'], ['sec-speed', 'sec-charts'],
+                ['sec-outages', 'sec-outages'], ['sec-devices', 'sec-devices']];
+  window.addEventListener('scroll', () => {
+    const vh = window.innerHeight || 700;
+    let cur = 'sec-deck';
+    for (const [id, tab] of SECS) {
+      const el = document.getElementById(id);
+      if (el && el.getBoundingClientRect && el.getBoundingClientRect().top <= vh * 0.35) cur = tab;
+    }
+    nav.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.goto === cur));
+  }, { passive: true });
+});
+
 
 // ---------- house map ----------
 // Named (not an anonymous safely block) so the resize listener below can
@@ -4440,6 +4516,36 @@ function renderDevCountChart() {
     + ' stroke-linejoin="round" vector-effect="non-scaling-stroke"/>'
     + '</svg>';
 }
+
+// ---------- phone chart tabs ----------
+// ≤640px the four chart cards act as one tabbed card: same instances,
+// one visible at a time, switched here. Desktop shows all four.
+safely('phone chart tabs', function() {
+  const tabs = document.getElementById('chartTabs');
+  if (!tabs) return;
+  const CARDS = { latency: 'latencyCardBox', loss: 'lossCardBox', speed: 'speedCardBox', loaded: 'loadedCardBox' };
+  const mq = window.matchMedia ? window.matchMedia('(max-width: 640px)') : { matches: false };
+  let active = 'latency';
+  function apply(repaint) {
+    const phone = !!mq.matches;
+    Object.keys(CARDS).forEach(k => {
+      const el = document.getElementById(CARDS[k]);
+      if (el) el.style.display = (!phone || k === active) ? '' : 'none';
+    });
+    tabs.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.ctab === active));
+    // a chart created while its card was display:none rendered at zero
+    // size — repaint the one that just became visible
+    if (phone && repaint && RANGE_CHARTS[active]) safely('tab ' + active, RANGE_CHARTS[active]);
+  }
+  tabs.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    active = b.dataset.ctab;
+    apply(true);
+  });
+  if (mq.addEventListener) mq.addEventListener('change', () => apply(true));
+  apply(false);
+});
 
 function rerenderCharts() {
   if (typeof Chart === 'undefined') return;

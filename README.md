@@ -601,10 +601,9 @@ Things to know:
   code over `app/` on every start, precisely so the running code always
   matches the image.
 - Linux differences vs a Windows/macOS install: no Wi-Fi chart and no
-  desktop toast notifications (use webhook or email alerts instead), and
-  silent (ARP-only) routers are detected as down more slowly — the Linux
-  ARP check is presence-only, so a dead silent router can linger "online"
-  for up to ~20 minutes of cache decay.
+  desktop toast notifications (use webhook or email alerts instead).
+  Silent (ARP-only) router detection is state-aware on Linux just like
+  Windows, via the kernel's neighbor table.
 
 ### Without Docker
 

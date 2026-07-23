@@ -991,7 +991,10 @@ def main():
             # STATE (fresh every router cycle); elsewhere it's the lingering
             # cache, refreshed by the device sweep — footers must not claim
             # freshness the platform can't deliver
-            "arp_cmd": "arp state" if sys.platform == "win32" else "arp cache",
+            # Windows (netsh NUD) and Linux (ip neigh NUD) prove liveness at
+            # router cadence; only macOS is stuck with cache presence (BSD
+            # arp has no state column) refreshed by the device sweep
+            "arp_cmd": "arp cache" if sys.platform == "darwin" else "arp state",
             # configured cadence (config.json "intervals" over defaults) vs
             # what the data actually shows — the footers prefer measured
             "freq": configured_intervals(site_config),

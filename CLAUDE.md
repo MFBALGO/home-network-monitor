@@ -135,7 +135,14 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
     unreachable within ~10s of our traffic, cutting silent-router
     down-detection from ~20min cache-linger to ~2-3 cycles; transient
     stale/probe states get re-read, unrecognized/localized output falls
-    back to the old presence check) and presence-only on mac/linux.
+    back to the old presence check) AND on Linux (`ip neigh show <ip>`
+    NUD states via _neighbor_state_linux — same ladder shape, same
+    presence fallback), presence-only on macOS (BSD arp has no state
+    column). NB the unix presence parser must accept BOTH `arp -n`
+    formats — BSD's "? (ip) at mac on if" AND Linux net-tools' table
+    row with no "at" (an "at"-anchored regex once made the ARP tier
+    permanently dead on Linux: every silent router showed red in the
+    Docker install).
     NOTE this network's Buffalo APs DROP closed-port SYNs (stealth), so
     the RST tier never fires for them — the state-aware ARP tier is
     what actually detects them; rst_probe earns its keep on gear that
@@ -143,8 +150,8 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
     `router_pings` records icmp/tcp/probe/arp; dashboard shows
     "Online · web" for tcp, "Online · silent" for probe AND arp — sage
     green (--status-silent) on the map. Footers: probe = "rst probe" at
-    router cadence; arp = "arp state" at router cadence on Windows,
-    "arp cache" at device-scan cadence elsewhere (checks.arp_cmd
+    router cadence; arp = "arp state" at router cadence on Windows and
+    Linux, "arp cache" at device-scan cadence on macOS (checks.arp_cmd
     carries the platform).
   - Device scan: nmap `-sn` sweep when installed (checked every cycle),
     else built-in ping sweep, then `arp -an`/`arp -a` (NOT plain `arp -a`
@@ -515,8 +522,9 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   needed capability (in Docker's default set); runs as root (unprivileged
   nmap -sn silently degrades ARP→TCP probes; Ookla wants writable $HOME).
   .dockerignore is an ALLOWLIST (`*` then !*.py etc.) so personal configs
-  can't leak into images built from a live install. Linux deltas: ARP tier
-  presence-only (silent-router down-lag ~20min), no Wi-Fi, no toasts.
+  can't leak into images built from a live install. Linux deltas: no
+  Wi-Fi, no toasts (the ARP tier is state-aware via `ip neigh`, same
+  quality as Windows).
 
 ## Working notes
 

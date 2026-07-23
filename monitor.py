@@ -806,8 +806,9 @@ def _neighbor_state_windows(ip):
 
 def _arp_presence(ip):
     """The old presence-only check: a valid MAC in the ARP table. Kept as
-    the unix path and the Windows fallback — its entries linger ~20 min
-    after a device dies, so it says "was here recently", not "is here"."""
+    the macOS path and the Windows/Linux fallback — its entries linger
+    ~20 min after a device dies, so it says "was here recently", not
+    "is here"."""
     try:
         if IS_WINDOWS:
             # `arp -a <ip>` prints the entry (dash-separated MAC) or an
@@ -815,10 +816,43 @@ def _arp_presence(ip):
             out = subprocess.run(["arp", "-a", ip], capture_output=True, text=True, timeout=5, **SUBPROCESS_EXTRA).stdout
             m = re.search(r"(([0-9a-fA-F]{2}-){5}[0-9a-fA-F]{2})", out)
             return bool(m) and m.group(1).lower() not in ("ff-ff-ff-ff-ff-ff", "00-00-00-00-00-00")
+        # `arp -n <ip>` output differs by OS: BSD/macOS prints
+        # "? (ip) at a4:2b:.. on en0", Linux net-tools prints a table row
+        # "ip  ether  a4:2b:..  C  eth0" — no "at" anywhere. (An "at"-
+        # anchored regex here made the ARP tier permanently dead on Linux:
+        # silent routers all showed red in the Docker install.) Match the
+        # colon-MAC shape itself so both formats parse; reject
+        # broadcast/zero/incomplete entries.
         out = subprocess.run(["arp", "-n", ip], capture_output=True, text=True, timeout=5, **SUBPROCESS_EXTRA).stdout
-        return bool(re.search(r"at\s+[0-9a-fA-F]{1,2}:", out)) and "incomplete" not in out.lower()
+        if "incomplete" in out.lower():
+            return False
+        m = re.search(r"(([0-9a-fA-F]{1,2}:){5}[0-9a-fA-F]{1,2})", out)
+        if not m:
+            return False
+        octets = m.group(1).lower().split(":")
+        return not (set(octets) <= {"ff"} or set(octets) <= {"0", "00"})
     except Exception:
         return False
+
+
+def _neighbor_state_linux(ip):
+    """The Linux twin of _neighbor_state_windows, via iproute2: `ip neigh
+    show <ip>` ends each line with the kernel's NUD state (REACHABLE /
+    STALE / DELAY / PROBE / FAILED / INCOMPLETE / PERMANENT / NOARP).
+    Returns the state lowercased, '' when the IP has no entry, None when
+    the command itself failed (caller falls back to presence)."""
+    try:
+        out = subprocess.run(["ip", "neigh", "show", ip],
+                             capture_output=True, text=True, timeout=5, **SUBPROCESS_EXTRA).stdout
+    except Exception:
+        return None
+    known = {"reachable", "stale", "delay", "probe", "failed",
+             "incomplete", "permanent", "noarp", "none"}
+    for line in out.splitlines():
+        toks = line.strip().lower().split()
+        if toks and toks[-1] in known:
+            return toks[-1]
+    return ""
 
 
 def arp_alive(ip):
@@ -837,8 +871,9 @@ def arp_alive(ip):
     get two short re-reads; if the verdict still hasn't landed — or netsh
     speaks a language we don't recognize — fall back to the presence
     check, so this tier can only ever get MORE accurate, never become a
-    new source of false downs. macOS/Linux keep the presence check (BSD
-    arp exposes no state column)."""
+    new source of false downs. Linux gets the same treatment via
+    iproute2's `ip neigh` NUD states. macOS keeps the presence check
+    (BSD arp exposes no state column)."""
     if IS_WINDOWS:
         for attempt in range(3):
             state = _neighbor_state_windows(ip)
@@ -851,6 +886,20 @@ def arp_alive(ip):
             if attempt < 2:
                 time.sleep(3)   # stale/delay/probe: NUD verdict lands in seconds
         return _arp_presence(ip)                   # unresolved (or localized)
+    if not IS_MACOS:
+        # Linux: same NUD-state idea, same conservative shape — anything
+        # unrecognized falls back to the presence check
+        for attempt in range(3):
+            state = _neighbor_state_linux(ip)
+            if state is None:
+                return _arp_presence(ip)          # no iproute2
+            if state in ("", "failed", "incomplete", "none"):
+                return False
+            if state in ("reachable", "permanent", "noarp"):
+                return True
+            if attempt < 2:
+                time.sleep(3)   # stale/delay/probe: NUD verdict lands in seconds
+        return _arp_presence(ip)                   # verdict never landed
     return _arp_presence(ip)
 
 

@@ -15,6 +15,9 @@
       "host": "example.com"
     }
   ],
+  "admin_ips": [
+    "192.168.1.50"
+  ],
   "detection": {
     "outage_fails": 3,
     "degraded_latency_ms": 150,

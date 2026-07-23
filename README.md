@@ -398,6 +398,24 @@ online/seen counts, and the devices-online chart:
 It filters by the device's *latest* IP, so anything that has since moved
 onto your main subnet still shows up normally.
 
+### Optional: who may open the settings page (config.json)
+
+By default the settings page and setup wizard answer only on the machine
+running the monitor (or to the whole home network if the server runs with
+`NETMON_ADMIN_LAN=1` — the Docker setup's option). To allow exactly
+*specific* devices instead — say, just your own PC — add their IPs in
+**Settings → General → Settings access**, or by hand:
+
+```json
+{ "admin_ips": ["192.168.1.50"] }
+```
+
+A non-empty list narrows access to those devices only (and works without
+`NETMON_ADMIN_LAN` too). It applies immediately on save. You can't lock
+yourself out completely: the monitor machine itself is always allowed —
+on a headless server, reach it through an SSH tunnel
+(`ssh -L 8080:127.0.0.1:8080 you@server`).
+
 ### Optional: tuning what counts as "normal" (config.json)
 
 Each metric card and several charts show a rating (GOOD / FAIR / HIGH) and
@@ -573,7 +591,10 @@ Things to know:
   `NETMON_ADMIN_LAN: "1"` in the compose file (there's a commented line
   ready): the wizard, settings and their API then answer to any
   private-IP device, and the dashboard shows its Settings button to
-  those devices. The anti-rebinding/CSRF guards stay active either way.
+  those devices. To narrow that down to specific devices, add their IPs
+  in Settings → General → Settings access (config `admin_ips`) — a
+  non-empty list allows exactly those IPs and nothing else on the LAN.
+  The anti-rebinding/CSRF guards stay active either way.
 - **Updates happen by rebuilding the image** (`git pull` in `src/`, then
   `docker compose build && docker compose up -d`). The in-app "Update now"
   button is a no-op in the container: the entrypoint re-seeds the image's

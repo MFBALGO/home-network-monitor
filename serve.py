@@ -42,8 +42,40 @@ PORT = int(os.environ.get("NETMON_WEB_PORT", "8080"))
 # Know what you're opting into: every LAN device can then read and change
 # the config, including any alert email password stored in it. Leave it off
 # on a machine you sit at — settings already work there via localhost.
+# A non-empty "admin_ips" list in config.json (Settings → General →
+# Settings access) NARROWS this to exactly those devices — see _admin_ips().
 ADMIN_LAN = (os.environ.get("NETMON_ADMIN_LAN") or "").strip().lower() in (
     "1", "true", "yes", "on")
+
+# config.json's admin_ips allowlist, re-read whenever the file's mtime
+# changes so a settings save applies to the very next request. Config
+# writes are atomic (tmp + os.replace), so a torn read can't happen;
+# invalid entries are dropped silently here — the settings validator
+# already gave the user honest feedback when they were saved.
+_ADMIN_IPS_CACHE = {"mtime": None, "ips": frozenset()}
+
+
+def _admin_ips():
+    path = os.path.join(BASE_DIR, "config.json")
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return frozenset()  # no config yet (fresh install)
+    if mtime != _ADMIN_IPS_CACHE["mtime"]:
+        ips = set()
+        try:
+            with open(path, encoding="utf-8") as f:
+                raw = json.load(f).get("admin_ips") or []
+            for entry in raw:
+                try:
+                    ips.add(str(ipaddress.ip_address(str(entry).strip())))
+                except ValueError:
+                    pass
+        except Exception:
+            pass  # unreadable/hand-mangled config: treat as no allowlist
+        _ADMIN_IPS_CACHE["ips"] = frozenset(ips)
+        _ADMIN_IPS_CACHE["mtime"] = mtime
+    return _ADMIN_IPS_CACHE["ips"]
 
 # Under pythonw.exe (no console) stdout/stderr are None - send them to logs/
 # like monitor.py does, so crashes are visible somewhere.
@@ -147,14 +179,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except ValueError:
             return False
 
+    def _admin_lan_peer(self):
+        """Non-localhost admin access. The peer must have a private address
+        and send a private-IP-literal Host header (the same anti-rebinding
+        rule the LAN API carve-out uses), AND either match the config.json
+        admin_ips allowlist or — when no allowlist is configured — ride the
+        NETMON_ADMIN_LAN blanket opt-in. A non-empty allowlist NARROWS the
+        blanket to exactly those devices, and works without the env var too."""
+        if not self._peer_is_private() or not self._host_is_private_ip():
+            return False
+        allow = _admin_ips()
+        if allow:
+            try:
+                return str(ipaddress.ip_address(self.client_address[0])) in allow
+            except ValueError:
+                return False
+        return ADMIN_LAN
+
     def _is_admin(self):
-        """Who may use the settings surface: the machine itself, or — with
-        NETMON_ADMIN_LAN set (headless/Docker installs) — any private-IP
-        peer whose Host header is also a private-IP literal (the same
-        anti-rebinding rule the LAN API carve-out uses)."""
-        if self._is_local():
-            return True
-        return ADMIN_LAN and self._peer_is_private() and self._host_is_private_ip()
+        """Who may use the settings surface: the machine itself — always,
+        so a bad allowlist can never brick settings — or an allowed LAN
+        peer (see _admin_lan_peer)."""
+        return self._is_local() or self._admin_lan_peer()
 
     def _send(self, status, body, ctype="text/html; charset=utf-8", extra=None):
         data = body.encode("utf-8") if isinstance(body, str) else body
@@ -191,7 +237,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(403, {"ok": False, "error": "settings are only available on the monitor PC"})
                 return
             try:
-                status, payload = settings_api.handle_get(path)
+                # the peer IP rides along so the settings page can offer
+                # "+ This device" in the access-allowlist editor
+                status, payload = settings_api.handle_get(path, client_ip=self.client_address[0])
             except Exception as e:
                 status, payload = 500, {"ok": False, "error": f"{type(e).__name__}: {e}"}
             self._send_json(status, payload)
@@ -265,7 +313,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # fetches from the internet).
         lan_ok = path in LAN_API["POST"] and self._host_is_private_ip()
         local_ok = self._is_local() and self._host_is_local()
-        adminlan_ok = ADMIN_LAN and self._peer_is_private() and self._host_is_private_ip()
+        adminlan_ok = self._admin_lan_peer()
         if not (lan_ok or local_ok or adminlan_ok):
             self._send_json(403, {"ok": False, "error": "settings are only available on the monitor PC"})
             return

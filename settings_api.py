@@ -223,6 +223,34 @@ def validate_config(cfg):
                     if k not in ("name", "host"):
                         warnings.append(_err("config", f"custom_targets[{i}].{k}", "unknown field - kept as-is"))
 
+    # settings-page access allowlist — serve.py hot-reloads it per request,
+    # so a save applies immediately. The machine running the monitor is
+    # always allowed regardless, so a bad list can't brick settings.
+    admin_ips = cfg.get("admin_ips")
+    if admin_ips is not None:
+        if not isinstance(admin_ips, list):
+            errors.append(_err("config", "admin_ips", "must be a list of IP addresses"))
+        elif len(admin_ips) > 20:
+            errors.append(_err("config", "admin_ips", "at most 20 addresses"))
+        else:
+            ai_seen = set()
+            for i, entry in enumerate(admin_ips):
+                try:
+                    parsed = ipaddress.ip_address(str(entry).strip())
+                except ValueError:
+                    errors.append(_err("config", f"admin_ips[{i}]",
+                                       f"'{entry}' is not a valid IP address"))
+                    continue
+                if str(parsed) in ai_seen:
+                    errors.append(_err("config", f"admin_ips[{i}]", f"duplicate address '{parsed}'"))
+                ai_seen.add(str(parsed))
+                if parsed.is_loopback:
+                    warnings.append(_err("config", f"admin_ips[{i}]",
+                                         "the monitor machine itself is always allowed - this entry is redundant"))
+                elif not parsed.is_private:
+                    warnings.append(_err("config", f"admin_ips[{i}]",
+                                         f"'{parsed}' is not a private LAN address, so it will never match a home device"))
+
     if cfg.get("update_check") is not None and not isinstance(cfg.get("update_check"), bool):
         errors.append(_err("config", "update_check", "must be true or false"))
 
@@ -832,7 +860,7 @@ def start_update():
     return 202, {"ok": True}
 
 
-def handle_get(path):
+def handle_get(path, client_ip=None):
     if path == "/api/test/status":
         return 200, load_json(TEST_STATUS_PATH, {"state": "idle"})
     if path == "/api/update/status":
@@ -848,6 +876,9 @@ def handle_get(path):
                 "wizard_needed": wizard_needed(),
                 "scan_cmd": device_scan_cmd(),
                 "router_scan_cmd": router_scan_cmd(),
+                # who is asking — lets the settings page offer "+ This
+                # device" in the access-allowlist editor (serve.py fills it)
+                "client_ip": client_ip,
                 "files": {
                     "config": _file_meta(CONFIG_PATH),
                     "routers": _file_meta(ROUTERS_CONFIG_PATH),

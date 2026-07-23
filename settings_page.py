@@ -643,6 +643,24 @@ SETTINGS_HTML = (_SHARED_HEAD.replace("__PAGE_TITLE__", "Settings — Home Netwo
     <div class="iv-grid" id="gIntervals"></div>
   </div>
   <div class="card">
+    <h2 style="margin-top:0">Settings access</h2>
+    <div class="sub" style="margin-bottom:4px">Which devices may open this settings page and the
+    setup wizard. The machine running the monitor itself always can.</div>
+    <details class="hint"><summary>More…</summary>
+      <div class="sub">With the list empty, access follows how the server was started: only the
+      monitor machine itself, or — if it runs with <span class="mono">NETMON_ADMIN_LAN=1</span>
+      (the Docker setup&#8217;s option) — every device on your home network. Adding IPs here narrows
+      that to exactly these devices, and works even without that setting. You can&#8217;t lock
+      yourself out completely: the monitor machine always gets in (on a headless server, via an
+      SSH tunnel). Saving applies immediately to the next request.</div>
+    </details>
+    <table id="aiTable"><tr><th>Allowed IP address</th><th></th></tr></table>
+    <div class="row" style="margin-top:10px">
+      <button class="small" id="aiAdd">+ Add IP</button>
+      <button class="small" id="aiAddSelf" style="display:none"></button>
+    </div>
+  </div>
+  <div class="card">
     <h2 style="margin-top:0">Updates</h2>
     <div class="sub" style="margin-bottom:8px">One click: downloads the new release from GitHub,
     keeps the old version in <span class="mono">data/backup</span>, swaps the code, and the
@@ -927,6 +945,7 @@ async function load() {
   S.routers = data.routers || [];
   S.devices = data.devices || {};
   S.census = data.census || {};
+  S.meta = data.meta || {};
   document.getElementById('dScanCmd').textContent =
     'runs: ' + ((data.meta && data.meta.scan_cmd) || 'ping sweep + arp');
   document.getElementById('rScanCmd').textContent =
@@ -961,6 +980,18 @@ async function load() {
   const tgT = document.getElementById('tgTable');
   tgT.innerHTML = '<tr><th>Name</th><th>Host or IP</th><th></th></tr>' +
     (S.config.custom_targets || []).map(targetRow).join('');
+
+  const aiT = document.getElementById('aiTable');
+  aiT.innerHTML = '<tr><th>Allowed IP address</th><th></th></tr>' +
+    (S.config.admin_ips || []).map(adminIpRow).join('');
+  // offer a one-click add of the device this page is open on (localhost
+  // is always allowed anyway, so the shortcut only shows for LAN peers)
+  const aiSelfBtn = document.getElementById('aiAddSelf');
+  const aiSelfIp = S.meta.client_ip || '';
+  if (aiSelfIp && aiSelfIp !== '127.0.0.1' && aiSelfIp !== '::1') {
+    aiSelfBtn.textContent = '+ This device (' + aiSelfIp + ')';
+    aiSelfBtn.style.display = '';
+  }
 
   const grid = document.getElementById('gThresh');
   const th = S.config.thresholds || {};
@@ -1275,6 +1306,19 @@ document.getElementById('gSave').onclick = async () => {
     if (name || host) tgs.push({name: name, host: host});
   }
   if (tgs.length) cfg.custom_targets = tgs; else delete cfg.custom_targets;
+  const aips = [];
+  for (const inp of document.querySelectorAll('#aiTable .ai-ip')) {
+    const v = inp.value.trim();
+    if (v && !aips.includes(v)) aips.push(v);
+  }
+  // about to saw off the branch this page sits on? make it a choice, not
+  // a surprise — after this save the list is the law for LAN devices
+  const aiSelf = (S.meta && S.meta.client_ip) || '';
+  if (aips.length && aiSelf && aiSelf !== '127.0.0.1' && aiSelf !== '::1' && !aips.includes(aiSelf)) {
+    if (!confirm('The allowed-IP list does not include this device (' + aiSelf + ').' +
+        ' After saving, settings will no longer open from here. Save anyway?')) return;
+  }
+  if (aips.length) cfg.admin_ips = aips; else delete cfg.admin_ips;
   // carry through threshold keys that no longer have a UI row (e.g. a
   // legacy wifi entry) — rebuilding from the rows alone would drop them
   const th = {};
@@ -1330,6 +1374,28 @@ document.getElementById('tgTable').onclick = (e) => {
 document.getElementById('tgAdd').onclick = () => {
   if (document.querySelectorAll('#tgTable .tg-name').length >= 5) return;
   document.getElementById('tgTable').insertAdjacentHTML('beforeend', targetRow({name: '', host: ''}));
+};
+
+// ---- settings-access allowlist (General tab) ----
+function adminIpRow(ip) {
+  return '<tr>' +
+    '<td><input type="text" class="ai-ip mono" maxlength="45" value="' + esc(ip || '') + '" placeholder="e.g. 192.168.1.50"></td>' +
+    '<td><button class="small danger ai-del">&#10005;</button></td></tr>';
+}
+document.getElementById('aiTable').onclick = (e) => {
+  if (e.target.classList.contains('ai-del')) e.target.closest('tr').remove();
+};
+document.getElementById('aiAdd').onclick = () => {
+  if (document.querySelectorAll('#aiTable .ai-ip').length >= 20) return;
+  document.getElementById('aiTable').insertAdjacentHTML('beforeend', adminIpRow(''));
+};
+document.getElementById('aiAddSelf').onclick = () => {
+  const ip = (S.meta && S.meta.client_ip) || '';
+  if (!ip) return;
+  const have = Array.from(document.querySelectorAll('#aiTable .ai-ip')).map(i => i.value.trim());
+  if (!have.includes(ip)) {
+    document.getElementById('aiTable').insertAdjacentHTML('beforeend', adminIpRow(ip));
+  }
 };
 
 // ---- routers ----

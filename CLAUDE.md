@@ -286,9 +286,20 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
   /api/* incl. the update endpoints — from localhost-only to any
   private-IP PEER, still requiring a private-IP-literal Host + Origin
   (the rebinding/CSRF guards apply to the wider audience unchanged);
-  `_is_admin()` is the one gate helper. The dashboard's topbar Settings
+  `_is_admin()` is the one gate helper, `_admin_lan_peer()` the LAN leg.
+  config.json `admin_ips` (Settings → General → "Settings access" card)
+  NARROWS the LAN leg to exactly those IPs when non-empty — and grants
+  them even without the env var; empty list = whatever the env says.
+  Hot-reloaded per request via the mtime-cached `_admin_ips()` (atomic
+  config saves mean no torn reads). Localhost ALWAYS gets in — the
+  no-lockout escape hatch (headless: SSH tunnel). GET /api/config's
+  meta.client_ip carries the requester's IP (serve.py passes it to
+  handle_get) so the card can offer "+ This device (x.x.x.x)"; the save
+  confirm()s when the list would exclude the device you're saving from.
+  The dashboard's topbar Settings
   link probes `HEAD /settings` for non-localhost viewers and shows
-  itself only on 200, so the link tracks the server's actual policy. `/` 302s to the wizard on a fresh install and serves a
+  itself only on 200, so the link tracks the server's actual policy
+  (allowlist changes included, on the next page load). `/` 302s to the wizard on a fresh install and serves a
   "warming up" page until dashboard.html first exists. Port 8080
   (`NETMON_WEB_PORT` to override), no-store on HTML, 503 + Retry-After
   if the file is mid-rewrite.
@@ -469,7 +480,10 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
     onto it in enabled_for so it can't ride the plain outage toggle),
     `default_range_hours` (3|24|168 — the dashboard charts' load-time
     range; Settings → General select; omitted when 3, the built-in
-    default), `intervals` ({check: seconds} overriding
+    default), `admin_ips` ([ip, …] max 20 — settings-page access
+    allowlist, see the serve.py bullet; validator rejects non-IPs and
+    duplicates, warns on loopback/non-private entries), `intervals`
+    ({check: seconds} overriding
     monitor.py's INTERVAL_DEFAULTS — keys ping/router/dns/wifi/devices/
     iot/speedtest/public_ip; hot-reloaded per loop pass via the stamp-cached
     check_interval(), clamped to INTERVAL_BOUNDS, edited from the

@@ -1288,8 +1288,14 @@ def build_html(data):
     .deck { grid-template-columns: minmax(240px, 290px) minmax(0, 1fr) minmax(240px, 290px);
       grid-template-rows: auto 1fr; }
     .deck-map { grid-column: 2; grid-row: 1 / span 2; }
+    /* rows are EXPLICIT (heroes 1, fill cards 2): auto-placement's cursor,
+       already at row 2 after filling the left column, would start the
+       right column at row 2 and push the House card below the map — the
+       same trap the old deck dodged with grid-auto-flow: row dense */
     .deck-l { grid-column: 1; }
     .deck-r { grid-column: 3; }
+    .deck .card:not(.deck-fill) { grid-row: 1; }
+    .deck-fill { grid-row: 2; }
   }
   /* hero value line: the one number the household feels */
   .hero-row { display: flex; align-items: center; gap: 10px; }

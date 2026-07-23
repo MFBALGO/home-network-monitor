@@ -1528,11 +1528,6 @@ def build_html(data):
   tbody tr { transition: background .12s ease; }
   tbody tr:hover { background: var(--surface-2); }
   tr:last-child td { border-bottom: none; }
-  tr.event-row td:first-child { border-left: 3px solid transparent; }
-  tr.event-gateway td:first-child { border-left-color: var(--status-serious); }
-  tr.event-internet td:first-child { border-left-color: var(--status-critical); }
-  tr.event-degraded td:first-child { border-left-color: var(--status-warning); }
-  tr.event-ipchange td:first-child { border-left-color: var(--series-blue); }
 
   .badge { display:inline-flex; align-items:center; gap:6px; font-weight:700; font-size:12.5px; }
   .badge .dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; box-shadow: 0 0 6px currentColor; }
@@ -1543,11 +1538,42 @@ def build_html(data):
   .badge-iot { color: var(--series-blue); } .badge-iot .dot { background: var(--series-blue); }
   .badge-newdevice { color: var(--series-green); } .badge-newdevice .dot { background: var(--series-green); }
   .badge-dns { color: var(--status-serious); } .badge-dns .dot { background: var(--status-serious); }
-  tr.event-dns td:first-child { border-left-color: var(--status-serious); }
   .badge-gap { color: var(--muted); } .badge-gap .dot { background: var(--muted); box-shadow:none; }
-  tr.event-newdevice td:first-child { border-left-color: var(--series-green); }
-  tr.event-gap td:first-child { border-left-color: var(--baseline); }
-  tr.event-gap td { color: var(--text-secondary); }
+
+  /* incident rows: severity edge · label · note · duration · time block */
+  .inc-row { display:flex; align-items:center; gap:14px; padding:12px 14px;
+    border-left:3px solid transparent; border-bottom:1px solid var(--border-soft); }
+  .inc-row:last-child { border-bottom:none; }
+  .inc-row.event-gateway, .inc-evrow.event-gateway { border-left-color: var(--status-serious); }
+  .inc-row.event-internet, .inc-evrow.event-internet { border-left-color: var(--status-critical); }
+  .inc-row.event-degraded, .inc-evrow.event-degraded { border-left-color: var(--status-warning); }
+  .inc-row.event-dns, .inc-evrow.event-dns { border-left-color: var(--status-serious); }
+  .inc-row.event-ipchange, .inc-evrow.event-ipchange { border-left-color: var(--series-blue); }
+  .inc-row.event-newdevice, .inc-evrow.event-newdevice { border-left-color: var(--series-green); }
+  .inc-row.event-gap, .inc-evrow.event-gap { border-left-color: var(--baseline); }
+  .inc-row.event-gap .inc-note { color: var(--text-secondary); }
+  /* an ongoing incident tints its whole row — the one thing that should
+     be louder than everything else in the log */
+  .inc-row.inc-live { background: color-mix(in srgb, var(--status-serious) 5%, transparent); }
+  .inc-row .inc-label { min-width:150px; flex-shrink:0; }
+  .inc-row .inc-note { flex:1; min-width:0; font-size:13px; color: var(--text-primary); overflow-wrap:anywhere; }
+  .inc-row .inc-dur { font-family:var(--font-mono); font-size:11.5px; font-weight:700;
+    color: var(--text-primary); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .inc-row .inc-time { text-align:right; font-family:var(--font-mono); font-size:11px;
+    color: var(--text-secondary); line-height:1.5; min-width:120px; flex-shrink:0; }
+  .inc-row .inc-rel { color: var(--muted); font-size:10px; }
+  .inc-row.flash { animation: rowFlash 2s ease-out; }
+  .inc-evrow { border-left:3px solid transparent; border-bottom:1px solid var(--border-soft);
+    padding:0 14px 13px; }
+  @media (max-width: 640px) {
+    /* meta drops under the title; the note takes the full width */
+    .inc-row { flex-wrap: wrap; gap: 6px 10px; }
+    .inc-row .inc-label { min-width:0; }
+    .inc-row .inc-dur { margin-left:auto; }
+    .inc-row .inc-time { flex-basis:100%; text-align:left; min-width:0; }
+    .inc-row .inc-time br { display:none; }
+    .inc-row .inc-rel::before { content:' · '; color: var(--muted); }
+  }
   .ongoing-tag { background: var(--status-critical-bg); color: var(--status-critical); font-size: 10px; font-weight:800;
     font-family: var(--font-mono); text-transform:uppercase; letter-spacing:.08em; padding: 2px 7px; border-radius: 5px;
     box-shadow: inset 0 0 0 1px var(--glow-bad); animation: blinkSoft 1.6s ease-in-out infinite; }
@@ -1558,56 +1584,67 @@ def build_html(data):
     padding:7px 16px; border-radius:8px; cursor:pointer; transition: color .12s ease, border-color .12s ease; }
   .ghost-btn:hover { color: var(--accent); border-color: var(--accent-glow); }
 
-  /* ---------- outages: summary chips + incident timeline + filters ---------- */
-  .outage-summary { display:grid; grid-template-columns: repeat(auto-fit, minmax(148px,1fr)); gap:10px; margin-bottom:18px; }
-  .osum { background: var(--surface-2); border:1px solid var(--border-soft); border-radius:10px; padding:11px 13px 12px; position:relative; overflow:hidden; }
-  .osum[data-cat] { cursor: pointer; transition: border-color .12s ease; }
-  .osum[data-cat]:hover { border-color: var(--accent-glow); }
-  .osum::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background: var(--muted); opacity:.85; }
-  .osum.good::before { background: var(--status-good); } .osum.warn::before { background: var(--status-warning); } .osum.bad::before { background: var(--status-critical); }
-  .osum .k { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:600; }
-  .osum .v { font-size:22px; font-weight:650; font-variant-numeric:tabular-nums; margin-top:6px; letter-spacing:-.01em; line-height:1; }
-  .osum .s { font-size:10.5px; color:var(--text-secondary); margin-top:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .osum.good .v { color: var(--status-good); } .osum.warn .v { color: var(--status-warning); } .osum.bad .v { color: var(--status-critical); }
-
-  .timeline-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:9px; flex-wrap:wrap; }
-  .timeline-label { font-size:12.5px; font-weight:600; color:var(--text-secondary); }
-  .timeline-legend { display:flex; gap:12px; flex-wrap:wrap; font-size:11px; color:var(--text-secondary); }
-  .timeline-legend .tlk { display:inline-flex; align-items:center; gap:5px; }
-  .timeline-legend .tlk i { width:9px; height:9px; border-radius:2px; display:inline-block; }
+  /* ---------- incidents: lanes + duration bars + structured evidence ---------- */
   .timeline-svg { display:block; width:100%; height:auto; }
   .timeline-svg text { font-family: var(--font-mono); }
   .timeline-svg .tl-grid { stroke: var(--grid); stroke-width:1; }
   .timeline-svg .tl-day { fill: var(--muted); font-size:10px; }
   .timeline-svg .tl-track { fill: var(--surface-2); stroke: var(--border-soft); }
+  .timeline-svg .tl-lane { fill: var(--muted); font-size:8.5px; font-weight:700; letter-spacing:.09em; }
+  .timeline-svg .tl-lane-abbr { display:none; }
+  @media (max-width: 640px) {
+    .timeline-svg .tl-lane-full { display:none; }
+    .timeline-svg .tl-lane-abbr { display:initial; }
+  }
   .timeline-svg .tl-now { stroke: var(--accent); stroke-width:1.5; stroke-dasharray:2 3; }
   .timeline-svg .tl-nowlab { fill: var(--accent); font-size:9px; font-weight:700; }
   .timeline-svg .tl-ev { filter: drop-shadow(0 0 3px currentColor); }
+  .timeline-svg .tl-ongoing { animation: blinkSoft 1.6s ease-in-out infinite; }
   .timeline-svg [data-ev] { cursor: pointer; }
   .timeline-svg [data-ev]:hover { opacity: 1; }
   .timeline-empty { padding:14px 2px; }
-  /* timeline click → the matching log row flashes so the eye lands on it */
-  tr.event-row.flash td { animation: rowFlash 2s ease-out; }
   @keyframes rowFlash { 0% { background: var(--accent-soft); } 100% { background: transparent; } }
-  tr.event-row .rel { color: var(--muted); font-size: 11.5px; }
-  /* flight-recorder evidence: toggle button in the detail cell + a
-     collapsed full-width row rendering the snapshot */
+  /* flight-recorder evidence: toggle chip in the note + a structured
+     panel — resolver verdicts, gateway ping, per-router liveness chips,
+     the traceroute as one mono line */
   .ev-btn { font-family: var(--font-mono); font-size: 10px; padding: 1px 7px; margin-left: 7px;
     border-radius: 5px; border: 1px solid var(--border); background: var(--surface-1);
     color: var(--accent); cursor: pointer; }
   .ev-btn:hover { border-color: var(--accent); }
-  .ev-row td { background: var(--surface-1); border-left: 3px solid var(--border); }
-  .ev-body { font-family: var(--font-mono); font-size: 11px; line-height: 1.9; color: var(--text-secondary);
-    padding: 4px 2px; }
-  .ev-body .ev-k { color: var(--muted); font-weight: 700; text-transform: uppercase; font-size: 9.5px;
-    letter-spacing: .1em; margin-right: 7px; }
-  .ev-body .ev-ok { color: var(--status-good); }
-  .ev-body .ev-bad { color: var(--status-critical); }
-  .ev-body .ev-note { color: var(--muted); font-size: 10px; }
-  .ev-trace { margin: 3px 0 0; padding: 7px 10px; background: var(--surface-2); border-radius: 6px;
-    overflow-x: auto; font-size: 10.5px; line-height: 1.55; color: var(--text-secondary); }
+  .fr-panel { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; }
+  .fr-head { display:flex; align-items:center; gap:10px; margin-bottom:11px; flex-wrap:wrap;
+    font-family: var(--font-mono); }
+  .fr-title { font-size: 9.5px; font-weight: 800; letter-spacing: .12em; color: var(--accent); }
+  .fr-meta { font-size: 10px; color: var(--muted); }
+  .fr-grid { display:grid; grid-template-columns: 200px 170px 1fr; gap: 16px; }
+  @media (max-width: 640px) { .fr-grid { grid-template-columns: 1fr; } }
+  .fr-k { font-family: var(--font-mono); font-size: 9px; font-weight: 700; letter-spacing: .1em;
+    color: var(--muted); text-transform: uppercase; margin-bottom: 7px; }
+  .fr-rows { display:flex; flex-direction:column; gap:5px; font-family: var(--font-mono); font-size: 10.5px; }
+  .fr-rows .fr-r { display:flex; justify-content:space-between; gap:10px; }
+  .fr-rows .fr-r span:first-child { color: var(--text-secondary); }
+  .ev-ok { color: var(--status-good); font-weight: 700; }
+  .ev-bad { color: var(--status-critical); font-weight: 700; }
+  .ev-note { color: var(--muted); font-size: 10px; font-family: var(--font-mono); }
+  .fr-big { font-size: 20px; font-weight: 640; line-height: 1; font-variant-numeric: tabular-nums; }
+  .fr-big .unit { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .rchips { display:flex; flex-wrap:wrap; gap:4px; }
+  .rchip { font-family: var(--font-mono); font-size: 9px; padding: 2px 7px; border-radius: 5px;
+    color: var(--status-critical); background: color-mix(in srgb, var(--status-critical) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--status-critical) 25%, transparent); }
+  .rchip.ok { color: var(--status-good); background: color-mix(in srgb, var(--status-good) 8%, transparent);
+    border-color: color-mix(in srgb, var(--status-good) 25%, transparent); }
+  .fr-trace { margin-top: 11px; padding: 8px 11px; background: var(--surface-1); border-radius: 6px;
+    overflow-x: auto; white-space: nowrap; font-family: var(--font-mono); font-size: 10px;
+    line-height: 1.7; color: var(--text-secondary); }
+  .legend-details { margin-top: 6px; }
+  .legend-details summary { cursor: pointer; font-size: 12px; color: var(--muted); font-weight: 600;
+    padding: 8px 2px 2px; }
+  .legend-details summary:hover { color: var(--accent); }
 
-  .outage-filters { display:flex; gap:6px; flex-wrap:wrap; margin:18px 0 12px; }
+  .outage-filters { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 12px; }
+  .ofilter .fdot { width:6px; height:6px; border-radius:50%; display:inline-block; flex-shrink:0; }
   .ofilter { border:1px solid var(--border); background:var(--surface-1); color:var(--muted);
     font-size:12px; font-weight:600; padding:5px 11px; border-radius:7px;
     cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition: color .12s ease, background .12s ease; }
@@ -1956,28 +1993,32 @@ def build_html(data):
 
   <section id="sec-outages">
     <div class="section-head">
-      <h2>Outages &amp; degradation log</h2>
-      <span class="section-note">last 7 days, most recent first · <a href="report.html" title="Printable outage/speed summary — evidence for ISP complaints">ISP evidence report &rarr;</a></span>
+      <h2>Incidents</h2>
+      <span class="section-note"><span id="incSummary">last 7 days</span> · <a href="report.html" title="Printable outage/speed summary — evidence for ISP complaints">ISP evidence report &rarr;</a></span>
     </div>
-    <div class="chart-card">
-      <div id="outageSummary" class="outage-summary"></div>
-      <div class="timeline-head">
-        <span class="timeline-label">Incident timeline · last 7 days</span>
-        <span class="timeline-legend" id="timelineLegend"></span>
-      </div>
+    <!-- one row of colored, clickable counts — summary chips and filter
+         chips were the same seven concepts twice -->
+    <div id="outageFilters" class="outage-filters"></div>
+    <div class="chart-card" style="margin-bottom:12px">
       <div id="outageTimeline"></div>
-      <div id="outageFilters" class="outage-filters"></div>
+    </div>
+    <div class="chart-card inc-card">
       <div id="outagesTableWrap"></div>
-      <div class="legend-note">
-        <div class="legend-item"><span class="badge badge-gateway"><span class="dot"></span>Gateway down</span><span>Your router/Wi-Fi (or a router from the list above) was unreachable — local issue.</span></div>
-        <div class="legend-item"><span class="badge badge-internet"><span class="dot"></span>Internet down</span><span>Gateway was fine but the internet wasn't — likely your ISP.</span></div>
-        <div class="legend-item"><span class="badge badge-degraded"><span class="dot"></span>Slow / degraded</span><span>Nothing fully down, but latency or packet loss was elevated.</span></div>
-        <div class="legend-item"><span class="badge badge-dns"><span class="dot"></span>DNS failure</span><span>Name lookups were failing — sites won't load by name even though pings still work.</span></div>
-        <div class="legend-item"><span class="badge badge-ipchange"><span class="dot"></span>Public IP changed</span><span>Informational — your ISP reassigned your address (common around brief reconnects).</span></div>
-        <div class="legend-item"><span class="badge badge-newdevice"><span class="dot"></span>New device</span><span>A never-seen-before device joined the network — name it in <span class="mono">devices.json</span>.</span></div>
-        <div class="legend-item"><span class="badge badge-iot"><span class="dot"></span>IoT device down</span><span>A watched device (camera, printer, …) stopped answering — that device, not your internet; excluded from uptime.</span></div>
-        <div class="legend-item"><span class="badge badge-gap"><span class="dot"></span>Monitoring paused</span><span>No data was collected (Mac asleep or monitor stopped) — not an outage, but not measured uptime either.</span></div>
-      </div>
+      <!-- the 8-row badge glossary folds behind a details row; each badge
+           keeps its meaning one click away instead of 180px of card -->
+      <details class="legend-details">
+        <summary>What do these labels mean?</summary>
+        <div class="legend-note">
+          <div class="legend-item"><span class="badge badge-gateway"><span class="dot"></span>Gateway down</span><span>Your router/Wi-Fi (or a router from the list above) was unreachable — local issue.</span></div>
+          <div class="legend-item"><span class="badge badge-internet"><span class="dot"></span>Internet down</span><span>Gateway was fine but the internet wasn't — likely your ISP.</span></div>
+          <div class="legend-item"><span class="badge badge-degraded"><span class="dot"></span>Slow / degraded</span><span>Nothing fully down, but latency or packet loss was elevated.</span></div>
+          <div class="legend-item"><span class="badge badge-dns"><span class="dot"></span>DNS failure</span><span>Name lookups were failing — sites won't load by name even though pings still work.</span></div>
+          <div class="legend-item"><span class="badge badge-ipchange"><span class="dot"></span>Public IP changed</span><span>Informational — your ISP reassigned your address (common around brief reconnects).</span></div>
+          <div class="legend-item"><span class="badge badge-newdevice"><span class="dot"></span>New device</span><span>A never-seen-before device joined the network — name it in <span class="mono">devices.json</span>.</span></div>
+          <div class="legend-item"><span class="badge badge-iot"><span class="dot"></span>IoT device down</span><span>A watched device (camera, printer, …) stopped answering — that device, not your internet; excluded from uptime.</span></div>
+          <div class="legend-item"><span class="badge badge-gap"><span class="dot"></span>Monitoring paused</span><span>No data was collected (Mac asleep or monitor stopped) — not an outage, but not measured uptime either.</span></div>
+        </div>
+      </details>
     </div>
   </section>
 
@@ -2699,90 +2740,87 @@ safely('outages log', function() {
         note: 'No data collected — Mac was likely asleep or the monitor was stopped'})),
   ].map(classify).sort((a, b) => b.startMs - a.startMs);
 
-  // ---- summary (last 7 days) ----
+  // ---- header summary: the 7d totals move into the section head ----
   const inWin = allEvents.filter(e => e.startMs >= WIN_START);
   const hardDown = inWin.filter(e => e.cat === 'outage' || e.cat === 'dns');
   const downtime = hardDown.reduce((a, e) => a + e.durSecs, 0);
   const longest = hardDown.reduce((a, e) => Math.max(a, e.durSecs), 0);
-  const slowCount = inWin.filter(e => e.cat === 'slow').length;
-  // most-affected: tally hard-down events by a friendly location label
-  const tally = {};
-  hardDown.forEach(e => {
-    let who = 'Internet';
-    if (e.scope === 'gateway') who = 'Gateway';
-    else if (e.scope === 'router') who = e.router_name || 'Router';
-    else if (e.cat === 'dns') who = 'DNS';
-    tally[who] = (tally[who] || 0) + 1;
-  });
-  let worst = null, worstN = 0;
-  Object.keys(tally).forEach(k => { if (tally[k] > worstN) { worst = k; worstN = tally[k]; } });
-
   const blips = DATA.blips || [];
-  // chips carry a log-filter category — clicking one activates the
-  // matching filter pill below (only when that pill exists)
-  const chips = [
-    { k: 'Outages · 7d', v: String(hardDown.length), s: hardDown.length ? 'reachability failures' : 'none — all clear',
-      cls: hardDown.length ? 'bad' : 'good', cat: 'outage' },
-    { k: 'Total downtime', v: fmtDur(downtime), s: 'summed outage time', cls: downtime > 0 ? 'bad' : 'good', cat: 'outage' },
-    { k: 'Longest outage', v: longest ? fmtDur(longest) : '—', s: 'single worst event', cls: longest ? 'warn' : 'good', cat: 'outage' },
-    { k: 'Most affected', v: worst || '—', s: worst ? worstN + (worstN === 1 ? ' outage' : ' outages') : (slowCount ? slowCount + ' slow spells' : 'nothing'),
-      cls: worst ? 'warn' : 'good', cat: worst === 'DNS' ? 'dns' : 'outage' },
-    // micro-drops: recovered before the outage threshold, so they appear
-    // nowhere else — yet frequent blips ARE the unstable-line signature
-    { k: 'Blips · 7d', v: String(blips.length),
-      s: blips.length ? (DATA.blips_24h || 0) + ' in last 24h — drops too brief to be outages' : 'no micro-drops either',
-      cls: blips.length ? 'warn' : 'good', cat: 'flap' },
-  ];
-  document.getElementById('outageSummary').innerHTML = chips.map(c =>
-    `<div class="osum ${c.cls}"${c.cat ? ` data-cat="${c.cat}" title="Click to filter the log"` : ''}><div class="k">${c.k}</div><div class="v">${escapeHtml(c.v)}</div><div class="s">${escapeHtml(c.s)}</div></div>`
-  ).join('');
-  document.getElementById('outageSummary').addEventListener('click', (ev) => {
-    const chip = ev.target.closest('[data-cat]');
-    if (!chip) return;
-    const btn = filtersWrap.querySelector(`.ofilter[data-cat="${chip.dataset.cat}"]`);
-    if (btn) { btn.click(); btn.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  safely('incident summary', function() {
+    const el = document.getElementById('incSummary');
+    if (!el) return;
+    const bits = ['last 7 days'];
+    bits.push(downtime ? fmtDur(downtime) + ' unavailable' : 'no downtime');
+    if (longest) bits.push('longest ' + fmtDur(longest));
+    // micro-drops recovered before the outage threshold appear nowhere
+    // else — yet frequent blips ARE the unstable-line signature
+    if (blips.length) bits.push(blips.length + ' blip' + (blips.length === 1 ? '' : 's')
+      + ((DATA.blips_24h || 0) ? ' (' + DATA.blips_24h + ' in 24h)' : ''));
+    el.textContent = bits.join(' · ');
   });
 
-  // ---- incident timeline (SVG, last 7 days) ----
+  // ---- incident timeline: five lanes (Internet / Routers / DNS /
+  // Devices / Monitor). Incidents are duration bars, blips stay thin
+  // ticks — severity × time reads at a glance, and a cluster across
+  // lanes tells its story (routers + DNS dying together). ----
+  const laneFor = e => {
+    if (e.cat === 'outage') return (e.scope === 'gateway' || e.scope === 'router') ? 1 : 0;
+    if (e.cat === 'dns') return 2;
+    if (e.cat === 'device' || e.cat === 'iot' || e.cat === 'wifi') return 3;
+    if (e.cat === 'paused') return 4;
+    return 0;   // slow / flapping / IP changes / custom targets ride the internet lane
+  };
+  const LANE_LABELS = [['INTERNET', 'NET'], ['ROUTERS', 'RTR'], ['DNS', 'DNS'], ['DEVICES', 'DEV'], ['MONITOR', 'MON']];
   const tlWrap = document.getElementById('outageTimeline');
-  const LEFT = 12, RIGHT = 988, TOP = 22, TRACK_H = 40, BOT = TOP + TRACK_H;
+  const LEFT = 76, RIGHT = 988, L_TOP = 12, L_H = 14, L_GAP = 28;
+  const laneY = i => L_TOP + i * L_GAP;
+  const BOT = laneY(4) + L_H;
   const clamp = ms => Math.max(WIN_START, Math.min(NOW, ms));
   const xFor = ms => LEFT + (clamp(ms) - WIN_START) / WIN * (RIGHT - LEFT);
-  let svg = `<svg class="timeline-svg" viewBox="0 0 1000 92" role="img" aria-label="Incident timeline, last 7 days">`;
-  svg += `<rect class="tl-track" x="${LEFT}" y="${TOP}" width="${RIGHT - LEFT}" height="${TRACK_H}" rx="6"/>`;
-  // day gridlines + labels (8 marks, one per day boundary)
+  let svg = `<svg class="timeline-svg" viewBox="0 0 1000 ${BOT + 28}" role="img" aria-label="Incident timeline by lane, last 7 days">`;
+  // day gridlines behind the lanes + labels below
   for (let i = 0; i <= 7; i++) {
     const x = LEFT + i / 7 * (RIGHT - LEFT);
     const t = WIN_START + i / 7 * WIN;
-    svg += `<line class="tl-grid" x1="${x.toFixed(1)}" y1="${TOP - 4}" x2="${x.toFixed(1)}" y2="${BOT + 4}"/>`;
+    svg += `<line class="tl-grid" x1="${x.toFixed(1)}" y1="${L_TOP - 4}" x2="${x.toFixed(1)}" y2="${BOT + 4}"/>`;
     const anchor = i === 0 ? 'start' : (i === 7 ? 'end' : 'middle');
     const lab = new Date(t).toLocaleDateString(undefined, { weekday: 'short' });
     svg += `<text class="tl-day" x="${x.toFixed(1)}" y="${BOT + 18}" text-anchor="${anchor}">${i === 7 ? 'today' : lab}</text>`;
   }
-  // duration bars first (under the point ticks)
+  // lane labels (3-letter on phones via CSS) + tracks
+  LANE_LABELS.forEach(([full, abbr], i) => {
+    svg += `<text class="tl-lane tl-lane-full" x="0" y="${laneY(i) + 11}">${full}</text>`;
+    svg += `<text class="tl-lane tl-lane-abbr" x="0" y="${laneY(i) + 11}">${abbr}</text>`;
+    svg += `<rect class="tl-track" x="${LEFT}" y="${laneY(i)}" width="${RIGHT - LEFT}" height="${L_H}" rx="3"/>`;
+  });
   const winEvents = allEvents.filter(e => e.endMs >= WIN_START && e.startMs <= NOW);
+  // duration bars first, point ticks on top
   winEvents.filter(e => !e.point).forEach(e => {
-    const x0 = xFor(e.startMs), x1 = xFor(e.endMs);
-    const w = Math.max(3, x1 - x0);
+    const x0 = xFor(e.startMs), x1 = xFor(e.endMs), y = laneY(laneFor(e));
+    const w = Math.max(2.5, x1 - x0);
     const title = `${e.label} · ${new Date(e.startMs).toLocaleString()} · ${e.ongoing ? 'ongoing' : fmtDur(e.durSecs)}`;
-    const op = e.cat === 'paused' ? 0.5 : 0.92;
-    svg += `<rect class="tl-ev" data-ev="${e.startMs}|${e.cat}" x="${x0.toFixed(1)}" y="${TOP + 3}" width="${w.toFixed(1)}" height="${TRACK_H - 6}" rx="2" fill="${e.tlColor}" style="color:${e.tlColor}" opacity="${op}"><title>${escapeHtml(title)}</title></rect>`;
+    const op = e.cat === 'paused' ? 0.55 : 0.92;
+    svg += `<rect class="tl-ev${e.ongoing ? ' tl-ongoing' : ''}" data-ev="${e.startMs}|${e.cat}" x="${x0.toFixed(1)}" y="${y + 1.5}" width="${w.toFixed(1)}" height="${L_H - 3}" rx="2" fill="${e.tlColor}" style="color:${e.tlColor}" opacity="${op}"><title>${escapeHtml(title)}</title></rect>`;
   });
-  // point events (new device / IP change) as ticks
   winEvents.filter(e => e.point).forEach(e => {
-    const x = xFor(e.startMs);
+    const x = xFor(e.startMs), y = laneY(laneFor(e));
     const title = `${e.label} · ${new Date(e.startMs).toLocaleString()}`;
-    svg += `<g fill="${e.tlColor}" style="color:${e.tlColor}" data-ev="${e.startMs}|${e.cat}"><rect class="tl-ev" x="${(x - 1).toFixed(1)}" y="${TOP + 2}" width="2" height="${TRACK_H - 4}"/><circle class="tl-ev" cx="${x.toFixed(1)}" cy="${TOP - 1}" r="3"/><title>${escapeHtml(title)}</title></g>`;
+    svg += `<rect class="tl-ev" data-ev="${e.startMs}|${e.cat}" x="${(x - 1.2).toFixed(1)}" y="${y + 2}" width="2.5" height="${L_H - 4}" rx="1" fill="${e.tlColor}" style="color:${e.tlColor}" opacity="0.9"><title>${escapeHtml(title)}</title></rect>`;
   });
-  // blips: short amber ticks hugging the bottom edge of the track (point
-  // events already own the top edge). One tick per micro-drop.
+  // blips: thin amber ticks on the internet lane, one per micro-drop
   blips.filter(b => Date.parse(b.t) >= WIN_START).forEach(b => {
     const x = xFor(Date.parse(b.t));
     const title = `Blip · ${new Date(Date.parse(b.t)).toLocaleString()} · ${b.checks} failed check${b.checks === 1 ? '' : 's'} (${b.cls})`;
-    svg += `<rect class="tl-ev" x="${(x - 1).toFixed(1)}" y="${BOT - 9}" width="2" height="8" fill="var(--status-warning)" style="color:var(--status-warning)" opacity="0.9"><title>${escapeHtml(title)}</title></rect>`;
+    svg += `<rect class="tl-ev" x="${(x - 1).toFixed(1)}" y="${laneY(0) + 2}" width="2" height="${L_H - 4}" rx="1" fill="var(--status-warning)" style="color:var(--status-warning)" opacity="0.85"><title>${escapeHtml(title)}</title></rect>`;
   });
   // "now" marker
-  svg += `<line class="tl-now" x1="${RIGHT}" y1="${TOP - 6}" x2="${RIGHT}" y2="${BOT + 4}"/>`;
+  svg += `<line class="tl-now" x1="${RIGHT}" y1="${L_TOP - 6}" x2="${RIGHT}" y2="${BOT + 4}"/>`;
+  svg += `<text class="tl-nowlab" x="${RIGHT}" y="${L_TOP - 9}" text-anchor="end">NOW</text>`;
+  if (winEvents.length === 0) {
+    svg += `<text x="${(LEFT + RIGHT) / 2}" y="${laneY(2) + 11}" text-anchor="middle" fill="var(--status-good)" font-size="12">No incidents in the last 7 days</text>`;
+  }
+  svg += `</svg>`;
+  tlWrap.innerHTML = svg;
   // clicking a timeline event jumps to (and flashes) its row in the log
   tlWrap.addEventListener('click', (ev) => {
     const el = ev.target && ev.target.closest ? ev.target.closest('[data-ev]') : null;
@@ -2797,7 +2835,7 @@ safely('outages log', function() {
       filtersWrap.querySelectorAll('.ofilter').forEach(b => b.classList.toggle('active', b.dataset.cat === 'all'));
       renderList();
     }
-    const row = outWrap.querySelector(`tr[data-ev="${key}"]`);
+    const row = outWrap.querySelector(`.inc-row[data-ev="${key}"]`);
     if (!row) return;
     if (row.style.display === 'none') {
       const t = document.getElementById('eventsToggle');
@@ -2808,19 +2846,6 @@ safely('outages log', function() {
     void row.offsetWidth;   // restart the animation on repeat clicks
     row.classList.add('flash');
   }
-  svg += `<text class="tl-nowlab" x="${RIGHT}" y="${TOP - 9}" text-anchor="end">NOW</text>`;
-  if (winEvents.length === 0) {
-    svg += `<text x="500" y="${TOP + TRACK_H / 2 + 4}" text-anchor="middle" fill="var(--status-good)" font-size="12" font-family="var(--font-mono)">No incidents in the last 7 days</text>`;
-  }
-  svg += `</svg>`;
-  tlWrap.innerHTML = svg;
-
-  // timeline colour legend
-  const legendKeys = [['Down', 'var(--status-critical)'], ['DNS', 'var(--status-serious)'],
-    ['Slow', 'var(--status-warning)'], ['Blip', 'var(--status-warning)'],
-    ['New device', 'var(--status-good)'], ['Paused', 'var(--muted)']];
-  document.getElementById('timelineLegend').innerHTML = legendKeys.map(([n, c]) =>
-    `<span class="tlk"><i style="background:${c}"></i>${n}</span>`).join('');
 
   // ---- filter chips ----
   const CAT_NAMES = { outage: 'Outages', dns: 'DNS', tgt: 'Targets', iot: 'IoT', slow: 'Slow', flap: 'Flapping', device: 'Devices', ip: 'IP changes', wifi: 'Wi-Fi roams', paused: 'Paused' };
@@ -2830,9 +2855,11 @@ safely('outages log', function() {
   const present = CAT_ORDER.filter(c => counts[c]);
   const filtersWrap = document.getElementById('outageFilters');
   if (allEvents.length) {
+    // colored counts double as the legend — the separate summary grid,
+    // legend strip and plain chips were the same concepts three times
     filtersWrap.innerHTML =
       `<button class="ofilter active" data-cat="all">All <span class="cnt">${allEvents.length}</span></button>` +
-      present.map(c => `<button class="ofilter" data-cat="${c}">${CAT_NAMES[c]} <span class="cnt">${counts[c]}</span></button>`).join('');
+      present.map(c => `<button class="ofilter" data-cat="${c}"><i class="fdot" style="background:${TL_COLOR[c]}"></i>${CAT_NAMES[c]} <span class="cnt">${counts[c]}</span></button>`).join('');
   }
 
   // ---- the list (filterable, collapsible) ----
@@ -2840,46 +2867,62 @@ safely('outages log', function() {
   const EVENTS_SHOWN = 8;
   let activeCat = 'all';
 
-  // Render a flight-recorder snapshot in plain terms. Every field is
-  // optional — partial captures render whatever they managed to grab.
+  // Render a flight-recorder snapshot as the argument it's making:
+  // resolver verdicts, gateway ping, per-router liveness chips, the
+  // traceroute as one mono line. Every field is optional — partial
+  // captures render whatever they managed to grab.
   function evidenceHtml(ev) {
-    const parts = [];
+    const cols = [];
     if (ev.dns) {
-      const line = Object.keys(ev.dns).map(k => {
+      const rows = Object.keys(ev.dns).map(k => {
         const v = ev.dns[k] || {};
         const nm = k === 'gateway' ? 'router' : k;
-        return `<span class="${v.ok ? 'ev-ok' : 'ev-bad'}">${escapeHtml(nm)} ${v.ok ? '✓' + (v.ms != null ? ' ' + v.ms + 'ms' : '') : '✗'}</span>`;
-      }).join(' · ');
-      parts.push('<div><span class="ev-k">DNS at failure</span> ' + line + '</div>');
+        return `<div class="fr-r"><span>${escapeHtml(nm)}</span><span class="${v.ok ? 'ev-ok' : 'ev-bad'}">${v.ok ? '✓' + (v.ms != null ? ' ' + v.ms + 'ms' : ' ok') : '✗ fail'}</span></div>`;
+      }).join('');
+      cols.push('<div><div class="fr-k">Resolvers</div><div class="fr-rows">' + rows + '</div></div>');
     }
     if (ev.gateway_ping) {
       const g = ev.gateway_ping;
       const ok = (g.received || 0) > 0;
-      parts.push(`<div><span class="ev-k">Gateway</span> <span class="${ok ? 'ev-ok' : 'ev-bad'}">${g.received}/${g.sent} pings answered${g.avg_ms != null ? ', ' + g.avg_ms + 'ms' : ''}</span></div>`);
+      cols.push('<div><div class="fr-k">Gateway ping</div>'
+        + '<div class="fr-big" style="color:' + (ok ? 'var(--status-good)' : 'var(--status-critical)') + '">'
+        + (g.received != null ? g.received : '?') + '<span class="unit"> / ' + (g.sent != null ? g.sent : '?') + ' received</span></div>'
+        + '<div class="ev-note" style="margin-top:6px">avg ' + (g.avg_ms != null ? g.avg_ms + ' ms' : '— ms')
+        + (ok ? '' : ' · the LAN itself was gone') + '</div></div>');
     }
     if (ev.routers_alive) {
-      const line = Object.keys(ev.routers_alive).map(n => {
-        const s = ev.routers_alive[n];
-        const ok = s === 'ping' || s === 'web' || s === 'probe' || s === true;
-        return `<span class="${ok ? 'ev-ok' : 'ev-bad'}">${escapeHtml(n)} ${ok ? '✓' : '?'}</span>`;
-      }).join(' · ');
-      parts.push('<div><span class="ev-k">Routers</span> ' + line + ' <span class="ev-note">(? = answered nothing in a hurry — not proof it was down)</span></div>');
+      const names = Object.keys(ev.routers_alive);
+      const isOk = n => { const st = ev.routers_alive[n]; return st === 'ping' || st === 'web' || st === 'probe' || st === true; };
+      const chips = names.map(n =>
+        `<span class="rchip${isOk(n) ? ' ok' : ''}">${escapeHtml(n)} ${isOk(n) ? '✓' : '✗'}</span>`).join('');
+      const okN = names.filter(isOk).length;
+      const synth = okN + ' of ' + names.length + ' answering'
+        + (okN === 0 ? ' — house-wide, not one AP' : '');
+      cols.push('<div><div class="fr-k">Routers alive at capture</div><div class="rchips">' + chips + '</div>'
+        + '<div class="ev-note" style="margin-top:7px" title="✗ = answered nothing in a hurry — not proof it was down">'
+        + escapeHtml(synth) + '</div></div>');
     }
+    let html = '<div class="fr-grid">' + cols.join('') + '</div>';
     if (ev.traceroute && ev.traceroute.length) {
-      // NB: double backslash — this JS lives in a Python string; a lone
-      // backslash-n would reach the browser as a real newline mid-string
-      parts.push('<div><span class="ev-k">Traceroute (where the path stopped)</span><pre class="ev-trace">'
-        + ev.traceroute.map(escapeHtml).join('\\n') + '</pre></div>');
+      // one mono line, own scroll — hops joined so they can't paginate the log
+      html += '<div class="fr-trace"><span style="color:var(--muted)">traceroute —</span> '
+        + ev.traceroute.map(l => escapeHtml(String(l).trim())).join('&nbsp;&nbsp;·&nbsp;&nbsp;') + '</div>';
     } else if (ev.traceroute_error) {
-      parts.push('<div><span class="ev-k">Traceroute</span> <span class="ev-bad">failed to run</span></div>');
+      html += '<div class="fr-trace"><span style="color:var(--muted)">traceroute —</span> <span class="ev-bad">failed to run</span></div>';
     }
-    const cap = [];
-    if (ev.captured_ts) cap.push('captured ' + new Date(Date.parse(ev.captured_ts)).toLocaleString());
-    if (ev.capture_secs != null) cap.push('took ' + ev.capture_secs + 's');
-    if (cap.length) parts.push('<div class="ev-note">' + escapeHtml(cap.join(' · ')) + '</div>');
-    return '<div class="ev-body">' + (parts.join('') || '<span class="ev-note">snapshot was empty</span>') + '</div>';
+    const meta = [];
+    if (ev.captured_ts) meta.push('captured ' + new Date(Date.parse(ev.captured_ts)).toLocaleString());
+    if (ev.capture_secs != null) meta.push('took ' + ev.capture_secs + 's');
+    return '<div class="fr-panel"><div class="fr-head"><span class="fr-title">Flight recorder</span>'
+      + '<span class="fr-meta">' + escapeHtml(meta.join(' · ') || 'snapshot from the first seconds of the incident') + '</span></div>'
+      + (cols.length || (ev.traceroute && ev.traceroute.length) ? html : '<span class="ev-note">snapshot was empty</span>') + '</div>';
   }
 
+  // date part dd/mm + full time, the way an ISP ticket wants it quoted
+  function absTime(ms) {
+    const d = new Date(ms);
+    return d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' }) + ', ' + d.toLocaleTimeString();
+  }
   function renderList() {
     const rowsData = (activeCat === 'all' ? allEvents : allEvents.filter(e => e.cat === activeCat)).slice(0, 200);
     if (rowsData.length === 0) {
@@ -2889,36 +2932,36 @@ safely('outages log', function() {
       return;
     }
     const rows = rowsData.map((e, idx) => {
-      const badge = `<span class="badge ${e.badgeClass}"><span class="dot"></span>${escapeHtml(e.label)}</span>`;
+      const badge = `<span class="badge ${e.badgeClass} inc-label"><span class="dot"></span>${escapeHtml(e.label)}</span>`;
       const dur = e.ongoing ? '<span class="ongoing-tag">Ongoing</span>' : (e.point ? '—' : escapeHtml(e.duration));
       const hidden = idx >= EVENTS_SHOWN ? ' style="display:none" data-extra="1"' : '';
       // flight-recorder snapshot (captured in the outage's first seconds):
-      // a toggle in the detail cell + a collapsed full-width row under it
+      // a toggle chip in the note + a collapsed structured panel under it
       const evBtn = e.evidence ? ` <button class="ev-btn" data-evtoggle="${idx}">evidence</button>` : '';
-      const evRow = e.evidence ? `<tr class="ev-row" data-evrow="${idx}"${idx >= EVENTS_SHOWN ? ' data-extra="1"' : ''} style="display:none">
-        <td colspan="4">${evidenceHtml(e.evidence)}</td>
-      </tr>` : '';
-      return `<tr class="event-row ${e.rowClass}" data-ev="${e.startMs}|${e.cat}"${hidden}>
-        <td>${new Date(e.startMs).toLocaleString()}<span class="rel"> · ${timeSince(e.startMs)} ago</span></td>
-        <td>${badge}</td>
-        <td>${dur}</td>
-        <td class="mono">${escapeHtml(e.note)}${evBtn}</td>
-      </tr>${evRow}`;
+      const evRow = e.evidence ? `<div class="inc-evrow ${e.rowClass}" data-evrow="${idx}"${idx >= EVENTS_SHOWN ? ' data-extra="1"' : ''} style="display:none">${evidenceHtml(e.evidence)}</div>` : '';
+      const rel = timeSince(e.startMs) + ' ago'
+        + (e.point ? '' : e.ongoing ? ' · still down' : ' · resolved');
+      return `<div class="inc-row ${e.rowClass}${e.ongoing ? ' inc-live' : ''}" data-ev="${e.startMs}|${e.cat}"${hidden}>
+        ${badge}
+        <span class="inc-note">${escapeHtml(e.note)}${evBtn}</span>
+        <span class="inc-dur">${dur}</span>
+        <span class="inc-time">${absTime(e.startMs)}<br><span class="inc-rel">${escapeHtml(rel)}</span></span>
+      </div>${evRow}`;
     }).join('');
     const extraCount = rowsData.length - EVENTS_SHOWN;
     const moreBtn = extraCount > 0
       ? `<div style="text-align:center; margin-top:10px;"><button id="eventsToggle" class="ghost-btn">Show ${extraCount} older</button></div>`
       : '';
-    outWrap.innerHTML = `<div class="list-scroll"><table><thead><tr><th>Started</th><th>Type</th><th>Duration</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table></div>${moreBtn}`;
+    outWrap.innerHTML = `<div class="list-scroll">${rows}</div>${moreBtn}`;
     if (extraCount > 0) {
       let expanded = false;
       document.getElementById('eventsToggle').addEventListener('click', () => {
         expanded = !expanded;
-        outWrap.querySelectorAll('tr[data-extra]').forEach(tr => {
-          // evidence rows stay closed until their own toggle opens them;
+        outWrap.querySelectorAll('[data-extra]').forEach(el => {
+          // evidence panels stay closed until their own toggle opens them;
           // collapsing the list closes any that were open
-          if (tr.hasAttribute('data-evrow')) { if (!expanded) tr.style.display = 'none'; return; }
-          tr.style.display = expanded ? '' : 'none';
+          if (el.hasAttribute('data-evrow')) { if (!expanded) el.style.display = 'none'; return; }
+          el.style.display = expanded ? '' : 'none';
         });
         // capped scroll box so expanding 30+ events doesn't balloon the page
         outWrap.querySelector('.list-scroll').classList.toggle('expanded', expanded);
@@ -2932,7 +2975,7 @@ safely('outages log', function() {
   outWrap.addEventListener('click', (ev) => {
     const btn = ev.target.closest('.ev-btn');
     if (!btn) return;
-    const row = outWrap.querySelector(`tr[data-evrow="${btn.dataset.evtoggle}"]`);
+    const row = outWrap.querySelector(`.inc-evrow[data-evrow="${btn.dataset.evtoggle}"]`);
     if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
   });
 

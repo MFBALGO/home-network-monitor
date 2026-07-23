@@ -532,18 +532,72 @@ dashboard.
 
 ## Moving this to a Raspberry Pi or home server later
 
+### Docker (recommended for any Linux box)
+
+A `Dockerfile` and a reference `docker-compose.yml` ship with the project.
+The container bundles everything the Linux code paths shell out to
+(`iputils-ping`, `net-tools` for `arp`, `iproute2`, `traceroute`, `nmap`,
+and the Ookla speedtest CLI), runs all three services (collector, 60-second
+dashboard renderer, web server) under one supervisor, and keeps **all**
+mutable state — configs, the SQLite database, logs, the generated HTML —
+in a single mounted `app/` directory that survives rebuilds.
+
+```
+mkdir -p ~/docker/network-monitor/app
+cd ~/docker/network-monitor
+git clone https://github.com/MFBALGO/home-network-monitor.git src
+cp src/docker-compose.yml .
+docker compose build
+docker compose up -d
+```
+
+Things to know:
+
+- **Host networking is required** (`network_mode: host`, already set in the
+  compose file). The monitor reads the ARP table, ping-sweeps your /24 and
+  discovers routers at layer 2 — none of which can see your real LAN from
+  behind Docker's bridge NAT. The only capability it needs beyond the
+  defaults is `CAP_NET_RAW` (ICMP ping + nmap's ARP scan), which is in
+  Docker's default set — it's declared in the compose file as documentation.
+  No `--privileged` needed.
+- Because of host networking, the listen port comes solely from the
+  `NETMON_WEB_PORT` environment variable (the reference file uses 8090);
+  `ports:` mappings are ignored.
+- The **setup wizard and settings pages are localhost-only** by design. On a
+  headless server, reach them through an SSH tunnel:
+  `ssh -L 8090:127.0.0.1:8090 you@server` then browse
+  `http://localhost:8090/setup`. Alternatively pre-place your
+  `config.json` / `routers.json` / `devices.json` into `app/` before the
+  first start.
+- **Updates happen by rebuilding the image** (`git pull` in `src/`, then
+  `docker compose build && docker compose up -d`). The in-app "Update now"
+  button is a no-op in the container: the entrypoint re-seeds the image's
+  code over `app/` on every start, precisely so the running code always
+  matches the image.
+- Linux differences vs a Windows/macOS install: no Wi-Fi chart and no
+  desktop toast notifications (use webhook or email alerts instead), and
+  silent (ARP-only) routers are detected as down more slowly — the Linux
+  ARP check is presence-only, so a dead silent router can linger "online"
+  for up to ~20 minutes of cache decay.
+
+### Without Docker
+
 The scripts have no Mac-specific dependency except two things:
 `system_profiler` (Wi-Fi signal) and macOS's `ping`/`route` flags. To move
 to a Raspberry Pi (or any always-on Linux box) later:
 
 1. Copy `monitor.py`, `dashboard.py`, and the `data/` folder to the Pi.
-2. The ping/arp code already has a Linux branch (`IS_MACOS` check), so it
+2. Install the tools the Linux branch shells out to (Debian/Ubuntu):
+   `sudo apt install iputils-ping net-tools iproute2 traceroute nmap`
+   (nmap is optional but gives much better device scans; the Ookla
+   speedtest CLI is optional too — packages.ookla.com has the apt repo).
+3. The ping/arp code already has a Linux branch (`IS_MACOS` check), so it
    works as-is — you'll just lose the Wi-Fi-signal chart unless you swap in
    a Linux equivalent (e.g. `iwconfig`/`iw dev wlan0 link`), which is a
    small, contained change in `get_wifi_snapshot()`.
-2. Replace `setup.sh`'s launchd services with a `systemd` unit or a `cron
+4. Replace `setup.sh`'s launchd services with a `systemd` unit or a `cron
    @reboot` line running `python3 monitor.py`.
-3. A Pi (or any device that's always plugged in, unlike a laptop that
+5. A Pi (or any device that's always plugged in, unlike a laptop that
    sleeps) also means monitoring doesn't stop whenever your Mac goes to
    sleep or leaves the house — worth doing once you've validated the setup
    works the way you want.

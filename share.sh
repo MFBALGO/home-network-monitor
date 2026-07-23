@@ -19,6 +19,7 @@ for f in monitor.py dashboard.py serve.py scan_routers.py version.py diagnose.py
          setup.sh uninstall.sh share.sh update.sh update-windows.bat \
          setup.ps1 uninstall.ps1 setup-windows.bat uninstall-windows.bat \
          netmon.monitor.plist netmon.dashboard.plist netmon.web.plist README.md \
+         Dockerfile .dockerignore entrypoint.sh docker-compose.yml \
          routers.example.json devices.example.json config.example.json; do
   if [ -f "$NETMON_DIR/$f" ]; then
     cp "$NETMON_DIR/$f" "$STAGE/"
@@ -45,8 +46,10 @@ Quick start
              (https://www.python.org/downloads/ — tick "Add python.exe
              to PATH"), then double-click:  setup-windows.bat
 
-   Linux:    the monitor code runs fine, but setup.sh is macOS-only
-             (launchd) — see the README's Raspberry Pi/Linux section
+   Linux:    easiest is Docker — see the README's "Docker / home
+             server" section (a Dockerfile + docker-compose.yml are
+             included). Without Docker, the monitor code runs fine
+             but setup.sh is macOS-only (launchd) — see the README
              for a systemd/cron setup.
 
 2. On the same computer, open  http://localhost:8080/  in a browser.

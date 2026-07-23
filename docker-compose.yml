@@ -1,0 +1,39 @@
+# Reference compose file for running the monitor on a home server.
+# Copy this next to a `src/` git clone of the repo (build context) and a
+# (possibly empty) `app/` state directory:
+#
+#   ~/docker/network-monitor/
+#     docker-compose.yml   <- this file
+#     src/                 <- git clone (Dockerfile at its root)
+#     app/                 <- ALL mutable state: configs, data/, logs/, html
+#
+# First run with no configs serves the setup wizard — localhost-only, so on a
+# headless server reach it through an SSH tunnel:
+#   ssh -L 8090:127.0.0.1:8090 you@server   ->  http://localhost:8090/setup
+# (Or pre-place config.json/routers.json/devices.json into app/.)
+services:
+  network-monitor:
+    container_name: network-monitor
+    build:
+      context: ./src            # the git clone; Dockerfile at repo root
+    image: network-monitor:local
+    # Host networking is REQUIRED: ARP table reads, /24 ping sweeps and LAN
+    # router discovery are meaningless behind bridge NAT. NOTE: `ports:` is
+    # ignored under host networking - the listen port is NETMON_WEB_PORT alone.
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      NETMON_WEB_PORT: "8090"   # the dashboard's LAN port (default 8080 —
+                                # overridden here to stay clear of other stacks)
+      TZ: "Asia/Riyadh"         # set to your timezone (email/report times)
+    volumes:
+      - ./app:/app              # ALL mutable state + seeded code
+    cap_add:
+      - NET_RAW                 # ICMP ping + nmap ARP scan; in Docker's
+                                # default cap set - declared as documentation
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('NETMON_WEB_PORT','8080'),timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 45s

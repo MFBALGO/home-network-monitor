@@ -1,0 +1,9 @@
+# Allowlist: exclude everything, then re-include only what the image needs.
+# This guarantees personal state (config.json, routers.json, devices.json,
+# data/, logs/, dashboard.html) can never leak into the image, even when
+# building straight from a live install folder.
+*
+!*.py
+!*.example.json
+!vendor/
+!entrypoint.sh

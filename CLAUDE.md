@@ -468,7 +468,31 @@ Always set `pragma busy_timeout` (the collector writes every few seconds).
 - `setup.sh` / `setup.ps1` install services, vendor Chart.js (committed
   in `vendor/`, re-downloaded via CDN fallback chain if missing), Ookla
   speedtest CLI (NOT homebrew/pip speedtest-cli), optional nmap.
-  `share.sh` → clean generic zip (no personal config).
+  `share.sh` → clean generic zip (no personal config; incl. the Docker
+  files).
+- `Dockerfile` + `entrypoint.sh` + `docker-compose.yml` — Linux/home-server
+  deployment. python:3.13-slim + apt iputils-ping/net-tools/iproute2/
+  traceroute/nmap + Ookla speedtest static binary (ARG-pinned). Design:
+  SEED-ON-START — image code lives in /opt/netmon-dist, entrypoint copies
+  *.py + *.example.json + vendor/ over the /app bind mount on every boot
+  (never touches configs/data/logs/html), so /app is the single mutable-
+  state mount (os.replace atomic saves need directory mounts — single-file
+  binds break them) and the container deterministically runs the image's
+  code; in-container "Update now" is therefore reverted on restart —
+  updates = git pull + compose build (README documents this). Entrypoint
+  supervises monitor.py + serve.py + a 60s `python dashboard.py; sleep 60`
+  loop (dashboard.py is one-shot); `wait -n; exit 1` on monitor/serve death
+  so restart: unless-stopped relaunches (also services update.py's
+  restart-watcher os._exit(1); the watcher baselines the status-file mtime
+  at start, so a persisted state=done file can't crash-loop — verified).
+  Dashboard-render failures only log. network_mode: host REQUIRED (ARP/
+  sweep/discovery are blind behind bridge NAT); port from NETMON_WEB_PORT
+  alone (`ports:` ignored under host networking); CAP_NET_RAW is the one
+  needed capability (in Docker's default set); runs as root (unprivileged
+  nmap -sn silently degrades ARP→TCP probes; Ookla wants writable $HOME).
+  .dockerignore is an ALLOWLIST (`*` then !*.py etc.) so personal configs
+  can't leak into images built from a live install. Linux deltas: ARP tier
+  presence-only (silent-router down-lag ~20min), no Wi-Fi, no toasts.
 
 ## Working notes
 
